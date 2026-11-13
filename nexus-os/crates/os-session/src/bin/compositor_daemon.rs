@@ -14,6 +14,7 @@ use os_config::watcher::ConfigWatcher;
 use os_compositor::hooks::WinEventListener;
 use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
 use os_compositor::manager::WindowManager;
+use os_compositor::{BorderOverlay, CommandBar, GpuContext, TopBar};
 use os_core::window::WindowHandle;
 
 #[path = "../hollow_shell.rs"]
@@ -21,6 +22,12 @@ mod hollow_shell;
 use hollow_shell::HollowShellManager;
 
 fn main() -> anyhow::Result<()> {
+    // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("NEXUS-COMPOSITOR PANIC: {}", info);
+        HollowShellManager::restore_taskbar();
+    }));
+
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
@@ -57,7 +64,24 @@ fn main() -> anyhow::Result<()> {
         let _ = HollowShellManager::suppress_taskbar();
     }
 
-    info!("✅ nexus-compositor active: 120Hz spring physics loop running.");
+    // 4. Initialize Hardware-Accelerated Shell Surface Subsystem
+    info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
+    let gpu = match GpuContext::new() {
+        Ok(g) => Some(g),
+        Err(e) => {
+            warn!("GPU rendering initialization bypassed: {:?}", e);
+            None
+        }
+    };
+
+    let mut top_bar = gpu.as_ref().and_then(|g| TopBar::new(g.clone()).ok());
+    let mut command_bar = gpu.as_ref().and_then(|g| CommandBar::new(g.clone()).ok());
+    let mut border_overlay = gpu.as_ref().and_then(|g| {
+        let spring_cfg = WindowManager::to_spring_config(&compositor_config.read().spring);
+        BorderOverlay::new(g.clone(), spring_cfg).ok()
+    });
+
+    info!("✅ nexus-compositor active: 120Hz GPU shell & spring physics loop running.");
 
     let target_frame_time = Duration::from_micros(8333); // ~120 Hz
     let mut last_frame = Instant::now();
@@ -78,6 +102,11 @@ fn main() -> anyhow::Result<()> {
                     HollowShellManager::restore_taskbar();
                     return Ok(());
                 }
+                HotkeyAction::CommandBar => {
+                    if let Some(cb) = &mut command_bar {
+                        cb.toggle();
+                    }
+                }
                 other => wm.write().handle_hotkey(other),
             }
         }
@@ -88,6 +117,25 @@ fn main() -> anyhow::Result<()> {
         }
 
         wm.write().update_animations(dt);
+
+        // Update and Render GPU Shell Surfaces
+        if let Some(bo) = &mut border_overlay {
+            if let Some(rect) = wm.read().active_window_rect() {
+                bo.set_target_rect(rect);
+            }
+            bo.update(dt);
+            let _ = bo.render();
+        }
+
+        if let Some(tb) = &mut top_bar {
+            tb.set_active_workspace(wm.read().active_workspace() as u32);
+            tb.step();
+            let _ = tb.render();
+        }
+
+        if let Some(cb) = &mut command_bar {
+            let _ = cb.render();
+        }
 
         let elapsed = frame_start.elapsed();
         if elapsed < target_frame_time {

@@ -2,7 +2,8 @@ use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use windows::Win32::Foundation::{BOOL, HWND, RECT};
 use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAKED, DWMWA_TRANSITIONS_FORCEDISABLED,
+    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+    DWMWA_TRANSITIONS_FORCEDISABLED,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
@@ -95,8 +96,18 @@ impl WindowHandle {
 
     pub fn rect(&self) -> CoreResult<RECT> {
         let mut rect = RECT::default();
-        unsafe {
-            GetWindowRect(self.0, &mut rect)?;
+        let hr = unsafe {
+            DwmGetWindowAttribute(
+                self.0,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut rect as *mut _ as *mut c_void,
+                std::mem::size_of::<RECT>() as u32,
+            )
+        };
+        if hr.is_err() {
+            unsafe {
+                GetWindowRect(self.0, &mut rect)?;
+            }
         }
         Ok(rect)
     }

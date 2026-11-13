@@ -64,6 +64,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Border stroke mask
     let stroke = outer_alpha * inner_mask;
 
+    // Immediately discard / return pure transparent outside the 1px border stroke
+    // Ensures desktop and underlying windows are 100% visible through the overlay
+    if (stroke <= 0.001) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
     // 1px specular inner highlight on top edge and upper fillet
     let specular_dist = abs(dist + 0.75);
     let specular_mask = 1.0 - smoothstep(0.0, 1.0, specular_dist);

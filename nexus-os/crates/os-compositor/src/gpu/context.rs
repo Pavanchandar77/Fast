@@ -13,10 +13,10 @@ pub struct GpuContext {
 
 impl GpuContext {
     pub fn new() -> anyhow::Result<Arc<Self>> {
-        info!("Initializing single shared wgpu Context (DX12 / Vulkan primary)...");
+        info!("Initializing single shared wgpu Context (DX12-only)...");
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::DX12,
             ..Default::default()
         });
 

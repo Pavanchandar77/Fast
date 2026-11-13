@@ -336,8 +336,13 @@ impl Default for HalConfig {
     }
 }
 
+fn default_mod_key() -> String {
+    "Super".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingsConfig {
+    #[serde(default = "default_mod_key", alias = "mod")]
     pub mod_key: String,
     pub bindings: HashMap<String, String>,
 }
