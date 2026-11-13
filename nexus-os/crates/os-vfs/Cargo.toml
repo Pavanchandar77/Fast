@@ -1,0 +1,13 @@
+[package]
+name = "os-vfs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+os-core = { path = "../os-core" }
+windows.workspace = true
+tracing.workspace = true
+crossbeam-channel.workspace = true
+anyhow.workspace = true

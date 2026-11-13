@@ -1,0 +1,1 @@
+C:\Fast\nexus-os\target\release\libos_core.rlib: C:\Fast\nexus-os\crates\os-core\src\error.rs C:\Fast\nexus-os\crates\os-core\src\lib.rs C:\Fast\nexus-os\crates\os-core\src\ntdll.rs C:\Fast\nexus-os\crates\os-core\src\process.rs C:\Fast\nexus-os\crates\os-core\src\window.rs
