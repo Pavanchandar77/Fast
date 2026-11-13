@@ -102,6 +102,15 @@ impl GlobalKeyboardHook {
         ))
     }
 
+    /// Global unhook function called on panic, exit, or fail-safe
+    pub fn unhook_global() {
+        let mut h_guard = HOOK_HANDLE.lock();
+        if let Some(h) = h_guard.take() {
+            let _ = unsafe { UnhookWindowsHookEx(h.0) };
+        }
+        IS_RUNNING.store(false, Ordering::SeqCst);
+    }
+
     /// Ultra-fast low-level keyboard callback.
     /// MUST complete in <0.01ms (10 microseconds) to strictly avoid Windows `LowLevelHooksTimeout` unhooking.
     /// Never performs heap allocations, locking, or blocking operations.
@@ -126,10 +135,11 @@ impl GlobalKeyboardHook {
 
             // 1. Critical Fail-Safe Watchdog: Ctrl + Alt + Shift + Esc
             if ctrl && alt && shift && vk == VK_ESCAPE.0 as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::PanicFailSafe);
-                }
-                return LRESULT(1);
+                // Instant out-of-band panic shortcut: Zero dependency on message loop or channels
+                os_core::hollow_shell::HollowShellManager::restore_taskbar();
+                crate::gpu::top_bar::TopBar::unregister_global();
+                Self::unhook_global();
+                std::process::exit(0);
             }
 
             // 2. Command Bar: Super + Space

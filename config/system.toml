@@ -1,0 +1,149 @@
+[general]
+name = "Nexus Subsidiary OS"
+version = "0.1.0"
+log_level = "info"
+fail_safe_hotkey = "Ctrl+Alt+Shift+Esc"
+
+[compositor]
+layout = "dwindle"
+inner_gap = 8
+outer_gap = 12
+master_ratio = 0.550000011920929
+force_disable_dwm_transitions = true
+suppress_native_taskbar = true
+
+[compositor.spring]
+stiffness = 280.0
+damping = 26.0
+mass = 1.0
+rest_velocity_threshold = 0.05000000074505806
+rest_displacement_threshold = 0.5
+
+[compositor.decorations]
+corner_radius = 12.0
+border_width = 1.0
+active_border_color = "#5E81AC"
+inactive_border_color = "#2E3440"
+blur_enabled = true
+blur_radius = 24.0
+blur_opacity = 0.7799999713897705
+
+[compositor.top_bar]
+enabled = true
+height = 28
+font_family = "Segoe UI Variable Text"
+font_size = 11.0
+widgets = [
+    "workspaces",
+    "window_title",
+    "cpu_ram",
+    "audio_slider",
+    "power_profile",
+    "clock",
+]
+
+[compositor.dock]
+enabled = true
+height = 64
+icon_size = 48
+magnification_scale = 1.4500000476837158
+magnification_distance = 120.0
+autohide = false
+
+[compositor.command_bar]
+hotkey = "Super+Space"
+max_results = 8
+fuzzy_threshold = 0.6000000238418579
+placeholder = "Search apps, files, kill processes, calculate..."
+
+[governor]
+ram_purge_enabled = true
+ram_purge_delay_secs = 10
+trim_on_minimize = true
+trim_on_unfocused = true
+app_nap_enabled = true
+app_nap_idle_secs = 30
+cpu_throttle_percent = 1
+exclude_from_nap = [
+    "spotify.exe",
+    "discord.exe",
+    "slack.exe",
+    "obs64.exe",
+    "steam.exe",
+    "cargo.exe",
+    "rustc.exe",
+    "cl.exe",
+]
+dynamic_priority_boost = true
+foreground_priority = "High"
+background_priority = "BelowNormal"
+boost_gpu_scheduling = true
+perceived_fast_close = true
+force_terminate_unresponsive_ms = 400
+game_mode_auto_detect = true
+timer_resolution_0_5ms = true
+unpark_cpu_cores = true
+suspend_shell_shaders_on_fullscreen = true
+
+[vfs]
+mft_indexing_enabled = true
+volumes = ["C:"]
+quicklook_hotkey = "Space"
+syntax_highlighting_theme = "Monokai"
+max_preview_size_mb = 100
+
+[shield]
+block_windows_telemetry = true
+telemetry_blacklist = [
+    "v10.events.data.microsoft.com",
+    "telemetry.microsoft.com",
+    "watson.telemetry.microsoft.com",
+    "settings-win.data.microsoft.com",
+]
+protected_vault_paths = [
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.aws",
+    "~/.azure",
+    "~/.config/nexus-os",
+]
+edr_enabled = true
+block_lsass_access = true
+block_remote_thread_injection = true
+whitelist_build_dirs = [
+    "target",
+    "node_modules",
+    ".git",
+    "build",
+    "dist",
+]
+
+[hal]
+modern_standby_killer = true
+force_hibernate_on_critical_lid = true
+lock_bluetooth_a2dp = true
+default_power_profile = "MaxCompute"
+
+[keybindings]
+mod_key = "Super"
+
+[keybindings.bindings]
+"Shift+1" = "move_to_workspace:1"
+Return = "exec:alacritty.exe"
+4 = "workspace:4"
+"Shift+3" = "move_to_workspace:3"
+"Shift+5" = "move_to_workspace:5"
+2 = "workspace:2"
+v = "window:toggle_floating"
+h = "focus:left"
+q = "window:close"
+5 = "workspace:5"
+"Shift+2" = "move_to_workspace:2"
+l = "focus:right"
+1 = "workspace:1"
+"Shift+4" = "move_to_workspace:4"
+j = "focus:down"
+Space = "shell:command_bar"
+3 = "workspace:3"
+k = "focus:up"
+f = "window:toggle_fullscreen"

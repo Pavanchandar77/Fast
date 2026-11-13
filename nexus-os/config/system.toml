@@ -147,7 +147,7 @@ default_power_profile = "MaxCompute"# "EcoSilent", "Balanced", "MaxCompute"
 # KEYBINDINGS
 # ------------------------------------------------------------------------------
 [keybindings]
-mod = "Super"
+mod_key = "Super"
 
 [keybindings.bindings]
 "Return"       = "exec:alacritty.exe"

@@ -15,12 +15,19 @@ use hollow_shell::HollowShellManager;
 use os_compositor::hooks::WinEventListener;
 use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
 use os_compositor::manager::WindowManager;
+use os_compositor::{BorderOverlay, CommandBar, GpuContext, TopBar};
 use os_config::watcher::ConfigWatcher;
 use os_core::window::WindowHandle;
 use os_governor::Governor;
 
 fn main() -> anyhow::Result<()> {
-    // 0. Enforce Per-Monitor DPI V2 scaling
+    // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("NEXUS-OS PANIC: {}", info);
+        HollowShellManager::restore_taskbar();
+    }));
+
+    // 0b. Enforce Per-Monitor DPI V2 scaling
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
@@ -90,7 +97,24 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    info!("✅ Phase 1 Core Daemon active. Entering 120Hz Compositor & Event Loop.");
+    // 8. Initialize Hardware-Accelerated Shell Surface Subsystem (Top Bar, Command Center, Squircle Border)
+    info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
+    let gpu = match GpuContext::new() {
+        Ok(g) => Some(g),
+        Err(e) => {
+            warn!("GPU rendering initialization bypassed: {:?}", e);
+            None
+        }
+    };
+
+    let mut top_bar = gpu.as_ref().and_then(|g| TopBar::new(g.clone()).ok());
+    let mut command_bar = gpu.as_ref().and_then(|g| CommandBar::new(g.clone()).ok());
+    let mut border_overlay = gpu.as_ref().and_then(|g| {
+        let spring_cfg = WindowManager::to_spring_config(&config_arc.read().compositor.spring);
+        BorderOverlay::new(g.clone(), spring_cfg).ok()
+    });
+
+    info!("✅ Phase 1 & 2 Engine online. Entering 120Hz GPU Compositor & Event Loop.");
 
     let target_frame_time = Duration::from_micros(8333); // ~120 Hz
     let mut last_frame = Instant::now();
@@ -133,7 +157,10 @@ fn main() -> anyhow::Result<()> {
                     let _ = std::process::Command::new("powershell.exe").spawn();
                 }
                 HotkeyAction::CommandBar => {
-                    info!("Hotkey: Summon Command Bar / Spotlight in <5ms");
+                    info!("Hotkey: Toggle Command Bar / Spotlight in <2ms");
+                    if let Some(cb) = &mut command_bar {
+                        cb.toggle();
+                    }
                 }
                 other => {
                     wm.write().handle_hotkey(other);
@@ -152,6 +179,25 @@ fn main() -> anyhow::Result<()> {
 
         // Step Spring Physics solver and reposition windows at 120Hz
         wm.write().update_animations(dt);
+
+        // Update and Render GPU Shell Surfaces
+        if let Some(bo) = &mut border_overlay {
+            if let Some(rect) = wm.read().active_window_rect() {
+                bo.set_target_rect(rect);
+            }
+            bo.update(dt);
+            let _ = bo.render();
+        }
+
+        if let Some(tb) = &mut top_bar {
+            tb.set_active_workspace(wm.read().active_workspace() as u32);
+            tb.step();
+            let _ = tb.render();
+        }
+
+        if let Some(cb) = &mut command_bar {
+            let _ = cb.render();
+        }
 
         let elapsed = frame_start.elapsed();
         if elapsed < target_frame_time {

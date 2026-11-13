@@ -327,4 +327,31 @@ impl WindowManager {
             _ => {}
         }
     }
+
+    pub fn active_workspace(&self) -> u8 {
+        self.active_workspace
+    }
+
+    pub fn active_window(&self) -> Option<WindowHandle> {
+        self.active_window
+    }
+
+    pub fn active_window_rect(&self) -> Option<[f32; 4]> {
+        if let Some(hwnd) = self.active_window {
+            if let Some(win) = self.windows.get(&hwnd) {
+                let (x, y, w, h) = win.spring.current_rect();
+                return Some([x as f32, y as f32, w as f32, h as f32]);
+            }
+            if let Ok(rect) = hwnd.rect() {
+                let w = (rect.right - rect.left).max(10);
+                let h = (rect.bottom - rect.top).max(10);
+                return Some([rect.left as f32, rect.top as f32, w as f32, h as f32]);
+            }
+        }
+        None
+    }
+
+    pub fn active_window_title(&self) -> String {
+        self.active_window.map(|h| h.title()).unwrap_or_default()
+    }
 }

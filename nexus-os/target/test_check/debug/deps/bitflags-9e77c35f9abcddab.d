@@ -1,0 +1,12 @@
+C:\Fast\nexus-os\target\test_check\debug\deps\bitflags-9e77c35f9abcddab.d: C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\lib.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\iter.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\parser.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\traits.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\public.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\internal.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external\serde.rs
+
+C:\Fast\nexus-os\target\test_check\debug\deps\libbitflags-9e77c35f9abcddab.rmeta: C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\lib.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\iter.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\parser.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\traits.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\public.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\internal.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external\serde.rs
+
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\lib.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\iter.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\parser.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\traits.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\public.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\internal.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.13.2\src\external\serde.rs:

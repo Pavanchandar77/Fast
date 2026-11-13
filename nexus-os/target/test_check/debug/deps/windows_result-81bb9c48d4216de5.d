@@ -1,0 +1,11 @@
+C:\Fast\nexus-os\target\test_check\debug\deps\windows_result-81bb9c48d4216de5.d: C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\lib.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bindings.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\com.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\strings.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bstr.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\error.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\hresult.rs
+
+C:\Fast\nexus-os\target\test_check\debug\deps\libwindows_result-81bb9c48d4216de5.rmeta: C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\lib.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bindings.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\com.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\strings.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bstr.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\error.rs C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\hresult.rs
+
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\lib.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bindings.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\com.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\strings.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\bstr.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\error.rs:
+C:\Users\pavan\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\windows-result-0.2.0\src\hresult.rs:
