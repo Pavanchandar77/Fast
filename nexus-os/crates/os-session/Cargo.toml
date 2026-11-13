@@ -1,0 +1,41 @@
+[package]
+name = "os-session"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexus-os"
+path = "src/main.rs"
+
+[[bin]]
+name = "nexus-watchdog"
+path = "src/bin/watchdog.rs"
+
+[[bin]]
+name = "nexus-governor"
+path = "src/bin/governor_daemon.rs"
+
+[[bin]]
+name = "nexus-compositor"
+path = "src/bin/compositor_daemon.rs"
+
+[[bin]]
+name = "nexus-vfs"
+path = "src/bin/vfs_daemon.rs"
+
+[dependencies]
+os-core = { path = "../os-core" }
+os-config = { path = "../os-config" }
+os-governor = { path = "../os-governor" }
+os-compositor = { path = "../os-compositor" }
+os-vfs = { path = "../os-vfs" }
+os-shield = { path = "../os-shield" }
+os-hal = { path = "../os-hal" }
+windows.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+anyhow.workspace = true

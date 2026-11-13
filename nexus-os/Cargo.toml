@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/os-core",
+    "crates/os-config",
+    "crates/os-governor",
+    "crates/os-compositor",
+    "crates/os-vfs",
+    "crates/os-shield",
+    "crates/os-hal",
+    "crates/os-session",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Nexus-OS Core Team"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+notify = "6.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+thiserror = "1.0"
+anyhow = "1.0"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_JobObjects",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+] }
+wgpu = "24.0"
+bytemuck = { version = "1.16", features = ["derive"] }
+raw-window-handle = "0.6"

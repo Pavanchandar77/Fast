@@ -1,0 +1,12 @@
+[package]
+name = "os-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+windows.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true

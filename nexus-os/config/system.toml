@@ -1,0 +1,171 @@
+# ==============================================================================
+# NEXUS-OS: SUBSIDIARY OPERATING ENVIRONMENT CONFIGURATION (system.toml)
+# ==============================================================================
+
+[general]
+name = "Nexus Subsidiary OS"
+version = "0.1.0"
+log_level = "info"
+fail_safe_hotkey = "Ctrl+Alt+Shift+Esc"
+
+# ------------------------------------------------------------------------------
+# COMPOSITOR & WINDOW MANAGEMENT (macOS Refinement + Hyprland Tiling)
+# ------------------------------------------------------------------------------
+[compositor]
+layout = "dwindle"                # "dwindle", "master_stack", "scrolling", "floating"
+inner_gap = 8
+outer_gap = 12
+master_ratio = 0.55
+force_disable_dwm_transitions = true
+suppress_native_taskbar = true
+
+[compositor.spring]
+stiffness = 280.0                 # Spring tension (k)
+damping = 26.0                    # Damping coefficient (c)
+mass = 1.0                        # Virtual window mass (m)
+rest_velocity_threshold = 0.05
+rest_displacement_threshold = 0.5
+
+[compositor.decorations]
+corner_radius = 12.0              # Continuous squircle curvature
+border_width = 1.0                # 1px specular inner border
+active_border_color = "#5E81AC"   # Specular highlight
+inactive_border_color = "#2E3440"
+blur_enabled = true
+blur_radius = 24.0                # Dual-kawase Gaussian backdrop blur
+blur_opacity = 0.78
+
+[compositor.top_bar]
+enabled = true
+height = 28                       # 28px reserved top bar
+font_family = "Segoe UI Variable Text"
+font_size = 11.0
+widgets = ["workspaces", "window_title", "cpu_ram", "audio_slider", "power_profile", "clock"]
+
+[compositor.dock]
+enabled = true
+height = 64
+icon_size = 48
+magnification_scale = 1.45
+magnification_distance = 120.0
+autohide = false
+
+[compositor.command_bar]
+hotkey = "Super+Space"
+max_results = 8
+fuzzy_threshold = 0.6
+placeholder = "Search apps, files, kill processes, calculate..."
+
+# ------------------------------------------------------------------------------
+# PROCESS, RAM & GPU GOVERNOR (Aggressive Hardware Optimization)
+# ------------------------------------------------------------------------------
+[governor]
+# Active RAM Reclamation
+ram_purge_enabled = true
+ram_purge_delay_secs = 10
+trim_on_minimize = true
+trim_on_unfocused = true
+
+# macOS "App Nap" Process Freezing
+app_nap_enabled = true
+app_nap_idle_secs = 30
+cpu_throttle_percent = 1
+exclude_from_nap = [
+    "spotify.exe",
+    "discord.exe",
+    "slack.exe",
+    "obs64.exe",
+    "steam.exe",
+    "cargo.exe",
+    "rustc.exe",
+    "cl.exe"
+]
+
+# Dynamic Foreground Boosting
+dynamic_priority_boost = true
+foreground_priority = "High"        # "High", "AboveNormal", "Realtime"
+background_priority = "BelowNormal" # "BelowNormal", "Idle"
+boost_gpu_scheduling = true
+
+# Fast Perceived Window Close
+perceived_fast_close = true
+force_terminate_unresponsive_ms = 400
+
+# Zero-Overhead Game & Compute Mode
+game_mode_auto_detect = true
+timer_resolution_0_5ms = true
+unpark_cpu_cores = true
+suspend_shell_shaders_on_fullscreen = true
+
+# ------------------------------------------------------------------------------
+# VFS & MFT INDEXER (Sub-2ms Fuzzy File Search & QuickLook)
+# ------------------------------------------------------------------------------
+[vfs]
+mft_indexing_enabled = true
+volumes = ["C:"]
+quicklook_hotkey = "Space"
+syntax_highlighting_theme = "Monokai"
+max_preview_size_mb = 100
+
+# ------------------------------------------------------------------------------
+# PRIVACY SHIELD & BEHAVIORAL EDR (Zero-I/O Kernel Control)
+# ------------------------------------------------------------------------------
+[shield]
+block_windows_telemetry = true
+telemetry_blacklist = [
+    "v10.events.data.microsoft.com",
+    "telemetry.microsoft.com",
+    "watson.telemetry.microsoft.com",
+    "settings-win.data.microsoft.com"
+]
+
+# macOS-Style Folder Vault Protection
+protected_vault_paths = [
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.aws",
+    "~/.azure",
+    "~/.config/nexus-os"
+]
+
+# Behavioral EDR Rules
+edr_enabled = true
+block_lsass_access = true
+block_remote_thread_injection = true
+whitelist_build_dirs = ["target", "node_modules", ".git", "build", "dist"]
+
+# ------------------------------------------------------------------------------
+# HARDWARE ABSTRACTION LAYER (HAL)
+# ------------------------------------------------------------------------------
+[hal]
+modern_standby_killer = true
+force_hibernate_on_critical_lid = true
+lock_bluetooth_a2dp = true          # Prevents muffled 8kHz Hands-Free AG audio
+default_power_profile = "MaxCompute"# "EcoSilent", "Balanced", "MaxCompute"
+
+# ------------------------------------------------------------------------------
+# KEYBINDINGS
+# ------------------------------------------------------------------------------
+[keybindings]
+mod = "Super"
+
+[keybindings.bindings]
+"Return"       = "exec:alacritty.exe"
+"q"            = "window:close"
+"f"            = "window:toggle_fullscreen"
+"v"            = "window:toggle_floating"
+"h"            = "focus:left"
+"l"            = "focus:right"
+"k"            = "focus:up"
+"j"            = "focus:down"
+"1"            = "workspace:1"
+"2"            = "workspace:2"
+"3"            = "workspace:3"
+"4"            = "workspace:4"
+"5"            = "workspace:5"
+"Shift+1"      = "move_to_workspace:1"
+"Shift+2"      = "move_to_workspace:2"
+"Shift+3"      = "move_to_workspace:3"
+"Shift+4"      = "move_to_workspace:4"
+"Shift+5"      = "move_to_workspace:5"
+"Space"        = "shell:command_bar"
