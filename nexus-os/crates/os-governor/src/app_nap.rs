@@ -1,6 +1,5 @@
 use crate::job_object::JobThrottleManager;
 use os_config::schema::GovernorConfig;
-use os_core::process::ProcessHandle;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -45,6 +44,7 @@ pub struct AppNapManager {
     config: Arc<RwLock<GovernorConfig>>,
     process_last_active: Arc<RwLock<HashMap<u32, Instant>>>,
     suspended_pids: Arc<RwLock<HashSet<u32>>>,
+    napped: Arc<RwLock<HashSet<u32>>>,
     job_throttler: Arc<JobThrottleManager>,
     own_pid: u32,
 }
@@ -56,6 +56,7 @@ impl AppNapManager {
             config,
             process_last_active: Arc::new(RwLock::new(HashMap::new())),
             suspended_pids: Arc::new(RwLock::new(HashSet::new())),
+            napped: Arc::new(RwLock::new(HashSet::new())),
             job_throttler: Arc::new(JobThrottleManager::new()),
             own_pid,
         }
@@ -66,22 +67,11 @@ impl AppNapManager {
             return;
         }
 
-        // 1. Release in-place from documented Win32 Job Object rate cap (zero handle recreate)
         self.job_throttler.unthrottle_process(pid);
-
-        // 2. If previously deep-frozen via NtSuspendProcess, wake immediately
-        let was_suspended = self.suspended_pids.write().remove(&pid);
-        if was_suspended {
-            if let Ok(handle) = ProcessHandle::open_for_governance(pid) {
-                if let Err(e) = handle.resume() {
-                    warn!("Failed to resume App Nap process PID {}: {:?}", pid, e);
-                } else {
-                    info!(
-                        "⚡ App Nap: Instantly resumed PID {} via NtResumeProcess",
-                        pid
-                    );
-                }
-            }
+        self.napped.write().remove(&pid);
+        if self.suspended_pids.write().remove(&pid) {
+            let allow_nt_suspend = self.config.read().allow_nt_suspend;
+            undo_suspend(pid, allow_nt_suspend);
         }
 
         self.process_last_active.write().insert(pid, Instant::now());
@@ -118,26 +108,29 @@ impl AppNapManager {
     }
 
     pub fn throttle_pid(&self, pid: u32) -> anyhow::Result<()> {
-        if self.is_process_excluded(pid) {
+        if self.is_process_excluded(pid) || self.napped.read().contains(&pid) {
             return Ok(());
         }
 
-        let handle = ProcessHandle::open_for_governance(pid)?;
-        let throttle_rate = { self.config.read().cpu_throttle_percent.clamp(1, 10) };
+        let (throttle_rate, allow_nt_suspend) = {
+            let cfg = self.config.read();
+            (cfg.cpu_throttle_percent.clamp(1, 10), cfg.allow_nt_suspend)
+        };
 
-        // Prefer documented Win32 Job Objects (1% CPU rate limit cap) - zero update breakage
-        if let Err(e) = self
+        if self
             .job_throttler
-            .throttle_process(pid, handle.handle(), throttle_rate)
+            .throttle_process(pid, throttle_rate)
+            .is_ok()
         {
-            warn!(
-                "Job Object throttling fallback to NtSuspendProcess for PID {}: {:?}",
-                pid, e
-            );
-            handle.suspend()?;
-            self.suspended_pids.write().insert(pid);
+            self.napped.write().insert(pid);
+            return Ok(());
         }
 
+        journal_suspend(pid, allow_nt_suspend)?;
+        if allow_nt_suspend {
+            self.suspended_pids.write().insert(pid);
+            self.napped.write().insert(pid);
+        }
         Ok(())
     }
 
@@ -149,81 +142,115 @@ impl AppNapManager {
         let config = self.config.clone();
         let last_active = self.process_last_active.clone();
         let suspended = self.suspended_pids.clone();
+        let napped = self.napped.clone();
         let job_throttler = self.job_throttler.clone();
         let own_pid = self.own_pid;
 
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(5));
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(5));
 
-                let (enabled, idle_secs, throttle_percent) = {
-                    let cfg = config.read();
-                    (
-                        cfg.app_nap_enabled,
-                        cfg.app_nap_idle_secs.max(15),
-                        cfg.cpu_throttle_percent.clamp(1, 10),
-                    )
+            let (enabled, idle_secs, throttle_percent, allow_nt_suspend) = {
+                let cfg = config.read();
+                (
+                    cfg.app_nap_enabled,
+                    cfg.app_nap_idle_secs.max(15),
+                    cfg.cpu_throttle_percent.clamp(1, 10),
+                    cfg.allow_nt_suspend,
+                )
+            };
+
+            if !enabled {
+                let held: Vec<u32> = napped.read().iter().copied().collect();
+                for pid in held {
+                    job_throttler.unthrottle_process(pid);
+                    napped.write().remove(&pid);
+                    if suspended.write().remove(&pid) {
+                        undo_suspend(pid, allow_nt_suspend);
+                    }
+                }
+                continue;
+            }
+
+            let now = Instant::now();
+            let idle_threshold = Duration::from_secs(idle_secs);
+
+            let candidates: Vec<u32> = {
+                let active_map = last_active.read();
+                let already = napped.read();
+                active_map
+                    .iter()
+                    .filter(|(&pid, &time)| {
+                        pid != own_pid
+                            && now.duration_since(time) >= idle_threshold
+                            && !already.contains(&pid)
+                    })
+                    .map(|(&pid, _)| pid)
+                    .collect()
+            };
+
+            for pid in candidates {
+                let process_name = match get_process_name(pid) {
+                    Ok(n) => n.to_lowercase(),
+                    Err(_) => continue,
                 };
 
-                if !enabled {
+                if CRITICAL_SYSTEM_PROCESSES.iter().any(|&c| process_name == c) {
                     continue;
                 }
 
-                let now = Instant::now();
-                let idle_threshold = Duration::from_secs(idle_secs);
-
-                let candidates: Vec<u32> = {
-                    let active_map = last_active.read();
-                    let suspended_set = suspended.read();
-
-                    active_map
-                        .iter()
-                        .filter(|(&pid, &time)| {
-                            pid != own_pid
-                                && now.duration_since(time) >= idle_threshold
-                                && !suspended_set.contains(&pid)
-                        })
-                        .map(|(&pid, _)| pid)
-                        .collect()
+                let user_exclusions = {
+                    let cfg = config.read();
+                    cfg.exclude_from_nap.clone()
                 };
+                if user_exclusions
+                    .iter()
+                    .any(|ex| process_name.contains(&ex.to_lowercase()))
+                {
+                    continue;
+                }
 
-                for pid in candidates {
-                    let process_name = match get_process_name(pid) {
-                        Ok(n) => n.to_lowercase(),
-                        Err(_) => continue,
-                    };
-
-                    if CRITICAL_SYSTEM_PROCESSES.iter().any(|&c| process_name == c) {
-                        continue;
-                    }
-
-                    let user_exclusions = {
-                        let cfg = config.read();
-                        cfg.exclude_from_nap.clone()
-                    };
-                    if user_exclusions
-                        .iter()
-                        .any(|ex| process_name.contains(&ex.to_lowercase()))
-                    {
-                        continue;
-                    }
-
-                    if let Ok(handle) = ProcessHandle::open_for_governance(pid) {
-                        // Apply documented Win32 Job Object rate cap (1%)
-                        if job_throttler
-                            .throttle_process(pid, handle.handle(), throttle_percent)
-                            .is_ok()
-                        {
-                            info!(
-                                "⚡ App Nap: Throttled background PID {} ({}) to {}% CPU",
-                                pid, process_name, throttle_percent
-                            );
-                        }
-                    }
+                if job_throttler
+                    .throttle_process(pid, throttle_percent)
+                    .is_ok()
+                {
+                    napped.write().insert(pid);
+                    info!(
+                        "App Nap: capped background PID {} ({}) at {}% CPU",
+                        pid, process_name, throttle_percent
+                    );
+                    continue;
+                }
+                if journal_suspend(pid, allow_nt_suspend).is_ok() && allow_nt_suspend {
+                    suspended.write().insert(pid);
+                    napped.write().insert(pid);
+                    info!(
+                        "App Nap: suspended background PID {} ({}) because the job cap failed",
+                        pid, process_name
+                    );
                 }
             }
         })
     }
+}
+
+/// Records a suspend only when the operator opted in.
+fn journal_suspend(pid: u32, allow_nt_suspend: bool) -> anyhow::Result<()> {
+    if !allow_nt_suspend {
+        warn!("App Nap: job cap failed for PID {pid}; leaving the process running");
+        anyhow::bail!("suspend is disabled");
+    }
+    os_core::recovery::commit(&os_core::Mutation::Suspend { pid })
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
+}
+
+/// Resumes a process that was suspended through the journal.
+fn undo_suspend(pid: u32, allow_nt_suspend: bool) {
+    // Revert even when the flag is now false: the entry was recorded while
+    // `allow_nt_suspend` was on, and the process must not stay frozen.
+    let _ = allow_nt_suspend;
+    let _ = os_core::recovery::undo_last(
+        |mutation| matches!(mutation, os_core::Mutation::Suspend { pid: found } if *found == pid),
+    );
 }
 
 pub fn get_process_name(pid: u32) -> anyhow::Result<String> {

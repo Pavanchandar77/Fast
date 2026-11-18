@@ -17,7 +17,7 @@ pub struct Governor {
 
 impl Governor {
     pub fn new(config: Arc<RwLock<GovernorConfig>>) -> Self {
-        let booster = Arc::new(ForegroundBooster::new());
+        let booster = Arc::new(ForegroundBooster::new(config.clone()));
         let ram_purger = Arc::new(RamPurger::new(config.clone()));
         let app_nap = Arc::new(AppNapManager::new(config.clone()));
 
@@ -76,17 +76,11 @@ impl Governor {
             return;
         }
 
-        let (trim, nap) = {
-            let cfg = self.config.read();
-            (cfg.trim_on_minimize, cfg.app_nap_enabled)
-        };
-
-        if trim {
+        // Hiding a window must not suspend or cap the process. Tooltips and
+        // menus hide constantly; napping them bricks the app. The idle worker
+        // is the only nap path, and it is off unless app_nap_enabled is set.
+        if self.config.read().trim_on_minimize {
             let _ = self.ram_purger.purge_pid(pid);
-        }
-
-        if nap {
-            let _ = self.app_nap.suspend_pid(pid);
         }
     }
 

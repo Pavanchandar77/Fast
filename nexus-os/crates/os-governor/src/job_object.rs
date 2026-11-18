@@ -1,27 +1,14 @@
+//! Journaled CPU caps. The Win32 job object lives in `os-core`; this type
+//! only remembers which pids we have already recorded so a 5s worker cannot
+//! append a new journal entry for the same process.
+
+use os_core::Mutation;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::ffi::c_void;
-use tracing::{debug, info, warn};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectCpuRateControlInformation,
-    SetInformationJobObject, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOB_OBJECT_CPU_RATE_CONTROL,
-};
-
-#[derive(Clone, Copy)]
-pub struct SendHandle(pub HANDLE);
-unsafe impl Send for SendHandle {}
-unsafe impl Sync for SendHandle {}
-
-// Rate control flags: Enable rate control (0x1) + Hard Cap (0x4)
-const RATE_CONTROL_ENABLE: u32 = 0x1;
-const RATE_CONTROL_HARD_CAP: u32 = 0x4;
 
 #[derive(Default)]
 pub struct JobThrottleManager {
-    // Permanent job mapping per PID until process terminates
-    jobs: RwLock<HashMap<u32, SendHandle>>,
+    caps: RwLock<HashMap<u32, u32>>,
 }
 
 impl JobThrottleManager {
@@ -29,120 +16,31 @@ impl JobThrottleManager {
         Self::default()
     }
 
-    /// Throttles a background process to rate_percent (default 1 = 1% CPU rate).
-    /// If a Job Object already exists for this PID, it modifies the rate control flags in-place.
-    /// This prevents handle bloat and avoids nested Job Object assignment restrictions.
-    pub fn throttle_process(
-        &self,
-        pid: u32,
-        process_handle: HANDLE,
-        rate_percent: u32,
-    ) -> anyhow::Result<()> {
-        let rate_val = rate_percent.clamp(1, 90) * 100;
-
-        let mut info = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
-            ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL(RATE_CONTROL_ENABLE | RATE_CONTROL_HARD_CAP),
-            ..Default::default()
-        };
-        info.Anonymous.CpuRate = rate_val;
-
-        let guard = self.jobs.read();
-        if let Some(&send_handle) = guard.get(&pid) {
-            // In-place re-enable: process is already assigned to this Job Object
-            unsafe {
-                SetInformationJobObject(
-                    send_handle.0,
-                    JobObjectCpuRateControlInformation,
-                    &info as *const _ as *const c_void,
-                    std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
-                )?;
-            }
-            debug!(
-                "Job Object Throttler: Re-enabled in-place {}% CPU cap for PID {}",
-                rate_percent, pid
-            );
+    /// Records a cap before applying it. A second call for the same pid is a no-op.
+    pub fn throttle_process(&self, pid: u32, rate_percent: u32) -> anyhow::Result<()> {
+        if self.caps.read().contains_key(&pid) {
             return Ok(());
         }
-        drop(guard);
-
-        // First-time assignment: create Job Object and assign
-        let job = unsafe { CreateJobObjectW(None, PCWSTR::null())? };
-        unsafe {
-            if let Err(e) = SetInformationJobObject(
-                job,
-                JobObjectCpuRateControlInformation,
-                &info as *const _ as *const c_void,
-                std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
-            ) {
-                let _ = CloseHandle(job);
-                return Err(e.into());
-            }
-
-            if let Err(e) = AssignProcessToJobObject(job, process_handle) {
-                let _ = CloseHandle(job);
-                return Err(e.into());
-            }
-        }
-
-        self.jobs.write().insert(pid, SendHandle(job));
-        info!(
-            "⚡ Job Object Throttler: Assigned PID {} to Job Object with {}% CPU cap",
-            pid, rate_percent
-        );
+        let percent = rate_percent.clamp(1, 90);
+        os_core::recovery::commit(&Mutation::JobCap {
+            pid,
+            previous_percent: None,
+            new_percent: percent,
+        })
+        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        self.caps.write().insert(pid, percent);
         Ok(())
     }
 
-    /// Un-throttles a process by setting ControlFlags = 0 in-place.
-    /// DOES NOT close the Job handle, keeping the process attachment intact and leak-free.
+    /// Reverts the journaled cap. The process returns to uncapped.
     pub fn unthrottle_process(&self, pid: u32) {
-        let guard = self.jobs.read();
-        if let Some(&send_handle) = guard.get(&pid) {
-            let mut info = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
-                ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL(0),
-                ..Default::default()
-            };
-            info.Anonymous.CpuRate = 0;
-
-            unsafe {
-                let res = SetInformationJobObject(
-                    send_handle.0,
-                    JobObjectCpuRateControlInformation,
-                    &info as *const _ as *const c_void,
-                    std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
-                );
-                if let Err(e) = res {
-                    warn!(
-                        "Failed to disable CPU rate control in-place for PID {}: {:?}",
-                        pid, e
-                    );
-                } else {
-                    debug!("⚡ Job Object Throttler: Un-throttled PID {} in-place (0% cap / full speed)", pid);
-                }
-            }
-        }
+        let _ = os_core::recovery::undo_last(
+            |mutation| matches!(mutation, Mutation::JobCap { pid: found, .. } if *found == pid),
+        );
+        self.caps.write().remove(&pid);
     }
 
-    /// Cleans up and closes the Job Object handle once the process exits
     pub fn on_process_exit(&self, pid: u32) {
-        if let Some(send_handle) = self.jobs.write().remove(&pid) {
-            unsafe {
-                let _ = CloseHandle(send_handle.0);
-            }
-            debug!(
-                "Job Object Throttler: Closed Job handle on exit for PID {}",
-                pid
-            );
-        }
-    }
-}
-
-impl Drop for JobThrottleManager {
-    fn drop(&mut self) {
-        let mut map = self.jobs.write();
-        for (_, send_handle) in map.drain() {
-            unsafe {
-                let _ = CloseHandle(send_handle.0);
-            }
-        }
+        self.unthrottle_process(pid);
     }
 }
