@@ -3,3 +3,6 @@
 pub mod appcontainer;
 pub mod etw;
 pub mod wfp;
+
+pub use nx_privacy as privacy;
+pub use nx_privacy::shield::{PrivacyShield, PrivacyShieldConfig};
