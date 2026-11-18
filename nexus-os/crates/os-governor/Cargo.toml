@@ -6,11 +6,14 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+nexus-model.workspace = true
+nx-governor-policy.workspace = true
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
-nx-governor-policy = { path = "../nx-governor-policy" }
-windows.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
 anyhow.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

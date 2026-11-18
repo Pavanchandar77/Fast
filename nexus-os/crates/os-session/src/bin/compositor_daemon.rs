@@ -1,202 +1,213 @@
 //! nexus-compositor: Isolated window manager, spring physics, and shell surface micro-daemon.
 //! Runs at 120Hz with interruptible spring physics and hollowed shell taskbar suppression.
 
-use os_compositor::hooks::WinEventListener;
-use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
-use os_compositor::manager::WindowManager;
-use os_compositor::{
-    create_border_overlay_window, create_command_bar_window, create_top_bar_window, BorderOverlay,
-    CommandBar, GpuContext, TopBar,
-};
-use os_config::watcher::ConfigWatcher;
-use os_core::window::WindowHandle;
-use parking_lot::RwLock;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
-use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
-use windows::Win32::UI::HiDpi::{
-    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
-
-#[path = "../hollow_shell.rs"]
-mod hollow_shell;
-use hollow_shell::HollowShellManager;
-
-fn main() -> anyhow::Result<()> {
-    // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
-    std::panic::set_hook(Box::new(|info| {
-        eprintln!("NEXUS-COMPOSITOR PANIC: {}", info);
-        HollowShellManager::restore_taskbar();
-    }));
-
-    unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    }
-
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
-    info!("Starting nexus-compositor micro-daemon...");
-
-    let config_path = find_config_path();
-    let (watcher, config_rx) = ConfigWatcher::new(&config_path)?;
-    let initial_config = watcher.get();
-    let compositor_config = Arc::new(RwLock::new(initial_config.compositor));
-
-    let wm = Arc::new(RwLock::new(WindowManager::new(compositor_config.clone())));
-
-    // 1. Attach hooks
-    let (_listener, win_event_rx) = WinEventListener::start()?;
-    let (_keyboard, hotkey_rx) = GlobalKeyboardHook::start()?;
-
-    // 2. Ingest existing windows
-    enumerate_existing_windows(wm.clone());
-
-    unsafe {
-        let fg = GetForegroundWindow();
-        if !fg.0.is_null() {
-            wm.write().set_foreground(WindowHandle::new(fg));
-        }
-    }
-
-    // 3. Hollowed Shell taskbar suppression
-    if compositor_config.read().suppress_native_taskbar {
-        let _ = HollowShellManager::suppress_taskbar();
-    }
-
-    // 4. Initialize Hardware-Accelerated Shell Surface Subsystem
-    info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
-    let gpu = match GpuContext::new() {
-        Ok(g) => Some(g),
-        Err(e) => {
-            warn!("GPU rendering initialization bypassed: {:?}", e);
-            None
-        }
+#[cfg(windows)]
+mod imp {
+    use os_compositor::hooks::WinEventListener;
+    use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
+    use os_compositor::manager::WindowManager;
+    use os_compositor::{
+        create_border_overlay_window, create_command_bar_window, create_top_bar_window,
+        BorderOverlay, CommandBar, GpuContext, TopBar,
     };
+    use os_config::watcher::ConfigWatcher;
+    use os_core::hollow_shell::HollowShellManager;
+    use os_core::window::WindowHandle;
+    use parking_lot::RwLock;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tracing::{info, warn};
+    use tracing_subscriber::EnvFilter;
+    use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
 
-    let mut top_bar = gpu.as_ref().and_then(|g| {
-        let hwnd = create_top_bar_window().ok()?;
-        TopBar::new(g.clone(), hwnd).ok()
-    });
-    let mut command_bar = gpu.as_ref().and_then(|g| {
-        let hwnd = create_command_bar_window().ok()?;
-        CommandBar::new(g.clone(), hwnd).ok()
-    });
-    let mut border_overlay = gpu.as_ref().and_then(|g| {
-        let hwnd = create_border_overlay_window().ok()?;
-        let spring_cfg = WindowManager::to_spring_config(&compositor_config.read().spring);
-        BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
-    });
+    pub fn run() -> anyhow::Result<()> {
+        // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("NEXUS-COMPOSITOR PANIC: {}", info);
+            HollowShellManager::restore_taskbar();
+        }));
 
-    info!("✅ nexus-compositor active: 120Hz GPU shell & spring physics loop running.");
-
-    let target_frame_time = Duration::from_micros(8333); // ~120 Hz
-    let mut last_frame = Instant::now();
-
-    loop {
-        let frame_start = Instant::now();
-        let dt = (frame_start - last_frame).as_secs_f32().min(0.05);
-        last_frame = frame_start;
-
-        while let Ok(event) = win_event_rx.try_recv() {
-            wm.write().handle_event(event);
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
 
-        while let Ok(action) = hotkey_rx.try_recv() {
-            match action {
-                HotkeyAction::PanicFailSafe => {
-                    warn!("Emergency fail-safe triggered!");
-                    HollowShellManager::restore_taskbar();
-                    return Ok(());
-                }
-                HotkeyAction::CommandBar => {
-                    if let Some(cb) = &mut command_bar {
-                        cb.toggle();
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .init();
+
+        info!("Starting nexus-compositor micro-daemon...");
+
+        let config_path = find_config_path();
+        let (watcher, config_rx) = ConfigWatcher::new(&config_path)?;
+        let initial_config = watcher.get();
+        let compositor_config = Arc::new(RwLock::new(initial_config.compositor));
+
+        let wm = Arc::new(RwLock::new(WindowManager::new(compositor_config.clone())));
+
+        // 1. Attach hooks
+        let (_listener, win_event_rx) = WinEventListener::start()?;
+        let (_keyboard, hotkey_rx) = GlobalKeyboardHook::start()?;
+
+        // 2. Ingest existing windows
+        enumerate_existing_windows(wm.clone());
+
+        unsafe {
+            let fg = GetForegroundWindow();
+            if !fg.0.is_null() {
+                wm.write().set_foreground(WindowHandle::new(fg));
+            }
+        }
+
+        // 3. Hollowed Shell taskbar suppression
+        if compositor_config.read().suppress_native_taskbar {
+            let _ = HollowShellManager::suppress_taskbar();
+        }
+
+        // 4. Initialize Hardware-Accelerated Shell Surface Subsystem
+        info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
+        let gpu = match GpuContext::new() {
+            Ok(g) => Some(g),
+            Err(e) => {
+                warn!("GPU rendering initialization bypassed: {:?}", e);
+                None
+            }
+        };
+
+        let mut top_bar = gpu.as_ref().and_then(|g| {
+            let hwnd = create_top_bar_window().ok()?;
+            TopBar::new(g.clone(), hwnd).ok()
+        });
+        let mut command_bar = gpu.as_ref().and_then(|g| {
+            let hwnd = create_command_bar_window().ok()?;
+            CommandBar::new(g.clone(), hwnd).ok()
+        });
+        let mut border_overlay = gpu.as_ref().and_then(|g| {
+            let hwnd = create_border_overlay_window().ok()?;
+            let spring_cfg = WindowManager::to_spring_config(&compositor_config.read().spring);
+            BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
+        });
+
+        info!("✅ nexus-compositor active: 120Hz GPU shell & spring physics loop running.");
+
+        let target_frame_time = Duration::from_micros(8333); // ~120 Hz
+        let mut last_frame = Instant::now();
+
+        loop {
+            let frame_start = Instant::now();
+            let dt = (frame_start - last_frame).as_secs_f32().min(0.05);
+            last_frame = frame_start;
+
+            while let Ok(event) = win_event_rx.try_recv() {
+                wm.write().handle_event(event);
+            }
+
+            while let Ok(action) = hotkey_rx.try_recv() {
+                match action {
+                    HotkeyAction::PanicFailSafe => {
+                        warn!("Emergency fail-safe triggered!");
+                        HollowShellManager::restore_taskbar();
+                        return Ok(());
                     }
+                    HotkeyAction::CommandBar => {
+                        if let Some(cb) = &mut command_bar {
+                            cb.toggle();
+                        }
+                    }
+                    other => wm.write().handle_hotkey(other),
                 }
-                other => wm.write().handle_hotkey(other),
+            }
+
+            while let Ok(new_cfg) = config_rx.try_recv() {
+                *compositor_config.write() = new_cfg.compositor;
+                wm.write().retile_workspace(1);
+            }
+
+            wm.write().update_animations(dt);
+
+            // Update and Render GPU Shell Surfaces
+            if let Some(bo) = &mut border_overlay {
+                if let Some(rect) = wm.read().active_window_rect() {
+                    bo.set_target_rect(rect);
+                }
+                bo.update(dt);
+                let _ = bo.render();
+            }
+
+            if let Some(tb) = &mut top_bar {
+                tb.set_active_workspace(wm.read().active_workspace() as u32);
+                tb.step();
+                let _ = tb.render();
+            }
+
+            if let Some(cb) = &mut command_bar {
+                let _ = cb.render();
+            }
+
+            let elapsed = frame_start.elapsed();
+            if elapsed < target_frame_time {
+                std::thread::sleep(target_frame_time - elapsed);
             }
         }
+    }
 
-        while let Ok(new_cfg) = config_rx.try_recv() {
-            *compositor_config.write() = new_cfg.compositor;
-            wm.write().retile_workspace(1);
+    fn find_config_path() -> PathBuf {
+        let local = PathBuf::from("config/system.toml");
+        if local.exists() {
+            return local;
         }
-
-        wm.write().update_animations(dt);
-
-        // Update and Render GPU Shell Surfaces
-        if let Some(bo) = &mut border_overlay {
-            if let Some(rect) = wm.read().active_window_rect() {
-                bo.set_target_rect(rect);
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            let user_cfg = PathBuf::from(user_profile)
+                .join(".config")
+                .join("nexus-os")
+                .join("system.toml");
+            if user_cfg.exists() {
+                return user_cfg;
             }
-            bo.update(dt);
-            let _ = bo.render();
+        }
+        local
+    }
+
+    fn enumerate_existing_windows(wm: Arc<RwLock<WindowManager>>) {
+        struct EnumContext {
+            wm: Arc<RwLock<WindowManager>>,
+        }
+        let mut context = EnumContext { wm };
+
+        unsafe extern "system" fn enum_proc(
+            hwnd: HWND,
+            lparam: LPARAM,
+        ) -> windows::Win32::Foundation::BOOL {
+            let ctx = &mut *(lparam.0 as *mut EnumContext);
+            let handle = WindowHandle::new(hwnd);
+            if handle.is_manageable() {
+                ctx.wm.write().register_window(handle);
+            }
+            TRUE
         }
 
-        if let Some(tb) = &mut top_bar {
-            tb.set_active_workspace(wm.read().active_workspace() as u32);
-            tb.step();
-            let _ = tb.render();
-        }
-
-        if let Some(cb) = &mut command_bar {
-            let _ = cb.render();
-        }
-
-        let elapsed = frame_start.elapsed();
-        if elapsed < target_frame_time {
-            std::thread::sleep(target_frame_time - elapsed);
+        unsafe {
+            let _ = EnumWindows(
+                Some(enum_proc),
+                LPARAM(&mut context as *mut EnumContext as isize),
+            );
         }
     }
 }
 
-fn find_config_path() -> PathBuf {
-    let local = PathBuf::from("config/system.toml");
-    if local.exists() {
-        return local;
-    }
-    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
-        let user_cfg = PathBuf::from(user_profile)
-            .join(".config")
-            .join("nexus-os")
-            .join("system.toml");
-        if user_cfg.exists() {
-            return user_cfg;
-        }
-    }
-    local
+#[cfg(windows)]
+fn main() -> anyhow::Result<()> {
+    imp::run()
 }
 
-fn enumerate_existing_windows(wm: Arc<RwLock<WindowManager>>) {
-    struct EnumContext {
-        wm: Arc<RwLock<WindowManager>>,
-    }
-    let mut context = EnumContext { wm };
-
-    unsafe extern "system" fn enum_proc(
-        hwnd: HWND,
-        lparam: LPARAM,
-    ) -> windows::Win32::Foundation::BOOL {
-        let ctx = &mut *(lparam.0 as *mut EnumContext);
-        let handle = WindowHandle::new(hwnd);
-        if handle.is_manageable() {
-            ctx.wm.write().register_window(handle);
-        }
-        TRUE
-    }
-
-    unsafe {
-        let _ = EnumWindows(
-            Some(enum_proc),
-            LPARAM(&mut context as *mut EnumContext as isize),
-        );
-    }
+#[cfg(not(windows))]
+fn main() -> anyhow::Result<()> {
+    eprintln!("nexus-compositor is supported on Windows NT only.");
+    Ok(())
 }

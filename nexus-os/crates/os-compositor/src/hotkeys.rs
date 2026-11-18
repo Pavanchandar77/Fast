@@ -14,18 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_SYSKEYDOWN,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HotkeyAction {
-    PanicFailSafe,
-    CommandBar,
-    Terminal,
-    CloseWindow,
-    ToggleFullscreen,
-    ToggleFloating,
-    FocusWorkspace(u8),
-    MoveToWorkspace(u8),
-    Custom(String),
-}
+pub use nexus_model::hotkeys::HotkeyAction;
 
 #[derive(Clone, Copy)]
 struct SendHhook(HHOOK);

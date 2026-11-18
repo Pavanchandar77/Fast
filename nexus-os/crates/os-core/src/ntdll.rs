@@ -1,10 +1,13 @@
 //! Direct Import Address Table (IAT) static linkage to ntdll.
 //! Eliminates runtime GetProcAddress heuristics that trigger Windows Defender false positives.
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HANDLE, NTSTATUS};
 
+#[cfg(windows)]
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS(0);
 
+#[cfg(windows)]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 #[allow(non_snake_case)]
@@ -17,6 +20,7 @@ pub struct OSVERSIONINFOW {
     pub szCSDVersion: [u16; 128],
 }
 
+#[cfg(windows)]
 #[link(name = "ntdll")]
 extern "system" {
     pub fn NtSuspendProcess(process_handle: HANDLE) -> NTSTATUS;
@@ -30,6 +34,20 @@ extern "system" {
     pub fn RtlGetVersion(lp_version_information: *mut OSVERSIONINFOW) -> NTSTATUS;
 }
 
+#[cfg(not(windows))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NTSTATUS(pub i32);
+
+#[cfg(not(windows))]
+#[allow(non_snake_case)]
+pub unsafe fn NtSetTimerResolution(
+    _desired_resolution: u32,
+    _set_resolution: u8,
+    _current_resolution: *mut u32,
+) -> NTSTATUS {
+    NTSTATUS(0)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WindowsVersion {
     pub major: u32,
@@ -37,6 +55,7 @@ pub struct WindowsVersion {
     pub build: u32,
 }
 
+#[cfg(windows)]
 pub fn get_windows_version() -> WindowsVersion {
     let mut info = OSVERSIONINFOW {
         dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
@@ -60,5 +79,14 @@ pub fn get_windows_version() -> WindowsVersion {
             minor: 0,
             build: 22000,
         }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_windows_version() -> WindowsVersion {
+    WindowsVersion {
+        major: 10,
+        minor: 0,
+        build: 22631,
     }
 }

@@ -1,10 +1,12 @@
 use crate::app_nap::AppNapManager;
 use crate::booster::ForegroundBooster;
-use crate::job_object::JobThrottleManager;
+use crate::job_object::{JobThrottleManager, HANDLE};
 use crate::ram_purger::RamPurger;
+#[cfg(windows)]
+use nx_governor_policy::EcoQosState;
 use nx_governor_policy::{
-    EcoQosState, GovernorEngine, GovernorPolicyConfig, MutationPlan, Pid, PolicyMutation,
-    PriorityClass, SystemSnapshot,
+    GovernorEngine, GovernorPolicyConfig, MutationPlan, Pid, PolicyMutation, PriorityClass,
+    SystemSnapshot,
 };
 use os_config::schema::GovernorConfig;
 use os_core::process::{enable_debug_privilege, ProcessHandle};
@@ -13,7 +15,7 @@ use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 #[cfg(windows)]
 use std::ffi::c_void;
@@ -29,7 +31,7 @@ pub struct Governor {
     engine: Arc<RwLock<GovernorEngine>>,
     _booster: Arc<ForegroundBooster>,
     ram_purger: Arc<RamPurger>,
-    _app_nap: Arc<AppNapManager>,
+    app_nap: Arc<AppNapManager>,
     job_throttler: Arc<JobThrottleManager>,
     running: Arc<AtomicBool>,
 }
@@ -76,7 +78,7 @@ impl Governor {
             engine,
             _booster: booster,
             ram_purger,
-            _app_nap: app_nap,
+            app_nap,
             job_throttler,
             running,
         }
@@ -114,26 +116,25 @@ impl Governor {
         Ok(())
     }
 
-    fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
-    }
-
     pub fn on_foreground_changed(&self, hwnd: WindowHandle) {
         let pid = hwnd.pid();
-        let target_pid = if pid == 0 { None } else { Some(Pid(pid)) };
+        if pid == 0 {
+            return;
+        }
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         let plan = self
             .engine
             .write()
-            .on_foreground_changed(target_pid, Self::now_ms());
-        self.execute_plan(&plan);
+            .on_foreground_changed(Some(Pid(pid)), now_ms);
 
-        if pid != 0 {
-            self.ram_purger.mark_active(pid);
-        }
+        self.execute_plan(&plan);
+        self.ram_purger.mark_active(pid);
+        self.app_nap.mark_active(pid);
     }
 
     pub fn on_window_minimized(&self, hwnd: WindowHandle) {
@@ -154,6 +155,7 @@ impl Governor {
         if pid == 0 {
             return;
         }
+        self.app_nap.mark_active(pid);
         self.ram_purger.mark_active(pid);
     }
 
@@ -161,90 +163,82 @@ impl Governor {
         if pid == 0 {
             return;
         }
-        let plan = self
-            .engine
-            .write()
-            .on_process_exit(Pid(pid), Self::now_ms());
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let plan = self.engine.write().on_process_exit(Pid(pid), now_ms);
         self.execute_plan(&plan);
+        self.job_throttler.on_process_exit(pid);
     }
 
-    pub fn execute_plan(&self, plan: &MutationPlan) {
+    fn execute_plan(&self, plan: &MutationPlan) {
+        let is_dry_run = { self.config.read().dry_run };
+
         for mutation in &plan.mutations {
-            self.apply_mutation(mutation, plan.is_dry_run);
-        }
-    }
+            if is_dry_run {
+                info!("[DRY-RUN] Plan mutation: {:?}", mutation);
+                continue;
+            }
 
-    fn apply_mutation(&self, mutation: &PolicyMutation, is_dry_run: bool) {
-        if is_dry_run {
-            info!("[DRY-RUN] Planned mutation: {:?}", mutation);
-            return;
-        }
-
-        match mutation {
-            PolicyMutation::SetPriorityClass { pid, new, .. } => {
-                #[cfg(windows)]
-                {
-                    let win32_flags = PROCESS_CREATION_FLAGS(new.to_win32());
-                    if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
-                        if let Err(e) = handle.set_priority(win32_flags) {
-                            debug!("Failed to set priority for PID {}: {:?}", pid, e);
-                        } else {
-                            debug!("⚡ Set PID {} priority to {}", pid, new);
+            match mutation {
+                PolicyMutation::SetPriorityClass { pid, new, .. } => {
+                    #[cfg(windows)]
+                    {
+                        let win32_flags = PROCESS_CREATION_FLAGS(new.to_win32());
+                        if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
+                            let _ = handle.set_priority(win32_flags);
                         }
                     }
-                }
-                #[cfg(not(windows))]
-                {
+                    #[cfg(not(windows))]
                     let _ = (pid, new);
                 }
-            }
-            PolicyMutation::SetEcoQos { pid, new, .. } => {
-                #[cfg(windows)]
-                {
-                    if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
-                        let state = PROCESS_POWER_THROTTLING_STATE {
-                            Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-                            ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-                            StateMask: match new {
-                                EcoQosState::Enabled => PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-                                EcoQosState::Disabled => 0,
-                            },
-                        };
-                        unsafe {
-                            let res = SetProcessInformation(
-                                handle.handle(),
-                                ProcessPowerThrottling,
-                                &state as *const _ as *const c_void,
-                                std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
-                            );
-                            if let Err(e) = res {
-                                debug!("Failed to set EcoQoS for PID {}: {:?}", pid, e);
-                            } else {
-                                debug!("🍃 EcoQoS {} for PID {}", new, pid);
+                PolicyMutation::SetEcoQos { pid, new, .. } => {
+                    #[cfg(windows)]
+                    {
+                        if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
+                            let state = PROCESS_POWER_THROTTLING_STATE {
+                                Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                                ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                                StateMask: match new {
+                                    EcoQosState::Enabled => {
+                                        PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+                                    }
+                                    EcoQosState::Disabled => 0,
+                                },
+                            };
+                            unsafe {
+                                let _ = SetProcessInformation(
+                                    handle.handle(),
+                                    ProcessPowerThrottling,
+                                    &state as *const _ as *const c_void,
+                                    std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+                                );
                             }
                         }
                     }
-                }
-                #[cfg(not(windows))]
-                {
+                    #[cfg(not(windows))]
                     let _ = (pid, new);
                 }
-            }
-            PolicyMutation::SetCpuRateLimit { pid, new_pct, .. } => {
-                if let Some(pct) = new_pct {
-                    if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
-                        let _ = self.job_throttler.throttle_process(
-                            pid.as_u32(),
-                            handle.handle(),
-                            *pct,
-                        );
+                PolicyMutation::SetCpuRateLimit { pid, new_pct, .. } => {
+                    if let Some(pct) = new_pct {
+                        if let Ok(handle) = ProcessHandle::open_for_governance(pid.as_u32()) {
+                            let _ = job_throttler_throttle(
+                                &self.job_throttler,
+                                pid.as_u32(),
+                                handle.handle(),
+                                *pct,
+                            );
+                        }
+                    } else {
+                        self.job_throttler.unthrottle_process(pid.as_u32());
                     }
-                } else {
-                    self.job_throttler.unthrottle_process(pid.as_u32());
                 }
-            }
-            PolicyMutation::ReleaseJob { pid } => {
-                self.job_throttler.on_process_exit(pid.as_u32());
+                PolicyMutation::ReleaseJob { pid } => {
+                    self.job_throttler.on_process_exit(pid.as_u32());
+                }
             }
         }
     }
@@ -344,6 +338,16 @@ impl Governor {
             }
         });
     }
+}
+
+#[inline]
+fn job_throttler_throttle(
+    throttler: &JobThrottleManager,
+    pid: u32,
+    handle: HANDLE,
+    rate_percent: u32,
+) -> anyhow::Result<()> {
+    throttler.throttle_process(pid, handle, rate_percent)
 }
 
 impl Drop for Governor {

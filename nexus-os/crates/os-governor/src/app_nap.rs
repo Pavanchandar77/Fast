@@ -1,4 +1,5 @@
 use crate::job_object::JobThrottleManager;
+use nexus_model::governor::{GovernorPolicy, GovernorPolicyConfig, CRITICAL_PROCESSES};
 use os_config::schema::GovernorConfig;
 use os_core::process::ProcessHandle;
 use parking_lot::RwLock;
@@ -6,40 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
+#[cfg(windows)]
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::Threading::GetCurrentProcessId;
 
-/// Hardcoded Windows NT critical processes that must NEVER be suspended or trimmed.
-const CRITICAL_SYSTEM_PROCESSES: &[&str] = &[
-    "csrss.exe",
-    "dwm.exe",
-    "lsass.exe",
-    "smss.exe",
-    "winlogon.exe",
-    "services.exe",
-    "svchost.exe",
-    "audiodg.exe",
-    "system",
-    "registry",
-    "fontdrvhost.exe",
-    "sihost.exe",
-    "ctfmon.exe",
-    "taskhostw.exe",
-    "conhost.exe",
-    "explorer.exe",
-    "searchhost.exe",
-    "shellexperiencehost.exe",
-    "startmenuexperiencehost.exe",
-    "nexus-os.exe",
-    "nexus-compositor.exe",
-    "nexus-governor.exe",
-    "nexus-vfs.exe",
-    "nexus-watchdog.exe",
-    "spoolsv.exe",
-    "securityhealthservice.exe",
-];
+/// Reference to critical Windows NT and Nexus shell processes from pure nexus-model domain.
+pub const CRITICAL_SYSTEM_PROCESSES: &[&str] = CRITICAL_PROCESSES;
 
 pub struct AppNapManager {
     config: Arc<RwLock<GovernorConfig>>,
@@ -51,7 +25,10 @@ pub struct AppNapManager {
 
 impl AppNapManager {
     pub fn new(config: Arc<RwLock<GovernorConfig>>) -> Self {
-        let own_pid = unsafe { GetCurrentProcessId() };
+        #[cfg(windows)]
+        let own_pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() };
+        #[cfg(not(windows))]
+        let own_pid = std::process::id();
         Self {
             config,
             process_last_active: Arc::new(RwLock::new(HashMap::new())),
@@ -88,33 +65,22 @@ impl AppNapManager {
     }
 
     pub fn is_process_excluded(&self, pid: u32) -> bool {
-        if pid == self.own_pid || pid == 0 || pid == 4 {
-            return true;
-        }
-
         let process_name = match get_process_name(pid) {
-            Ok(name) => name.to_lowercase(),
+            Ok(name) => name,
             Err(_) => return true,
         };
 
-        for &crit in CRITICAL_SYSTEM_PROCESSES {
-            if process_name == crit {
-                return true;
-            }
-        }
-
-        let user_exclusions = {
+        let policy_cfg = {
             let cfg = self.config.read();
-            cfg.exclude_from_nap.clone()
+            GovernorPolicyConfig {
+                user_exclusions: cfg.exclude_from_nap.clone(),
+                own_pid: self.own_pid,
+                ..Default::default()
+            }
         };
 
-        for excl in user_exclusions {
-            if process_name.contains(&excl.to_lowercase()) {
-                return true;
-            }
-        }
-
-        false
+        GovernorPolicy::is_exempt(pid, &process_name, &policy_cfg)
+            || GovernorPolicy::is_user_excluded(&process_name, &policy_cfg)
     }
 
     pub fn throttle_pid(&self, pid: u32) -> anyhow::Result<()> {
@@ -193,17 +159,17 @@ impl AppNapManager {
                         Err(_) => continue,
                     };
 
-                    if CRITICAL_SYSTEM_PROCESSES.iter().any(|&c| process_name == c) {
-                        continue;
-                    }
-
-                    let user_exclusions = {
+                    let policy_cfg = {
                         let cfg = config.read();
-                        cfg.exclude_from_nap.clone()
+                        GovernorPolicyConfig {
+                            user_exclusions: cfg.exclude_from_nap.clone(),
+                            own_pid,
+                            ..Default::default()
+                        }
                     };
-                    if user_exclusions
-                        .iter()
-                        .any(|ex| process_name.contains(&ex.to_lowercase()))
+
+                    if GovernorPolicy::is_exempt(pid, &process_name, &policy_cfg)
+                        || GovernorPolicy::is_user_excluded(&process_name, &policy_cfg)
                     {
                         continue;
                     }
@@ -226,6 +192,7 @@ impl AppNapManager {
     }
 }
 
+#[cfg(windows)]
 pub fn get_process_name(pid: u32) -> anyhow::Result<String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
@@ -254,4 +221,9 @@ pub fn get_process_name(pid: u32) -> anyhow::Result<String> {
         let _ = windows::Win32::Foundation::CloseHandle(snapshot);
         anyhow::bail!("PID not found")
     }
+}
+
+#[cfg(not(windows))]
+pub fn get_process_name(pid: u32) -> anyhow::Result<String> {
+    Ok(format!("process-{}", pid))
 }

@@ -1,13 +1,24 @@
 use parking_lot::RwLock;
 use std::collections::HashMap;
+
+#[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(windows)]
 use tracing::{debug, info, warn};
+#[cfg(windows)]
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows::Win32::Foundation::CloseHandle;
+#[cfg(windows)]
+pub use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectCpuRateControlInformation,
     SetInformationJobObject, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOB_OBJECT_CPU_RATE_CONTROL,
 };
+
+#[cfg(not(windows))]
+pub type HANDLE = usize;
 
 #[derive(Clone, Copy)]
 pub struct SendHandle(pub HANDLE);
@@ -15,15 +26,19 @@ unsafe impl Send for SendHandle {}
 unsafe impl Sync for SendHandle {}
 
 // Rate control flags: Enable rate control (0x1) + Hard Cap (0x4)
+#[cfg(windows)]
 const RATE_CONTROL_ENABLE: u32 = 0x1;
+#[cfg(windows)]
 const RATE_CONTROL_HARD_CAP: u32 = 0x4;
 
 #[derive(Default)]
 pub struct JobThrottleManager {
     // Permanent job mapping per PID until process terminates
+    #[allow(dead_code)]
     jobs: RwLock<HashMap<u32, SendHandle>>,
 }
 
+#[cfg(windows)]
 impl JobThrottleManager {
     pub fn new() -> Self {
         Self::default()
@@ -136,6 +151,7 @@ impl JobThrottleManager {
     }
 }
 
+#[cfg(windows)]
 impl Drop for JobThrottleManager {
     fn drop(&mut self) {
         let mut map = self.jobs.write();
@@ -145,4 +161,24 @@ impl Drop for JobThrottleManager {
             }
         }
     }
+}
+
+#[cfg(not(windows))]
+impl JobThrottleManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn throttle_process(
+        &self,
+        _pid: u32,
+        _process_handle: HANDLE,
+        _rate_percent: u32,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    pub fn unthrottle_process(&self, _pid: u32) {}
+
+    pub fn on_process_exit(&self, _pid: u32) {}
 }

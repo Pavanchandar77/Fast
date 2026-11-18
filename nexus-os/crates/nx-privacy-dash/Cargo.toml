@@ -1,0 +1,19 @@
+[package]
+name = "nx-privacy-dash"
+description = "Nexus-OS privacy dashboard: CapabilityAccessManager indicators, permission audit, clipboard alert, network view model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = "1.0"
+thiserror = { workspace = true }
+regex = "1.10"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_Registry"] }
+
+[dev-dependencies]
+proptest = "1.5"
