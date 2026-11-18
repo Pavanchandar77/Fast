@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
+nx-governor-policy = { path = "../nx-governor-policy" }
 windows.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
