@@ -145,7 +145,11 @@ impl LayoutOptions {
         Self {
             inner_gap: self.inner_gap.max(0),
             outer_gap: self.outer_gap.max(0),
-            master_ratio: self.master_ratio.clamp(0.1, 0.9),
+            master_ratio: if self.master_ratio.is_finite() {
+                self.master_ratio.clamp(0.1, 0.9)
+            } else {
+                0.55
+            },
             top_bar_height: self.top_bar_height.max(0),
         }
     }
@@ -182,8 +186,10 @@ impl LayoutEngine {
         let opts = opts.sanitize();
         let usable = Self::compute_usable_area(screen, &opts);
         if usable.is_empty() {
+            // Degenerate work area: every window gets that rect. Empty rects do not
+            // overlap and stay inside the work area. Never invent geometry outside it.
             for &w in windows {
-                result.insert(w, Rect::new(screen.x, screen.y, 10, 10));
+                result.insert(w, usable);
             }
             return result;
         }
@@ -211,6 +217,135 @@ impl LayoutEngine {
         result
     }
 
+    /// Full requested gap when every tile can keep at least one pixel, otherwise zero.
+    /// A partial gap would fail the "gaps respected" check (distance must be 0 or >= gap).
+    fn gap_that_fits(span: i32, count: i32, requested_gap: i32) -> i32 {
+        if count <= 1 || span <= 0 {
+            return 0;
+        }
+        let gap = requested_gap.max(0);
+        let gaps = count - 1;
+        let room = span.saturating_sub(count);
+        if gaps > 0 && room / gaps >= gap {
+            gap
+        } else {
+            0
+        }
+    }
+
+    /// Split `span` into (first, gap_used, second) with first + gap_used + second == span.
+    /// Returns None when two positive panes cannot fit.
+    fn split_span(span: i32, ratio: f32, requested_gap: i32) -> Option<(i32, i32, i32)> {
+        if span < 2 {
+            return None;
+        }
+        let gap_used = Self::gap_that_fits(span, 2, requested_gap);
+        let available = span - gap_used;
+        let ratio = if ratio.is_finite() {
+            ratio.clamp(0.1, 0.9)
+        } else {
+            0.55
+        };
+        let mut first = (available as f32 * ratio).round() as i32;
+        if first < 1 {
+            first = 1;
+        }
+        if first > available - 1 {
+            first = available - 1;
+        }
+        Some((first, gap_used, available - first))
+    }
+
+    fn place_column(
+        area: Rect,
+        windows: &[WindowId],
+        inner_gap: i32,
+        out: &mut HashMap<WindowId, Rect>,
+    ) {
+        let n = windows.len();
+        if n == 0 {
+            return;
+        }
+        if n == 1 || area.height <= 0 || area.width <= 0 {
+            for &w in windows {
+                out.insert(w, area);
+            }
+            return;
+        }
+        let n_i = n as i32;
+        let gap_used = Self::gap_that_fits(area.height, n_i, inner_gap);
+        let slot = area.height.saturating_sub(gap_used.saturating_mul(n_i - 1)) / n_i;
+        let mut cursor = area.y;
+        for (i, &w) in windows.iter().enumerate() {
+            let h = if i + 1 == n {
+                area.bottom().saturating_sub(cursor).max(0)
+            } else {
+                slot
+            };
+            out.insert(w, Rect::new(area.x, cursor, area.width, h));
+            if i + 1 != n {
+                cursor = cursor.saturating_add(h).saturating_add(gap_used);
+            }
+        }
+    }
+
+    fn place_row(
+        area: Rect,
+        windows: &[WindowId],
+        inner_gap: i32,
+        out: &mut HashMap<WindowId, Rect>,
+    ) {
+        let n = windows.len();
+        if n == 0 {
+            return;
+        }
+        if n == 1 || area.width <= 0 || area.height <= 0 {
+            for &w in windows {
+                out.insert(w, area);
+            }
+            return;
+        }
+        let n_i = n as i32;
+        let gap_used = Self::gap_that_fits(area.width, n_i, inner_gap);
+        let slot = area.width.saturating_sub(gap_used.saturating_mul(n_i - 1)) / n_i;
+        let mut cursor = area.x;
+        for (i, &w) in windows.iter().enumerate() {
+            let w_px = if i + 1 == n {
+                area.right().saturating_sub(cursor).max(0)
+            } else {
+                slot
+            };
+            out.insert(w, Rect::new(cursor, area.y, w_px, area.height));
+            if i + 1 != n {
+                cursor = cursor.saturating_add(w_px).saturating_add(gap_used);
+            }
+        }
+    }
+
+    /// Pack windows into `area` on the axis that can separate them.
+    fn pack_tiles(
+        area: Rect,
+        windows: &[WindowId],
+        inner_gap: i32,
+        out: &mut HashMap<WindowId, Rect>,
+    ) {
+        if windows.is_empty() {
+            return;
+        }
+        let n = windows.len() as i32;
+        let col_ok = area.height >= n && area.width > 0;
+        let row_ok = area.width >= n && area.height > 0;
+        if col_ok && (area.height >= area.width || !row_ok) {
+            Self::place_column(area, windows, inner_gap, out);
+        } else if row_ok {
+            Self::place_row(area, windows, inner_gap, out);
+        } else {
+            for &w in windows {
+                out.insert(w, area);
+            }
+        }
+    }
+
     fn layout_master_stack(
         usable: &Rect,
         windows: &[WindowId],
@@ -223,45 +358,28 @@ impl LayoutEngine {
             return;
         }
 
-        let inner_gap = opts.inner_gap;
-        let master_ratio = opts.master_ratio;
-
-        // If usable width is very small, fall back to simple stack
-        if usable.width <= inner_gap * 2 {
-            for &w in windows {
-                out.insert(w, *usable);
-            }
+        let inner_gap = opts.inner_gap.max(0);
+        // A horizontal master/stack split needs two positive columns. Otherwise
+        // pack every window along the axis that can actually separate them.
+        let Some((master_w, gap_x, stack_w)) =
+            Self::split_span(usable.width, opts.master_ratio, inner_gap)
+        else {
+            Self::pack_tiles(*usable, windows, inner_gap, out);
             return;
-        }
+        };
 
-        let master_w = (((usable.width as f32 * master_ratio) - (inner_gap as f32 / 2.0)).round()
-            as i32)
-            .clamp(20, usable.width - inner_gap - 20);
-        let stack_w = usable.width - master_w - inner_gap;
-
-        // Master pane
         out.insert(
             windows[0],
             Rect::new(usable.x, usable.y, master_w, usable.height),
         );
 
-        let stack_count = count - 1;
-        let total_stack_gaps = inner_gap * (stack_count as i32 - 1);
-        let available_stack_h = (usable.height - total_stack_gaps).max(stack_count as i32);
-        let slot_h = available_stack_h / stack_count as i32;
-        let stack_x = usable.x + master_w + inner_gap;
-
-        for (i, &w) in windows.iter().skip(1).enumerate() {
-            let stack_y = usable.y + (i as i32 * (slot_h + inner_gap));
-            let h = if i == stack_count - 1 {
-                // Absorb integer rounding differences into final tile
-                (usable.bottom() - stack_y).max(1)
-            } else {
-                slot_h.max(1)
-            };
-
-            out.insert(w, Rect::new(stack_x, stack_y, stack_w.max(1), h));
-        }
+        let stack_area = Rect::new(
+            usable.x + master_w + gap_x,
+            usable.y,
+            stack_w,
+            usable.height,
+        );
+        Self::place_column(stack_area, &windows[1..], inner_gap, out);
     }
 
     fn layout_dwindle(
@@ -276,44 +394,43 @@ impl LayoutEngine {
             return;
         }
 
-        let inner_gap = opts.inner_gap;
+        let inner_gap = opts.inner_gap.max(0);
         let mut cur_rect = *usable;
-        let mut split_horizontal = true; // Horizontal split creates left & right; vertical creates top & bottom
+        // Horizontal split creates left and right; vertical creates top and bottom.
+        let mut split_horizontal = true;
 
         for (i, &w) in windows.iter().enumerate() {
             if i == count - 1 {
-                // Last window takes the entire remaining rectangle
                 out.insert(w, cur_rect);
                 break;
             }
 
+            let span = if split_horizontal {
+                cur_rect.width
+            } else {
+                cur_rect.height
+            };
+            let Some((pane, gap_used, rest)) = Self::split_span(span, opts.master_ratio, inner_gap)
+            else {
+                Self::pack_tiles(cur_rect, &windows[i..], inner_gap, out);
+                break;
+            };
+
             if split_horizontal {
-                let available_w = (cur_rect.width - inner_gap).max(2);
-                let half_w = (available_w as f32 * opts.master_ratio).round() as i32;
-                let w1 = half_w.clamp(1, available_w - 1);
-                let w2 = cur_rect.width - w1 - inner_gap;
-
-                out.insert(w, Rect::new(cur_rect.x, cur_rect.y, w1, cur_rect.height));
-
+                out.insert(w, Rect::new(cur_rect.x, cur_rect.y, pane, cur_rect.height));
                 cur_rect = Rect::new(
-                    cur_rect.x + w1 + inner_gap,
+                    cur_rect.x + pane + gap_used,
                     cur_rect.y,
-                    w2.max(1),
+                    rest,
                     cur_rect.height,
                 );
             } else {
-                let available_h = (cur_rect.height - inner_gap).max(2);
-                let half_h = (available_h as f32 * opts.master_ratio).round() as i32;
-                let h1 = half_h.clamp(1, available_h - 1);
-                let h2 = cur_rect.height - h1 - inner_gap;
-
-                out.insert(w, Rect::new(cur_rect.x, cur_rect.y, cur_rect.width, h1));
-
+                out.insert(w, Rect::new(cur_rect.x, cur_rect.y, cur_rect.width, pane));
                 cur_rect = Rect::new(
                     cur_rect.x,
-                    cur_rect.y + h1 + inner_gap,
+                    cur_rect.y + pane + gap_used,
                     cur_rect.width,
-                    h2.max(1),
+                    rest,
                 );
             }
 
@@ -358,8 +475,8 @@ impl LayoutValidator {
         rects.iter().all(|r| bounds.contains_rect(r))
     }
 
-    /// Validates that pairwise horizontal/vertical distance between distinct non-overlapping
-    /// tiles respects the minimum inner gap when adjacent.
+    /// Validates that directly adjacent tiles either touch or keep the full inner gap.
+    /// A tile sitting between two others blocks the pair, so only real neighbors are checked.
     pub fn verify_gaps_respected(inner_gap: i32, rects: &[Rect]) -> bool {
         if inner_gap <= 0 || rects.len() <= 1 {
             return true;
@@ -367,41 +484,63 @@ impl LayoutValidator {
 
         for i in 0..rects.len() {
             for j in (i + 1)..rects.len() {
-                let a = &rects[i];
-                let b = &rects[j];
-
-                // If they share horizontal span
-                let y_overlap = a.y < b.bottom() && a.bottom() > b.y;
-                if y_overlap {
-                    let dx = if a.right() <= b.x {
-                        b.x - a.right()
-                    } else if b.right() <= a.x {
-                        a.x - b.right()
-                    } else {
-                        0
-                    };
-                    if dx < inner_gap && dx != 0 {
-                        return false;
-                    }
-                }
-
-                // If they share vertical span
-                let x_overlap = a.x < b.right() && a.right() > b.x;
-                if x_overlap {
-                    let dy = if a.bottom() <= b.y {
-                        b.y - a.bottom()
-                    } else if b.bottom() <= a.y {
-                        a.y - b.bottom()
-                    } else {
-                        0
-                    };
-                    if dy < inner_gap && dy != 0 {
-                        return false;
-                    }
+                if !Self::adjacent_gap_ok(inner_gap, i, j, rects) {
+                    return false;
                 }
             }
         }
         true
+    }
+
+    fn adjacent_gap_ok(inner_gap: i32, i: usize, j: usize, rects: &[Rect]) -> bool {
+        let a = &rects[i];
+        let b = &rects[j];
+
+        let overlap_top = a.y.max(b.y);
+        let overlap_bottom = a.bottom().min(b.bottom());
+        if overlap_bottom > overlap_top {
+            let (left, right) = if a.right() <= b.x {
+                (a, b)
+            } else if b.right() <= a.x {
+                (b, a)
+            } else {
+                return true;
+            };
+            let dx = right.x - left.right();
+            if dx > 0 && dx < inner_gap {
+                let strip = Rect::new(left.right(), overlap_top, dx, overlap_bottom - overlap_top);
+                if !Self::strip_blocked(strip, i, j, rects) {
+                    return false;
+                }
+            }
+        }
+
+        let overlap_left = a.x.max(b.x);
+        let overlap_right = a.right().min(b.right());
+        if overlap_right > overlap_left {
+            let (top, bottom) = if a.bottom() <= b.y {
+                (a, b)
+            } else if b.bottom() <= a.y {
+                (b, a)
+            } else {
+                return true;
+            };
+            let dy = bottom.y - top.bottom();
+            if dy > 0 && dy < inner_gap {
+                let strip = Rect::new(overlap_left, top.bottom(), overlap_right - overlap_left, dy);
+                if !Self::strip_blocked(strip, i, j, rects) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn strip_blocked(strip: Rect, i: usize, j: usize, rects: &[Rect]) -> bool {
+        rects
+            .iter()
+            .enumerate()
+            .any(|(k, rect)| k != i && k != j && rect.intersects(&strip))
     }
 }
 
@@ -533,6 +672,78 @@ mod tests {
         assert_eq!(sanitized.outer_gap, 0);
         assert_eq!(sanitized.master_ratio, 0.9);
         assert_eq!(sanitized.top_bar_height, 0);
+
+        let nan = LayoutOptions {
+            inner_gap: 4,
+            outer_gap: 4,
+            master_ratio: f32::NAN,
+            top_bar_height: 8,
+        };
+        assert_eq!(nan.sanitize().master_ratio, 0.55);
+    }
+
+    #[test]
+    fn test_master_stack_tight_work_area_does_not_panic() {
+        // Old master width used clamp(20, width - gap - 20), which panics when
+        // the upper bound drops below 20. 80px screen, 20px outer gap → 40px usable.
+        let screen = Rect::new(0, 0, 80, 240);
+        let opts = LayoutOptions {
+            inner_gap: 10,
+            outer_gap: 20,
+            master_ratio: 0.55,
+            top_bar_height: 28,
+        };
+        let usable = LayoutEngine::compute_usable_area(screen, &opts);
+        let windows: Vec<WindowId> = (1..=4).map(WindowId::new).collect();
+        let layout = LayoutEngine::compute_layout(LayoutKind::MasterStack, screen, &windows, &opts);
+        assert_eq!(layout.len(), windows.len());
+        let rects: Vec<Rect> = windows.iter().map(|w| layout[w]).collect();
+        assert!(LayoutValidator::verify_within_bounds(&usable, &rects));
+        assert!(LayoutValidator::verify_no_overlap(&rects));
+        assert!(LayoutValidator::verify_gaps_respected(
+            opts.inner_gap,
+            &rects
+        ));
+    }
+
+    #[test]
+    fn test_dwindle_narrow_area_stays_inside() {
+        let screen = Rect::new(10, 10, 160, 120);
+        let opts = LayoutOptions {
+            inner_gap: 16,
+            outer_gap: 8,
+            master_ratio: 0.62,
+            top_bar_height: 12,
+        };
+        let usable = LayoutEngine::compute_usable_area(screen, &opts);
+        let windows: Vec<WindowId> = (1..=6).map(WindowId::new).collect();
+        let layout = LayoutEngine::compute_layout(LayoutKind::Dwindle, screen, &windows, &opts);
+        assert_eq!(layout.len(), windows.len());
+        let rects: Vec<Rect> = windows.iter().map(|w| layout[w]).collect();
+        assert!(LayoutValidator::verify_within_bounds(&usable, &rects));
+        assert!(LayoutValidator::verify_no_overlap(&rects));
+        assert!(LayoutValidator::verify_gaps_respected(
+            opts.inner_gap,
+            &rects
+        ));
+    }
+
+    #[test]
+    fn test_empty_usable_area_does_not_escape_or_panic() {
+        let screen = Rect::new(0, 0, 40, 40);
+        let opts = LayoutOptions {
+            inner_gap: 4,
+            outer_gap: 30,
+            master_ratio: 0.5,
+            top_bar_height: 20,
+        };
+        let usable = LayoutEngine::compute_usable_area(screen, &opts);
+        assert!(usable.is_empty());
+        let windows = vec![WindowId::new(1), WindowId::new(2)];
+        let layout = LayoutEngine::compute_layout(LayoutKind::MasterStack, screen, &windows, &opts);
+        let rects: Vec<Rect> = layout.values().copied().collect();
+        assert!(LayoutValidator::verify_within_bounds(&usable, &rects));
+        assert!(LayoutValidator::verify_no_overlap(&rects));
     }
 
     #[test]
@@ -595,6 +806,13 @@ mod tests {
 
         let r_out = Rect::new(950, 950, 100, 100);
         assert!(!LayoutValidator::verify_within_bounds(&bounds, &[r_out]));
+
+        let touching = [Rect::new(0, 0, 10, 10), Rect::new(10, 0, 10, 10)];
+        assert!(LayoutValidator::verify_gaps_respected(8, &touching));
+        let short_gap = [Rect::new(0, 0, 10, 10), Rect::new(12, 0, 10, 10)];
+        assert!(!LayoutValidator::verify_gaps_respected(8, &short_gap));
+        let full_gap = [Rect::new(0, 0, 10, 10), Rect::new(18, 0, 10, 10)];
+        assert!(LayoutValidator::verify_gaps_respected(8, &full_gap));
     }
 
     #[test]
@@ -610,11 +828,12 @@ mod tests {
 
         #[test]
         fn proptest_master_stack_no_overlap_and_inside_bounds(
-            screen_w in 800i32..3840i32,
-            screen_h in 600i32..2160i32,
-            inner_gap in 0i32..30i32,
-            outer_gap in 0i32..30i32,
-            master_ratio in 0.2f32..0.8f32,
+            screen_w in 64i32..3840i32,
+            screen_h in 64i32..2160i32,
+            inner_gap in 0i32..48i32,
+            outer_gap in 0i32..40i32,
+            top_bar in 0i32..64i32,
+            master_ratio in 0.1f32..0.9f32,
             win_count in 1usize..12usize,
         ) {
             let screen = Rect::new(0, 0, screen_w, screen_h);
@@ -622,7 +841,7 @@ mod tests {
                 inner_gap,
                 outer_gap,
                 master_ratio,
-                top_bar_height: 28,
+                top_bar_height: top_bar,
             };
             let usable = LayoutEngine::compute_usable_area(screen, &opts);
             let windows: Vec<WindowId> = (1..=win_count).map(|i| WindowId::new(i as u64)).collect();
@@ -658,11 +877,12 @@ mod tests {
 
         #[test]
         fn proptest_dwindle_no_overlap_and_inside_bounds(
-            screen_w in 800i32..3840i32,
-            screen_h in 600i32..2160i32,
-            inner_gap in 0i32..20i32,
-            outer_gap in 0i32..20i32,
-            master_ratio in 0.3f32..0.7f32,
+            screen_w in 120i32..3840i32,
+            screen_h in 120i32..2160i32,
+            inner_gap in 0i32..32i32,
+            outer_gap in 0i32..24i32,
+            top_bar in 0i32..40i32,
+            master_ratio in 0.2f32..0.8f32,
             win_count in 1usize..10usize,
         ) {
             let screen = Rect::new(0, 0, screen_w, screen_h);
@@ -670,7 +890,7 @@ mod tests {
                 inner_gap,
                 outer_gap,
                 master_ratio,
-                top_bar_height: 28,
+                top_bar_height: top_bar,
             };
             let usable = LayoutEngine::compute_usable_area(screen, &opts);
             let windows: Vec<WindowId> = (1..=win_count).map(|i| WindowId::new(i as u64)).collect();
