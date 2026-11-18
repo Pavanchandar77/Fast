@@ -10,6 +10,7 @@
 //!   reader on Windows ([`mft`], [`usn`]) and a portable parallel walker
 //!   ([`walker`]) for other file systems and Linux.
 
+pub mod disk;
 pub mod engine;
 pub mod frecency;
 pub mod matcher;
@@ -42,18 +43,18 @@ pub mod flags {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Node {
-    name_off: u32,
-    fold_off: u32,
-    parent: NodeId,
-    name_len: u16,
-    fold_len: u16,
-    flags: u16,
+pub(crate) struct Node {
+    pub(crate) name_off: u32,
+    pub(crate) fold_off: u32,
+    pub(crate) parent: NodeId,
+    pub(crate) name_len: u16,
+    pub(crate) fold_len: u16,
+    pub(crate) flags: u16,
 }
 
 /// Identity hasher: keys are already well-mixed 64-bit hashes.
 #[derive(Default)]
-struct IdHasher(u64);
+pub(crate) struct IdHasher(u64);
 
 impl Hasher for IdHasher {
     fn finish(&self) -> u64 {
@@ -69,7 +70,7 @@ impl Hasher for IdHasher {
     }
 }
 
-type IdMap = HashMap<u64, NodeId, BuildHasherDefault<IdHasher>>;
+pub(crate) type IdMap = HashMap<u64, NodeId, BuildHasherDefault<IdHasher>>;
 
 /// A change to apply to an index (from a file watcher, the USN journal
 /// translated to paths, or nx-fs's own file operations).
@@ -113,15 +114,14 @@ pub fn indexer_for(volume: &crate::volumes::Volume) -> Box<dyn VolumeIndexer> {
 /// Compact path store.
 #[derive(Debug, Default)]
 pub struct PathIndex {
-    arena: Vec<u8>,
-    nodes: Vec<Node>,
-    masks: Vec<u64>,
-    children: IdMap,
-    /// Hash collisions within one parent (astronomically rare): (key, id).
-    overflow: Vec<(u64, NodeId)>,
-    roots: Vec<NodeId>,
-    live: usize,
-    garbage_bytes: usize,
+    pub(crate) arena: Vec<u8>,
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) masks: Vec<u64>,
+    pub(crate) children: IdMap,
+    pub(crate) overflow: Vec<(u64, NodeId)>,
+    pub(crate) roots: Vec<NodeId>,
+    pub(crate) live: usize,
+    pub(crate) garbage_bytes: usize,
 }
 
 /// Lower-case a name for matching. ASCII fast path; full Unicode otherwise.

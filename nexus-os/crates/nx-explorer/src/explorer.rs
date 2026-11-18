@@ -222,6 +222,20 @@ impl Explorer {
                     self.reload(id, &mut fx);
                 }
             }
+            Msg::DirDiff { dir, diffs } => {
+                let ids: Vec<PaneId> = self
+                    .tabs
+                    .iter()
+                    .flat_map(|t| t.panes.iter())
+                    .filter(|p| p.location == Location::Dir(dir.clone()))
+                    .map(|p| p.id)
+                    .collect();
+                for id in ids {
+                    if let Some(pane) = self.pane_by_id_mut(id) {
+                        pane.apply_diffs(&diffs);
+                    }
+                }
+            }
             Msg::Viewport {
                 pane,
                 first_row,

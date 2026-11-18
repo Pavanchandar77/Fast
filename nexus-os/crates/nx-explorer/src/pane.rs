@@ -169,6 +169,70 @@ impl Pane {
         self.pending_select = None;
     }
 
+    /// Apply incremental diffs from directory watcher or file ops without full reload.
+    pub fn apply_diffs(&mut self, diffs: &[crate::action::DirDiff]) {
+        use crate::action::DirDiff;
+        let mut need_recompute = false;
+        for diff in diffs {
+            match diff {
+                DirDiff::Created(entry) => {
+                    if let Some(idx) = self.entries.iter().position(|e| e.name == entry.name) {
+                        self.entries[idx] = entry.clone();
+                        need_recompute = true;
+                    } else {
+                        let idx = self.entries.len();
+                        self.entries.push(entry.clone());
+                        if self.passes(&self.entries[idx]) {
+                            let spec = self.sort;
+                            let entries = &self.entries;
+                            let pos = self
+                                .visible
+                                .binary_search_by(|&existing| cmp_idx(entries, existing, idx, spec))
+                                .unwrap_or_else(|e| e);
+                            self.visible.insert(pos, idx);
+                        }
+                    }
+                }
+                DirDiff::Removed(name) => {
+                    self.selected.remove(name);
+                    if let Some(vpos) = self
+                        .visible
+                        .iter()
+                        .position(|&idx| &self.entries[idx].name == name)
+                    {
+                        self.visible.remove(vpos);
+                    }
+                    if let Some(idx) = self.entries.iter().position(|e| &e.name == name) {
+                        self.entries.remove(idx);
+                        for v in &mut self.visible {
+                            if *v > idx {
+                                *v -= 1;
+                            }
+                        }
+                    }
+                }
+                DirDiff::Updated(entry) => {
+                    if let Some(idx) = self.entries.iter().position(|e| e.name == entry.name) {
+                        self.entries[idx] = entry.clone();
+                        need_recompute = true;
+                    }
+                }
+                DirDiff::Renamed { from, to } => {
+                    self.selected.remove(from);
+                    if let Some(idx) = self.entries.iter().position(|e| &e.name == from) {
+                        self.entries[idx] = to.clone();
+                        need_recompute = true;
+                    }
+                }
+            }
+        }
+        if need_recompute {
+            self.recompute();
+        } else {
+            self.clamp_cursor();
+        }
+    }
+
     /// Replace contents with search hits.
     pub fn set_search_results(&mut self, hits: Vec<(DirEntry, PathBuf)>) {
         let (entries, paths): (Vec<_>, Vec<_>) = hits.into_iter().unzip();

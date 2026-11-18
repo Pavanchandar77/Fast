@@ -1,6 +1,6 @@
 //! End-to-end tests of the Explorer state machine.
 
-use crate::action::{Action, CursorMove, Effect, Msg, ViewKind};
+use crate::action::{Action, CursorMove, DirDiff, Effect, Msg, ViewKind};
 use crate::explorer::{Explorer, Focus};
 use crate::keymap::{Chord, Key, Mods};
 use crate::pane::Location;
@@ -317,6 +317,47 @@ fn rename_to_same_name_is_noop() {
     act(&mut ex, Action::BeginRename);
     assert!(key(&mut ex, Key::Enter, Mods::NONE).is_empty());
     assert_eq!(ex.focus, Focus::Pane);
+}
+
+#[test]
+fn watcher_diff_application_without_reload() {
+    let mut ex = setup(&["a.txt", "b.txt", "c.txt"]);
+    assert_eq!(ex.pane().unwrap().len(), 3);
+
+    // 1. Create a new file d.txt via DirDiff
+    let d_entry = e("d.txt");
+    let fx = ex.update(Msg::DirDiff {
+        dir: "/home/me".into(),
+        diffs: vec![DirDiff::Created(d_entry.clone())],
+    });
+    // Applying diffs produces NO reload effect!
+    assert!(
+        fx.is_empty(),
+        "diff application must not emit reload effects"
+    );
+    assert_eq!(ex.pane().unwrap().len(), 4);
+    assert!(ex.pane().unwrap().row_of(&"d.txt".into()).is_some());
+
+    // 2. Rename b.txt -> b_renamed.txt
+    let b_renamed = e("b_renamed.txt");
+    ex.update(Msg::DirDiff {
+        dir: "/home/me".into(),
+        diffs: vec![DirDiff::Renamed {
+            from: "b.txt".into(),
+            to: b_renamed,
+        }],
+    });
+    assert_eq!(ex.pane().unwrap().len(), 4);
+    assert!(ex.pane().unwrap().row_of(&"b.txt".into()).is_none());
+    assert!(ex.pane().unwrap().row_of(&"b_renamed.txt".into()).is_some());
+
+    // 3. Remove a.txt
+    ex.update(Msg::DirDiff {
+        dir: "/home/me".into(),
+        diffs: vec![DirDiff::Removed("a.txt".into())],
+    });
+    assert_eq!(ex.pane().unwrap().len(), 3);
+    assert!(ex.pane().unwrap().row_of(&"a.txt".into()).is_none());
 }
 
 #[test]
