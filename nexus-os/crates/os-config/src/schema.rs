@@ -218,6 +218,12 @@ pub struct GovernorConfig {
     pub timer_resolution_0_5ms: bool,
     pub unpark_cpu_cores: bool,
     pub suspend_shell_shaders_on_fullscreen: bool,
+    /// Opt-in only. Default is false: Nexus never calls `NtSuspendProcess`.
+    #[serde(default)]
+    pub allow_nt_suspend: bool,
+    /// Process names allowed to receive HIGH or REALTIME. Empty means never.
+    #[serde(default)]
+    pub priority_whitelist: Vec<String>,
 }
 
 impl Default for GovernorConfig {
@@ -227,7 +233,7 @@ impl Default for GovernorConfig {
             ram_purge_delay_secs: 10,
             trim_on_minimize: true,
             trim_on_unfocused: true,
-            app_nap_enabled: true,
+            app_nap_enabled: false,
             app_nap_idle_secs: 30,
             cpu_throttle_percent: 1,
             exclude_from_nap: vec![
@@ -240,9 +246,9 @@ impl Default for GovernorConfig {
                 "rustc.exe".into(),
                 "cl.exe".into(),
             ],
-            dynamic_priority_boost: true,
-            foreground_priority: "High".into(),
-            background_priority: "BelowNormal".into(),
+            dynamic_priority_boost: false,
+            foreground_priority: "AboveNormal".into(),
+            background_priority: "Normal".into(),
             boost_gpu_scheduling: true,
             perceived_fast_close: true,
             force_terminate_unresponsive_ms: 400,
@@ -250,6 +256,8 @@ impl Default for GovernorConfig {
             timer_resolution_0_5ms: true,
             unpark_cpu_cores: true,
             suspend_shell_shaders_on_fullscreen: true,
+            allow_nt_suspend: false,
+            priority_whitelist: Vec::new(),
         }
     }
 }
@@ -386,5 +394,41 @@ impl SystemConfig {
     pub fn load_from_file(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         Self::parse(&content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn governor_defaults_cannot_brick() {
+        let cfg = GovernorConfig::default();
+        assert!(!cfg.app_nap_enabled);
+        assert!(!cfg.allow_nt_suspend);
+        assert!(!cfg.dynamic_priority_boost);
+        assert_eq!(cfg.background_priority, "Normal");
+        assert_eq!(cfg.foreground_priority, "AboveNormal");
+        assert!(cfg.priority_whitelist.is_empty());
+    }
+
+    #[test]
+    fn shipped_system_toml_uses_safe_governor_defaults() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/system.toml");
+        let cfg = SystemConfig::load_from_file(&path).expect("parse shipped config");
+        assert!(!cfg.governor.app_nap_enabled);
+        assert!(!cfg.governor.allow_nt_suspend);
+        assert!(!cfg.governor.dynamic_priority_boost);
+        assert!(!cfg
+            .governor
+            .background_priority
+            .eq_ignore_ascii_case("BelowNormal"));
+        assert!(!cfg
+            .governor
+            .foreground_priority
+            .eq_ignore_ascii_case("High"));
+        assert!(cfg.governor.priority_whitelist.is_empty());
+        assert_eq!(cfg.general.fail_safe_hotkey, "Ctrl+Alt+Shift+Esc");
     }
 }
