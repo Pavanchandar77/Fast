@@ -7,10 +7,8 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
-use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SetWindowPos, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER,
-};
+use windows::Win32::Foundation::RECT;
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 #[derive(Debug, Clone)]
 pub struct ManagedWindow {
@@ -220,17 +218,12 @@ impl WindowManager {
             if !win.spring.is_at_rest() {
                 win.spring.step(dt);
                 let (x, y, w, h) = win.spring.current_rect();
-                unsafe {
-                    let _ = SetWindowPos(
-                        win.handle.0,
-                        HWND::default(),
-                        x,
-                        y,
-                        w,
-                        h,
-                        SWP_NOACTIVATE | SWP_NOZORDER,
-                    );
-                }
+                let _ = win.handle.set_rect(RECT {
+                    left: x,
+                    top: y,
+                    right: x.saturating_add(w),
+                    bottom: y.saturating_add(h),
+                });
             }
         }
     }

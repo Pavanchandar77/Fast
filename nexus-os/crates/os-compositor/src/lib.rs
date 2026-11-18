@@ -11,6 +11,6 @@ pub use gpu::{
     CommandBar, GpuContext, TopBar,
 };
 pub use hooks::WinEventListener;
-pub use hotkeys::GlobalKeyboardHook;
+pub use hotkeys::{pump_messages, GlobalKeyboardHook};
 pub use manager::WindowManager;
 pub use spring::{SpringConfig, SpringSolver};

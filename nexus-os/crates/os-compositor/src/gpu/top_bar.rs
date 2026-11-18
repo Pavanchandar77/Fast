@@ -10,9 +10,7 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Shell::{
-    SHAppBarMessage, ABE_TOP, ABM_NEW, ABM_REMOVE, ABM_SETPOS, APPBARDATA,
-};
+use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_TOP, ABM_REMOVE, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, RegisterClassExW, ShowWindow,
     CS_HREDRAW, CS_VREDRAW, HMENU, SM_CXSCREEN, SW_SHOWNOACTIVATE, WNDCLASSEXW,
@@ -113,25 +111,19 @@ pub fn create_top_bar_window() -> anyhow::Result<HWND> {
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
 
-    // Register as an official Windows AppBar to dock and reserve the desktop area
-    unsafe {
-        let mut abd = APPBARDATA {
-            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-            hWnd: hwnd,
-            uCallbackMessage: 0,
-            uEdge: ABE_TOP,
-            rc: RECT {
-                left: 0,
-                top: 0,
-                right: screen_width as i32,
-                bottom: TOP_BAR_HEIGHT as i32,
-            },
-            lParam: LPARAM(0),
-        };
-        SHAppBarMessage(ABM_NEW, &mut abd);
-        SHAppBarMessage(ABM_SETPOS, &mut abd);
-        info!("Registered Top Bar with SHAppBarMessage (ABM_NEW / ABM_SETPOS ABE_TOP)");
-    }
+    // Reserve the desktop work area only after the journal has the AppBar entry.
+    let hwnd_bits = hwnd.0 as usize as u64;
+    os_core::recovery::commit(&os_core::Mutation::AppBar {
+        hwnd: hwnd_bits,
+        edge: ABE_TOP,
+        rect: os_core::Rect {
+            x: 0,
+            y: 0,
+            width: screen_width as i32,
+            height: TOP_BAR_HEIGHT as i32,
+        },
+    })?;
+    info!("Registered Top Bar as an app bar (journaled ABM_NEW / ABM_SETPOS)");
 
     TOP_BAR_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::SeqCst);
 
@@ -347,19 +339,26 @@ impl TopBar {
     pub fn unregister_global() {
         let hwnd_raw = TOP_BAR_HWND.swap(0, std::sync::atomic::Ordering::SeqCst);
         if hwnd_raw != 0 {
-            unsafe {
-                let hwnd = HWND(hwnd_raw as *mut _);
-                let mut abd = APPBARDATA {
-                    cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-                    hWnd: hwnd,
-                    uCallbackMessage: 0,
-                    uEdge: ABE_TOP,
-                    rc: RECT::default(),
-                    lParam: LPARAM(0),
-                };
-                SHAppBarMessage(ABM_REMOVE, &mut abd);
-                let _ = DestroyWindow(hwnd);
+            let hwnd = HWND(hwnd_raw as *mut _);
+            let bits = hwnd.0 as usize as u64;
+            let removed = os_core::recovery::undo_last(|mutation| {
+                matches!(mutation, os_core::Mutation::AppBar { hwnd, .. } if *hwnd == bits)
+            })
+            .unwrap_or(false);
+            if !removed {
+                unsafe {
+                    let mut abd = APPBARDATA {
+                        cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+                        hWnd: hwnd,
+                        uCallbackMessage: 0,
+                        uEdge: ABE_TOP,
+                        rc: RECT::default(),
+                        lParam: LPARAM(0),
+                    };
+                    SHAppBarMessage(ABM_REMOVE, &mut abd);
+                }
             }
+            let _ = unsafe { DestroyWindow(hwnd) };
         }
     }
 }
