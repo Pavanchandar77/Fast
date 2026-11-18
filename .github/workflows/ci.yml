@@ -40,6 +40,9 @@ jobs:
       - name: Clippy (-D warnings)
         run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
 
+      - name: Test governor policy (pure Linux)
+        run: cargo test -p nx-governor-policy
+
   windows-native:
     name: Windows Native Build & Test
     runs-on: windows-latest

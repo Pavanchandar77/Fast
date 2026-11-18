@@ -8,7 +8,9 @@ use tracing::{debug, info, warn};
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::CloseHandle;
+#[cfg(windows)]
+pub use windows::Win32::Foundation::HANDLE;
 #[cfg(windows)]
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectCpuRateControlInformation,

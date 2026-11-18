@@ -228,6 +228,10 @@ impl Default for CommandBarConfig {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernorConfig {
     pub ram_purge_enabled: bool,
@@ -248,16 +252,27 @@ pub struct GovernorConfig {
     pub timer_resolution_0_5ms: bool,
     pub unpark_cpu_cores: bool,
     pub suspend_shell_shaders_on_fullscreen: bool,
+
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub whitelist_high_priority: Vec<String>,
+    #[serde(default = "default_true")]
+    pub eco_qos_enabled: bool,
+    #[serde(default = "default_true")]
+    pub pro_balance_enabled: bool,
+    #[serde(default)]
+    pub allow_suspend: bool,
 }
 
 impl Default for GovernorConfig {
     fn default() -> Self {
         Self {
-            ram_purge_enabled: true,
+            ram_purge_enabled: false,
             ram_purge_delay_secs: 10,
-            trim_on_minimize: true,
-            trim_on_unfocused: true,
-            app_nap_enabled: true,
+            trim_on_minimize: false,
+            trim_on_unfocused: false,
+            app_nap_enabled: false,
             app_nap_idle_secs: 30,
             cpu_throttle_percent: 1,
             exclude_from_nap: vec![
@@ -271,15 +286,20 @@ impl Default for GovernorConfig {
                 "cl.exe".into(),
             ],
             dynamic_priority_boost: true,
-            foreground_priority: "High".into(),
-            background_priority: "BelowNormal".into(),
+            foreground_priority: "AboveNormal".into(),
+            background_priority: "Normal".into(),
             boost_gpu_scheduling: true,
             perceived_fast_close: true,
-            force_terminate_unresponsive_ms: 400,
+            force_terminate_unresponsive_ms: 5000,
             game_mode_auto_detect: true,
-            timer_resolution_0_5ms: true,
-            unpark_cpu_cores: true,
+            timer_resolution_0_5ms: false,
+            unpark_cpu_cores: false,
             suspend_shell_shaders_on_fullscreen: true,
+            dry_run: false,
+            whitelist_high_priority: Vec::new(),
+            eco_qos_enabled: true,
+            pro_balance_enabled: true,
+            allow_suspend: false,
         }
     }
 }

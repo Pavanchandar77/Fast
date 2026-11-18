@@ -126,17 +126,18 @@ mod imp {
             BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
         });
 
-        info!("✅ Phase 1 & 2 Engine online. Entering 120Hz GPU Compositor & Event Loop.");
-
-        let target_frame_time = Duration::from_micros(8333); // ~120 Hz
+        // 9. Main Orchestration & Event Dispatch Loop (120Hz Animation Solver & Windows Message Pump)
+        info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
         let mut last_frame = Instant::now();
+        let target_frame_time = Duration::from_micros(8333); // 120Hz
 
         loop {
+            let now = Instant::now();
+            let dt = (now - last_frame).as_secs_f32();
+            last_frame = now;
             let frame_start = Instant::now();
-            let dt = (frame_start - last_frame).as_secs_f32().min(0.05);
-            last_frame = frame_start;
 
-            // Drain incoming Window Events
+            // Drain incoming WinEvents (Window creation, destruction, focus changes)
             while let Ok(event) = win_event_rx.try_recv() {
                 match &event {
                     os_compositor::hooks::WindowEvent::ForegroundChanged(hwnd) => {
@@ -149,6 +150,9 @@ mod imp {
                     os_compositor::hooks::WindowEvent::WindowShow(hwnd)
                     | os_compositor::hooks::WindowEvent::WindowUncloaked(hwnd) => {
                         governor.on_window_restored(*hwnd);
+                    }
+                    os_compositor::hooks::WindowEvent::WindowDestroyed(hwnd) => {
+                        governor.on_process_exit(hwnd.pid());
                     }
                     _ => {}
                 }
