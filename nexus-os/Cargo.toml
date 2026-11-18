@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/nexus-journal",
     "crates/os-core",
     "crates/os-config",
     "crates/os-governor",

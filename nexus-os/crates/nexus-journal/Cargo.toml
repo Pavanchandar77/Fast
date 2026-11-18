@@ -1,0 +1,12 @@
+[package]
+name = "nexus-journal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Crash-safe journal of Nexus system mutations. No Win32 dependency."
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"
