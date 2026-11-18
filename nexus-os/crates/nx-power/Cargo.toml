@@ -1,0 +1,20 @@
+[package]
+name = "nx-power"
+description = "Nexus-OS power-user features: clipboard history, always-on-top, snapping layouts, quick look session, color picker, batch rename, key remap, per-app volume, quick notes, window tabs, alt-tab"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+nx-fs = { path = "../nx-fs" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+regex = "1.13"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.5"

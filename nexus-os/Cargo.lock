@@ -940,6 +940,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-power"
+version = "0.1.0"
+dependencies = [
+ "nx-fs",
+ "parking_lot",
+ "proptest",
+ "regex",
+ "serde",
+ "thiserror 1.0.69",
+ "windows",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
