@@ -18,9 +18,10 @@ impl RuleMatcher {
     pub fn matches(&self, info: &WindowInfo) -> bool {
         match self {
             Self::TitleEquals(val) => info.title.eq_ignore_ascii_case(val),
-            Self::TitleContains(val) => {
-                info.title.to_ascii_lowercase().contains(&val.to_ascii_lowercase())
-            }
+            Self::TitleContains(val) => info
+                .title
+                .to_ascii_lowercase()
+                .contains(&val.to_ascii_lowercase()),
             Self::ClassEquals(val) => info.class_name.eq_ignore_ascii_case(val),
             Self::ClassContains(val) => info
                 .class_name
@@ -111,7 +112,11 @@ impl RuleEngine {
         }
 
         // 4. Game launchers & overlay clients
-        let excluded_processes = ["steamwebhelper.exe", "epicgameslauncher.exe", "riotclientservices.exe"];
+        let excluded_processes = [
+            "steamwebhelper.exe",
+            "epicgameslauncher.exe",
+            "riotclientservices.exe",
+        ];
         for proc in excluded_processes {
             engine.add_rule(WindowRule::new(
                 vec![RuleMatcher::ProcessEquals(proc.into())],
@@ -149,14 +154,21 @@ impl RuleEngine {
             && info.rect.height >= monitor_bounds.height
         {
             // If the window has no title bar / thick frame, it's borderless fullscreen
-            let has_title_or_thick_frame = (info.style & 0x00C00000) != 0 || (info.style & 0x00040000) != 0;
+            let has_title_or_thick_frame =
+                (info.style & 0x00C00000) != 0 || (info.style & 0x00040000) != 0;
             if !has_title_or_thick_frame {
                 return true;
             }
         }
 
         // Known game engine / game processes
-        let game_processes = ["game.exe", "cyberpunk2077.exe", "valheim.exe", "dota2.exe", "cs2.exe"];
+        let game_processes = [
+            "game.exe",
+            "cyberpunk2077.exe",
+            "valheim.exe",
+            "dota2.exe",
+            "cs2.exe",
+        ];
         for gp in game_processes {
             if info.process_name.eq_ignore_ascii_case(gp) {
                 return true;

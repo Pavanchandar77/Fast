@@ -26,6 +26,7 @@ pub struct WindowManagerModel {
     follow_mouse: bool,
     default_layout: LayoutKind,
     default_layout_params: LayoutParams,
+    fallback_workspace: crate::workspace::Workspace,
 }
 
 impl WindowManagerModel {
@@ -37,10 +38,12 @@ impl WindowManagerModel {
         // Initialize workspaces 1 through 9
         for i in 1..=9 {
             let ws_id = WorkspaceId(i);
-            let mon_id = if i == 1 { primary_mon_id } else { primary_mon_id };
-            let ws = crate::workspace::Workspace::new(ws_id, mon_id, LayoutKind::Dwindle);
+            let ws = crate::workspace::Workspace::new(ws_id, primary_mon_id, LayoutKind::Dwindle);
             workspaces.insert(ws_id, ws);
         }
+
+        let fallback_workspace =
+            crate::workspace::Workspace::new(WorkspaceId(1), primary_mon_id, LayoutKind::Dwindle);
 
         Self {
             monitors: vec![primary_monitor],
@@ -52,6 +55,7 @@ impl WindowManagerModel {
             follow_mouse: false,
             default_layout: LayoutKind::Dwindle,
             default_layout_params: LayoutParams::default(),
+            fallback_workspace,
         }
     }
 
@@ -92,8 +96,10 @@ impl WindowManagerModel {
     }
 
     pub fn active_monitor(&self) -> &Monitor {
-        self.monitor(self.active_monitor_id)
-            .unwrap_or_else(|| &self.monitors[0])
+        match self.monitor(self.active_monitor_id) {
+            Some(m) => m,
+            None => &self.monitors[0],
+        }
     }
 
     pub fn active_workspace_id(&self) -> WorkspaceId {
@@ -102,12 +108,22 @@ impl WindowManagerModel {
 
     pub fn active_workspace(&self) -> &crate::workspace::Workspace {
         let ws_id = self.active_workspace_id();
-        self.workspaces.get(&ws_id).expect("active workspace must exist")
+        match self.workspaces.get(&ws_id) {
+            Some(w) => w,
+            None => &self.fallback_workspace,
+        }
     }
 
     pub fn active_workspace_mut(&mut self) -> &mut crate::workspace::Workspace {
         let ws_id = self.active_workspace_id();
-        self.workspaces.get_mut(&ws_id).expect("active workspace must exist")
+        if self.workspaces.contains_key(&ws_id) {
+            match self.workspaces.get_mut(&ws_id) {
+                Some(w) => w,
+                None => &mut self.fallback_workspace,
+            }
+        } else {
+            &mut self.fallback_workspace
+        }
     }
 
     pub fn active_window(&self) -> Option<WindowId> {
@@ -142,7 +158,10 @@ impl WindowManagerModel {
     // --- Window Registration & Show / Hide Handlers ---
 
     /// Handles WindowCreated event: if visible, registers and tiles immediately.
-    pub fn on_window_created(&mut self, info: WindowInfo) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn on_window_created(
+        &mut self,
+        info: WindowInfo,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         if info.is_visible {
             self.on_window_show(info)
         } else {
@@ -177,8 +196,14 @@ impl WindowManagerModel {
             }
 
             if ws_id == self.active_workspace_id() {
-                plan.push(WindowMutation::SetCloak { window_id: id, cloaked: false });
-                plan.push(WindowMutation::SetVisibility { window_id: id, visible: true });
+                plan.push(WindowMutation::SetCloak {
+                    window_id: id,
+                    cloaked: false,
+                });
+                plan.push(WindowMutation::SetVisibility {
+                    window_id: id,
+                    visible: true,
+                });
                 plan.push(WindowMutation::SetFocus { window_id: id });
             }
 
@@ -240,11 +265,18 @@ impl WindowManagerModel {
 
         // If target workspace is currently active, ensure window is uncloaked, visible, and focused
         if target_ws_id == active_ws_id {
-            plan.push(WindowMutation::SetCloak { window_id: id, cloaked: false });
-            plan.push(WindowMutation::SetVisibility { window_id: id, visible: true });
+            plan.push(WindowMutation::SetCloak {
+                window_id: id,
+                cloaked: false,
+            });
+            plan.push(WindowMutation::SetVisibility {
+                window_id: id,
+                visible: true,
+            });
             plan.push(WindowMutation::SetFocus { window_id: id });
 
-            let (retile_plan, transition) = self.retile_workspace(target_ws_id, AnimationReason::WindowOpened);
+            let (retile_plan, transition) =
+                self.retile_workspace(target_ws_id, AnimationReason::WindowOpened);
             plan.extend(retile_plan);
             (plan, transition)
         } else {
@@ -253,8 +285,14 @@ impl WindowManagerModel {
                 win.is_cloaked = true;
                 win.is_visible = false;
             }
-            plan.push(WindowMutation::SetCloak { window_id: id, cloaked: true });
-            plan.push(WindowMutation::SetVisibility { window_id: id, visible: false });
+            plan.push(WindowMutation::SetCloak {
+                window_id: id,
+                cloaked: true,
+            });
+            plan.push(WindowMutation::SetVisibility {
+                window_id: id,
+                visible: false,
+            });
             (plan, None)
         }
     }
@@ -270,7 +308,10 @@ impl WindowManagerModel {
         }
     }
 
-    pub fn on_window_destroyed(&mut self, id: WindowId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn on_window_destroyed(
+        &mut self,
+        id: WindowId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         let ws_id = if let Some(win) = self.windows.remove(&id) {
             win.workspace_id
         } else {
@@ -294,7 +335,10 @@ impl WindowManagerModel {
         }
     }
 
-    pub fn on_window_uncloaked(&mut self, id: WindowId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn on_window_uncloaked(
+        &mut self,
+        id: WindowId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         if let Some(win) = self.windows.get_mut(&id) {
             win.is_cloaked = false;
             win.is_minimized = false;
@@ -372,7 +416,11 @@ impl WindowManagerModel {
             }
         }
 
-        let trans_opt = if transition.is_empty() { None } else { Some(transition) };
+        let trans_opt = if transition.is_empty() {
+            None
+        } else {
+            Some(transition)
+        };
         (plan, trans_opt)
     }
 
@@ -383,7 +431,10 @@ impl WindowManagerModel {
     /// - Cloak and hide windows of the outgoing workspace
     /// - Uncloak, show, and position windows of the incoming workspace
     /// - Focus the last active window on the incoming workspace
-    pub fn switch_workspace(&mut self, target_ws_id: WorkspaceId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn switch_workspace(
+        &mut self,
+        target_ws_id: WorkspaceId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         let current_ws_id = self.active_workspace_id();
 
         if current_ws_id == target_ws_id {
@@ -397,7 +448,10 @@ impl WindowManagerModel {
             .unwrap_or(self.active_monitor_id);
         self.active_monitor_id = target_mon_id;
 
-        debug!("Switching active workspace to {} on monitor {}", target_ws_id, target_mon_id);
+        debug!(
+            "Switching active workspace to {} on monitor {}",
+            target_ws_id, target_mon_id
+        );
         let mut plan = MutationPlan::new();
 
         // 1. Cloak and hide windows on outgoing workspace
@@ -406,8 +460,14 @@ impl WindowManagerModel {
             for win_id in outgoing_ws.tree.iter().copied() {
                 if let Some(win) = self.windows.get_mut(&win_id) {
                     win.is_cloaked = true;
-                    plan.push(WindowMutation::SetCloak { window_id: win_id, cloaked: true });
-                    plan.push(WindowMutation::SetVisibility { window_id: win_id, visible: false });
+                    plan.push(WindowMutation::SetCloak {
+                        window_id: win_id,
+                        cloaked: true,
+                    });
+                    plan.push(WindowMutation::SetVisibility {
+                        window_id: win_id,
+                        visible: false,
+                    });
                 }
             }
         }
@@ -422,25 +482,36 @@ impl WindowManagerModel {
         let mut focus_win = None;
         if let Some(incoming_ws) = self.workspaces.get_mut(&target_ws_id) {
             incoming_ws.is_visible = true;
-            focus_win = incoming_ws.last_focused.or_else(|| incoming_ws.tree.active_window());
+            focus_win = incoming_ws
+                .last_focused
+                .or_else(|| incoming_ws.tree.active_window());
 
             for win_id in incoming_ws.tree.iter().copied() {
                 if let Some(win) = self.windows.get_mut(&win_id) {
                     win.is_cloaked = false;
                     win.is_visible = true;
                     win.monitor_id = target_mon_id;
-                    plan.push(WindowMutation::SetCloak { window_id: win_id, cloaked: false });
-                    plan.push(WindowMutation::SetVisibility { window_id: win_id, visible: true });
+                    plan.push(WindowMutation::SetCloak {
+                        window_id: win_id,
+                        cloaked: false,
+                    });
+                    plan.push(WindowMutation::SetVisibility {
+                        window_id: win_id,
+                        visible: true,
+                    });
                 }
             }
         }
 
         if let Some(focus_id) = focus_win {
-            plan.push(WindowMutation::SetFocus { window_id: focus_id });
+            plan.push(WindowMutation::SetFocus {
+                window_id: focus_id,
+            });
         }
 
         // 4. Retile incoming workspace
-        let (retile_plan, transition) = self.retile_workspace(target_ws_id, AnimationReason::WorkspaceSwitch);
+        let (retile_plan, transition) =
+            self.retile_workspace(target_ws_id, AnimationReason::WorkspaceSwitch);
         plan.extend(retile_plan);
 
         (plan, transition)
@@ -483,13 +554,25 @@ impl WindowManagerModel {
             if is_target_active {
                 win.is_cloaked = false;
                 win.is_visible = true;
-                plan.push(WindowMutation::SetCloak { window_id: win_id, cloaked: false });
-                plan.push(WindowMutation::SetVisibility { window_id: win_id, visible: true });
+                plan.push(WindowMutation::SetCloak {
+                    window_id: win_id,
+                    cloaked: false,
+                });
+                plan.push(WindowMutation::SetVisibility {
+                    window_id: win_id,
+                    visible: true,
+                });
             } else {
                 win.is_cloaked = true;
                 win.is_visible = false;
-                plan.push(WindowMutation::SetCloak { window_id: win_id, cloaked: true });
-                plan.push(WindowMutation::SetVisibility { window_id: win_id, visible: false });
+                plan.push(WindowMutation::SetCloak {
+                    window_id: win_id,
+                    cloaked: true,
+                });
+                plan.push(WindowMutation::SetVisibility {
+                    window_id: win_id,
+                    visible: false,
+                });
             }
         }
 
@@ -500,7 +583,8 @@ impl WindowManagerModel {
         // Retile target workspace if active
         let mut transition = None;
         if is_target_active {
-            let (new_retile, trans) = self.retile_workspace(target_ws_id, AnimationReason::WindowMoved);
+            let (new_retile, trans) =
+                self.retile_workspace(target_ws_id, AnimationReason::WindowMoved);
             plan.extend(new_retile);
             transition = trans;
         }
@@ -510,7 +594,10 @@ impl WindowManagerModel {
 
     // --- Window Toggles (Floating, Fullscreen, Snapping) ---
 
-    pub fn toggle_floating(&mut self, win_id: WindowId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn toggle_floating(
+        &mut self,
+        win_id: WindowId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         let (ws_id, will_float) = match self.windows.get_mut(&win_id) {
             Some(w) => {
                 w.is_floating = !w.is_floating;
@@ -543,13 +630,19 @@ impl WindowManagerModel {
         (plan, trans)
     }
 
-    pub fn toggle_fullscreen(&mut self, win_id: WindowId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn toggle_fullscreen(
+        &mut self,
+        win_id: WindowId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         let (ws_id, mon_id, was_fullscreen) = match self.windows.get(&win_id) {
             Some(w) => (w.workspace_id, w.monitor_id, w.is_fullscreen),
             None => return (MutationPlan::new(), None),
         };
 
-        let mon_bounds = self.monitor(mon_id).map(|m| m.bounds).unwrap_or(Rect::new(0, 0, 1920, 1080));
+        let mon_bounds = self
+            .monitor(mon_id)
+            .map(|m| m.bounds)
+            .unwrap_or(Rect::new(0, 0, 1920, 1080));
         let mut plan = MutationPlan::new();
         let mut transition = LayoutTransition::new(AnimationReason::FullscreenToggle);
 
@@ -577,7 +670,9 @@ impl WindowManagerModel {
             // Exit fullscreen
             if let Some(win) = self.windows.get_mut(&win_id) {
                 let from_rect = win.target_rect;
-                let restored = win.saved_rect_before_fullscreen.unwrap_or(win.floating_rect);
+                let restored = win
+                    .saved_rect_before_fullscreen
+                    .unwrap_or(win.floating_rect);
                 win.is_fullscreen = false;
                 win.target_rect = restored;
                 win.saved_rect_before_fullscreen = None;
@@ -597,7 +692,11 @@ impl WindowManagerModel {
         (plan, Some(transition))
     }
 
-    pub fn snap_window(&mut self, win_id: WindowId, zone: SnapZone) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn snap_window(
+        &mut self,
+        win_id: WindowId,
+        zone: SnapZone,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         let mon = self.active_monitor().clone();
         let gap = self.active_workspace().layout_params.outer_gap;
         let snap_rect = compute_snap_rect(zone, mon.work_area, gap);
@@ -745,7 +844,10 @@ impl WindowManagerModel {
     /// Handles unplugging a monitor:
     /// Migrates all workspaces and windows from the unplugged monitor to the primary monitor.
     /// NEVER LOSES WINDOWS!
-    pub fn remove_monitor(&mut self, monitor_id: MonitorId) -> (MutationPlan, Option<LayoutTransition>) {
+    pub fn remove_monitor(
+        &mut self,
+        monitor_id: MonitorId,
+    ) -> (MutationPlan, Option<LayoutTransition>) {
         if self.monitors.len() <= 1 {
             // Cannot remove last remaining monitor
             return (MutationPlan::new(), None);
@@ -767,8 +869,8 @@ impl WindowManagerModel {
         for ws in self.workspaces.values_mut() {
             if ws.monitor_id == monitor_id {
                 ws.monitor_id = primary_id;
-                for win_id in ws.tree.iter().copied() {
-                    if let Some(win) = self.windows.get_mut(&win_id) {
+                for win_id in ws.tree.iter() {
+                    if let Some(win) = self.windows.get_mut(win_id) {
                         win.monitor_id = primary_id;
                     }
                 }
@@ -933,11 +1035,19 @@ impl WindowManagerModel {
         let mut plan = MutationPlan::new();
         for (&id, win) in &self.windows {
             // Restore visibility
-            plan.push(WindowMutation::SetCloak { window_id: id, cloaked: false });
-            plan.push(WindowMutation::SetVisibility { window_id: id, visible: true });
+            plan.push(WindowMutation::SetCloak {
+                window_id: id,
+                cloaked: false,
+            });
+            plan.push(WindowMutation::SetVisibility {
+                window_id: id,
+                visible: true,
+            });
             // Restore normal rect if fullscreen
             if win.is_fullscreen {
-                let restored = win.saved_rect_before_fullscreen.unwrap_or(win.floating_rect);
+                let restored = win
+                    .saved_rect_before_fullscreen
+                    .unwrap_or(win.floating_rect);
                 plan.push(WindowMutation::SetFullscreen {
                     window_id: id,
                     fullscreen: false,

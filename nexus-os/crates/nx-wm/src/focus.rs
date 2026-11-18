@@ -8,7 +8,10 @@ pub fn find_directional_candidate(
     dir: Direction,
     rects: &[(WindowId, Rect)],
 ) -> Option<WindowId> {
-    let from_rect = rects.iter().find(|(w, _)| *w == from_window).map(|(_, r)| *r)?;
+    let from_rect = rects
+        .iter()
+        .find(|(w, _)| *w == from_window)
+        .map(|(_, r)| *r)?;
 
     let mut best_candidate = None;
     let mut min_score = u64::MAX;

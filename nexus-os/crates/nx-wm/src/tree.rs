@@ -79,7 +79,10 @@ impl OrderedWindowTree {
         }
 
         let insert_idx = match self.active_window() {
-            Some(active) => self.index_of(active).map(|idx| idx + 1).unwrap_or(self.windows.len()),
+            Some(active) => self
+                .index_of(active)
+                .map(|idx| idx + 1)
+                .unwrap_or(self.windows.len()),
             None => self.windows.len(),
         };
 

@@ -183,13 +183,24 @@ fn compute_master_stack(
     };
 
     let stack_w = if stack_count > 0 {
-        usable.width.saturating_sub(master_w).saturating_sub(params.inner_gap).max(1)
+        usable
+            .width
+            .saturating_sub(master_w)
+            .saturating_sub(params.inner_gap)
+            .max(1)
     } else {
         0
     };
 
     // Layout master column
-    let master_slots = split_vertical(usable.x, usable.y, master_w, usable.height, master_count, params.inner_gap);
+    let master_slots = split_vertical(
+        usable.x,
+        usable.y,
+        master_w,
+        usable.height,
+        master_count,
+        params.inner_gap,
+    );
     for (i, &win) in windows.iter().take(master_count).enumerate() {
         results.push((win, master_slots[i]));
     }
@@ -197,7 +208,14 @@ fn compute_master_stack(
     // Layout stack column
     if stack_count > 0 {
         let stack_x = usable.x + (master_w + params.inner_gap) as i32;
-        let stack_slots = split_vertical(stack_x, usable.y, stack_w, usable.height, stack_count, params.inner_gap);
+        let stack_slots = split_vertical(
+            stack_x,
+            usable.y,
+            stack_w,
+            usable.height,
+            stack_count,
+            params.inner_gap,
+        );
         for (i, &win) in windows.iter().skip(master_count).enumerate() {
             results.push((win, stack_slots[i]));
         }
@@ -208,7 +226,14 @@ fn compute_master_stack(
 
 /// Evenly splits a vertical column of `count` windows, respecting `inner_gap`
 /// and distributing rounding remainders cleanly to avoid gaps or overlaps.
-fn split_vertical(x: i32, y: i32, width: u32, height: u32, count: usize, inner_gap: u32) -> Vec<Rect> {
+fn split_vertical(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    count: usize,
+    inner_gap: u32,
+) -> Vec<Rect> {
     if count == 0 {
         return Vec::new();
     }
@@ -251,7 +276,8 @@ fn compute_scrolling(
     let col_w = if params.scroll_column_width > 0 {
         params.scroll_column_width.min(usable.width)
     } else {
-        ((usable.width as f32 * params.master_ratio.clamp(0.2, 0.9)) as u32).clamp(100, usable.width)
+        ((usable.width as f32 * params.master_ratio.clamp(0.2, 0.9)) as u32)
+            .clamp(100, usable.width)
     };
 
     let active_idx = params.scroll_active_index.min(count.saturating_sub(1));

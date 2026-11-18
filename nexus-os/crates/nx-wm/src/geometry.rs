@@ -178,23 +178,23 @@ impl Rect {
         let (in_direction, primary_dist, perp_dist) = match dir {
             Direction::Left => (
                 c_other.x < c_self.x,
-                (c_self.x - c_other.x).abs() as u64,
-                (c_self.y - c_other.y).abs() as u64,
+                (c_self.x - c_other.x).unsigned_abs() as u64,
+                (c_self.y - c_other.y).unsigned_abs() as u64,
             ),
             Direction::Right => (
                 c_other.x > c_self.x,
-                (c_other.x - c_self.x).abs() as u64,
-                (c_self.y - c_other.y).abs() as u64,
+                (c_other.x - c_self.x).unsigned_abs() as u64,
+                (c_self.y - c_other.y).unsigned_abs() as u64,
             ),
             Direction::Up => (
                 c_other.y < c_self.y,
-                (c_self.y - c_other.y).abs() as u64,
-                (c_self.x - c_other.x).abs() as u64,
+                (c_self.y - c_other.y).unsigned_abs() as u64,
+                (c_self.x - c_other.x).unsigned_abs() as u64,
             ),
             Direction::Down => (
                 c_other.y > c_self.y,
-                (c_other.y - c_self.y).abs() as u64,
-                (c_self.x - c_other.x).abs() as u64,
+                (c_other.y - c_self.y).unsigned_abs() as u64,
+                (c_self.x - c_other.x).unsigned_abs() as u64,
             ),
         };
 

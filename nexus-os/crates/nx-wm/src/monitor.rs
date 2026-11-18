@@ -28,14 +28,25 @@ impl Monitor {
             name: name.into(),
             bounds,
             work_area,
-            scale_factor: if scale_factor > 0.0 { scale_factor } else { 1.0 },
+            scale_factor: if scale_factor > 0.0 {
+                scale_factor
+            } else {
+                1.0
+            },
             workspaces: vec![initial_workspace],
             active_workspace: initial_workspace,
         }
     }
 
     pub fn primary(bounds: Rect, work_area: Rect) -> Self {
-        Self::new(MonitorId(0), "Primary", bounds, work_area, 1.0, WorkspaceId(1))
+        Self::new(
+            MonitorId(0),
+            "Primary",
+            bounds,
+            work_area,
+            1.0,
+            WorkspaceId(1),
+        )
     }
 
     pub fn contains_point(&self, p: Point) -> bool {

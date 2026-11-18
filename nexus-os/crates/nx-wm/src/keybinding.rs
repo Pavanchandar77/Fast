@@ -197,7 +197,12 @@ impl KeybindingMap {
         }
 
         // Ctrl+Shift+Esc
-        if modifiers.ctrl && modifiers.shift && !modifiers.alt && !modifiers.super_key && key == Key::Escape {
+        if modifiers.ctrl
+            && modifiers.shift
+            && !modifiers.alt
+            && !modifiers.super_key
+            && key == Key::Escape
+        {
             return true;
         }
 
@@ -213,7 +218,7 @@ impl KeybindingMap {
                 Key::Char('R') | Key::Char('r') => true, // Run dialog
                 Key::Char('X') | Key::Char('x') => true, // Quick link menu
                 Key::Char('Z') | Key::Char('z') => true, // Snap flyout
-                Key::Tab => true, // Task view
+                Key::Tab => true,                        // Task view
                 _ => false,
             }
         } else {
@@ -241,7 +246,11 @@ impl KeybindingMap {
 
 /// Parses a key combination string like `"Return"`, `"Shift+1"`, `"Super+Space"`, `"Ctrl+Alt+Shift+Esc"`.
 pub fn parse_key_combination(s: &str, default_mod: ModKey) -> Result<KeyCombination, String> {
-    let parts: Vec<&str> = s.split('+').map(str::trim).filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = s
+        .split('+')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
     if parts.is_empty() {
         return Err("Empty keybinding string".into());
     }
@@ -302,7 +311,9 @@ fn parse_key(s: &str) -> Result<Key, String> {
         "up" => Ok(Key::Up),
         "down" => Ok(Key::Down),
         f if f.starts_with('f') && f.len() > 1 => {
-            let num: u8 = f[1..].parse().map_err(|_| format!("Invalid function key: '{s}'"))?;
+            let num: u8 = f[1..]
+                .parse()
+                .map_err(|_| format!("Invalid function key: '{s}'"))?;
             if (1..=12).contains(&num) {
                 Ok(Key::F(num))
             } else {
@@ -310,7 +321,11 @@ fn parse_key(s: &str) -> Result<Key, String> {
             }
         }
         single if single.chars().count() == 1 => {
-            let ch = single.chars().next().ok_or_else(|| "Empty char".to_string())?.to_ascii_uppercase();
+            let ch = single
+                .chars()
+                .next()
+                .ok_or_else(|| "Empty char".to_string())?
+                .to_ascii_uppercase();
             Ok(Key::Char(ch))
         }
         other => Err(format!("Unrecognized key: '{other}'")),
@@ -373,12 +388,18 @@ pub fn parse_action(s: &str) -> Result<Action, String> {
     }
 
     if let Some(ws_str) = s.strip_prefix("workspace:") {
-        let ws: u8 = ws_str.trim().parse().map_err(|_| format!("Invalid workspace index in '{s}'"))?;
+        let ws: u8 = ws_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("Invalid workspace index in '{s}'"))?;
         return Ok(Action::FocusWorkspace(ws));
     }
 
     if let Some(ws_str) = s.strip_prefix("move_to_workspace:") {
-        let ws: u8 = ws_str.trim().parse().map_err(|_| format!("Invalid workspace index in '{s}'"))?;
+        let ws: u8 = ws_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("Invalid workspace index in '{s}'"))?;
         return Ok(Action::MoveToWorkspace(ws));
     }
 

@@ -79,11 +79,19 @@ fn test_directional_distance_cardinal() {
     let up = Rect::new(100, 0, 100, 80);
     let down = Rect::new(100, 220, 100, 80);
 
-    assert!(center.directional_distance(&left, Direction::Left).is_some());
-    assert!(center.directional_distance(&left, Direction::Right).is_none());
-    assert!(center.directional_distance(&right, Direction::Right).is_some());
+    assert!(center
+        .directional_distance(&left, Direction::Left)
+        .is_some());
+    assert!(center
+        .directional_distance(&left, Direction::Right)
+        .is_none());
+    assert!(center
+        .directional_distance(&right, Direction::Right)
+        .is_some());
     assert!(center.directional_distance(&up, Direction::Up).is_some());
-    assert!(center.directional_distance(&down, Direction::Down).is_some());
+    assert!(center
+        .directional_distance(&down, Direction::Down)
+        .is_some());
 }
 
 // ============================================================================
@@ -305,7 +313,10 @@ fn test_workspace_switch_cloaking_and_restoration() {
     assert_eq!(wm.active_workspace_id(), WorkspaceId(2));
     // Window 1 on workspace 1 must be cloaked & hidden
     assert_eq!(p_switch.cloaked_targets().get(&WindowId(1)), Some(&true));
-    assert_eq!(p_switch.visibility_targets().get(&WindowId(1)), Some(&false));
+    assert_eq!(
+        p_switch.visibility_targets().get(&WindowId(1)),
+        Some(&false)
+    );
     assert!(wm.window(WindowId(1)).unwrap().is_cloaked);
 
     // Register win 2 on workspace 2
@@ -351,8 +362,14 @@ fn test_move_window_to_inactive_workspace() {
     let win = wm.window(WindowId(1)).unwrap();
     assert_eq!(win.workspace_id, WorkspaceId(3));
     assert!(win.is_cloaked);
-    assert!(!wm.workspace(WorkspaceId(1)).unwrap().contains_window(WindowId(1)));
-    assert!(wm.workspace(WorkspaceId(3)).unwrap().contains_window(WindowId(1)));
+    assert!(!wm
+        .workspace(WorkspaceId(1))
+        .unwrap()
+        .contains_window(WindowId(1)));
+    assert!(wm
+        .workspace(WorkspaceId(3))
+        .unwrap()
+        .contains_window(WindowId(1)));
 }
 
 // ============================================================================
@@ -378,7 +395,10 @@ fn test_register_on_show_bugfix() {
     assert!(trans_show.is_some());
     assert_eq!(p_show.visibility_targets().get(&WindowId(100)), Some(&true));
     assert_eq!(p_show.cloaked_targets().get(&WindowId(100)), Some(&false));
-    assert!(wm.workspace(WorkspaceId(1)).unwrap().contains_window(WindowId(100)));
+    assert!(wm
+        .workspace(WorkspaceId(1))
+        .unwrap()
+        .contains_window(WindowId(100)));
 }
 
 #[test]
@@ -476,13 +496,19 @@ fn test_move_direction_swaps_windows() {
     wm.on_window_show(make_window_info(2, "Win2", "T", true));
 
     wm.focus_window(WindowId(1));
-    assert_eq!(wm.active_workspace().tree.as_slice(), &[WindowId(1), WindowId(2)]);
+    assert_eq!(
+        wm.active_workspace().tree.as_slice(),
+        &[WindowId(1), WindowId(2)]
+    );
 
     // Move window 1 right -> swaps positions with window 2
     let (plan, trans) = wm.move_direction(Direction::Right);
     assert!(!plan.is_empty());
     assert!(trans.is_some());
-    assert_eq!(wm.active_workspace().tree.as_slice(), &[WindowId(2), WindowId(1)]);
+    assert_eq!(
+        wm.active_workspace().tree.as_slice(),
+        &[WindowId(2), WindowId(1)]
+    );
 }
 
 #[test]
@@ -549,7 +575,10 @@ fn test_multi_monitor_unplug_never_loses_windows() {
     // Window 10 must still exist and be migrated to monitor 0
     let win10 = wm.window(WindowId(10)).unwrap();
     assert_eq!(win10.monitor_id, MonitorId(0));
-    assert!(wm.workspace(WorkspaceId(2)).unwrap().contains_window(WindowId(10)));
+    assert!(wm
+        .workspace(WorkspaceId(2))
+        .unwrap()
+        .contains_window(WindowId(10)));
     assert!(!plan.is_empty());
     assert!(trans.is_some());
 }
@@ -565,7 +594,10 @@ fn test_keybinding_parsing() {
     assert_eq!(combo.key, Key::Return);
 
     let combo2 = parse_key_combination("Ctrl+Alt+Shift+Esc", ModKey::Super).unwrap();
-    assert_eq!(combo2.modifiers, Modifiers::NONE.with_ctrl().with_alt().with_shift());
+    assert_eq!(
+        combo2.modifiers,
+        Modifiers::NONE.with_ctrl().with_alt().with_shift()
+    );
     assert_eq!(combo2.key, Key::Escape);
 
     let act = parse_action("window:close").unwrap();
@@ -688,7 +720,9 @@ fn test_dry_run_apply_revert_identity() {
     // Apply inverse plan on in-memory window states
     for m in &inverse_plan.mutations {
         match m {
-            WindowMutation::SetPosition { window_id, rect, .. } => {
+            WindowMutation::SetPosition {
+                window_id, rect, ..
+            } => {
                 if let Some(win) = wm.window_mut(*window_id) {
                     win.target_rect = *rect;
                 }
@@ -730,8 +764,14 @@ fn test_exit_plan_restores_all_cloaked_windows() {
     let exit_plan = wm.create_exit_plan();
     assert_eq!(exit_plan.cloaked_targets().get(&WindowId(1)), Some(&false));
     assert_eq!(exit_plan.cloaked_targets().get(&WindowId(2)), Some(&false));
-    assert_eq!(exit_plan.visibility_targets().get(&WindowId(1)), Some(&true));
-    assert_eq!(exit_plan.visibility_targets().get(&WindowId(2)), Some(&true));
+    assert_eq!(
+        exit_plan.visibility_targets().get(&WindowId(1)),
+        Some(&true)
+    );
+    assert_eq!(
+        exit_plan.visibility_targets().get(&WindowId(2)),
+        Some(&true)
+    );
 }
 
 // ============================================================================
@@ -852,10 +892,7 @@ fn test_cycle_layout_order() {
     let mut wm = WindowManagerModel::new(Rect::new(0, 0, 1920, 1080), Rect::new(0, 0, 1920, 1080));
     assert_eq!(wm.active_workspace().layout, LayoutKind::Dwindle);
 
-    wm.handle_key(
-        Modifiers::NONE.with_super(),
-        Key::Space,
-    ); // not cycle
+    wm.handle_key(Modifiers::NONE.with_super(), Key::Space); // not cycle
 
     let mut map = KeybindingMap::new(ModKey::Super);
     map.bind(
@@ -916,7 +953,12 @@ fn test_monitor_reposition_retiles_workspace() {
 
     // Shrink work area (e.g. 50px top bar enabled)
     let new_work_area = Rect::new(0, 50, 1920, 1030);
-    let (plan, trans) = wm.reposition_monitor(MonitorId(0), Rect::new(0, 0, 1920, 1080), new_work_area, 1.0);
+    let (plan, trans) = wm.reposition_monitor(
+        MonitorId(0),
+        Rect::new(0, 0, 1920, 1080),
+        new_work_area,
+        1.0,
+    );
 
     assert!(!plan.is_empty());
     assert!(trans.is_some());
@@ -987,8 +1029,9 @@ fn test_close_window_action_emits_visibility_mutation() {
         .with_keybindings(map);
 
     wm.on_window_show(make_window_info(1, "W1", "T", true));
-    let (_, plan, _) = wm.handle_key(Modifiers::NONE.with_super(), Key::Char('Q')).unwrap();
+    let (_, plan, _) = wm
+        .handle_key(Modifiers::NONE.with_super(), Key::Char('Q'))
+        .unwrap();
 
     assert_eq!(plan.visibility_targets().get(&WindowId(1)), Some(&false));
 }
-

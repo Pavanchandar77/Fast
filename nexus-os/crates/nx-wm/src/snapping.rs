@@ -54,9 +54,12 @@ pub fn compute_snap_rect(zone: SnapZone, work_area: Rect, gap: u32) -> Rect {
             bottom_half_h,
         ),
         SnapZone::TopLeft => Rect::new(usable.x, usable.y, half_w, half_h),
-        SnapZone::TopRight => {
-            Rect::new(usable.x + (half_w + gap) as i32, usable.y, right_half_w, half_h)
-        }
+        SnapZone::TopRight => Rect::new(
+            usable.x + (half_w + gap) as i32,
+            usable.y,
+            right_half_w,
+            half_h,
+        ),
         SnapZone::BottomLeft => Rect::new(
             usable.x,
             usable.y + (half_h + gap) as i32,
