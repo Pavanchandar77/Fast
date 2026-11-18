@@ -52,15 +52,16 @@ mod imp {
         let compositor_config = Arc::new(RwLock::new(initial_config.compositor));
         let fail_safe = os_config::parse_or_default(&initial_config.general.fail_safe_hotkey);
 
-        let (_keyboard, hotkey_rx) = match GlobalKeyboardHook::start(fail_safe) {
-            Ok(hook) => hook,
-            Err(err) => {
-                tracing::error!(
-                    "keyboard hook failed ({err}); restoring the session and aborting startup"
-                );
-                return Ok(());
-            }
-        };
+        let (_keyboard, hotkey_rx) =
+            match GlobalKeyboardHook::start_with_config(fail_safe, &initial_config.keybindings) {
+                Ok(hook) => hook,
+                Err(err) => {
+                    tracing::error!(
+                        "keyboard hook failed ({err}); restoring the session and aborting startup"
+                    );
+                    return Ok(());
+                }
+            };
 
         let wm = Arc::new(RwLock::new(WindowManager::new(compositor_config.clone())));
 
@@ -117,6 +118,7 @@ mod imp {
 
             if pump_messages() {
                 warn!("Emergency fail-safe triggered!");
+                wm.write().restore_all_on_exit();
                 return Ok(());
             }
 
@@ -128,6 +130,7 @@ mod imp {
                 match action {
                     HotkeyAction::PanicFailSafe => {
                         warn!("Emergency fail-safe triggered!");
+                        wm.write().restore_all_on_exit();
                         return Ok(());
                     }
                     HotkeyAction::CommandBar => {
@@ -141,7 +144,11 @@ mod imp {
 
             while let Ok(new_cfg) = config_rx.try_recv() {
                 *compositor_config.write() = new_cfg.compositor;
-                wm.write().retile_workspace(1);
+                os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
+                    &new_cfg.keybindings,
+                );
+                let active_ws = wm.read().active_workspace();
+                wm.write().retile_workspace(active_ws);
             }
 
             wm.write().update_animations(dt);

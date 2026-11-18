@@ -5,8 +5,13 @@
 //! It does not restore windows, allocate, or swallow the key. The watchdog
 //! registers the same chord with `RegisterHotKey`, which only sees the key
 //! when this hook calls `CallNextHookEx`.
+//!
+//! Every other binding comes from the config-driven `nx-wm` map. A chord
+//! that is not in that map falls through, including the Windows shortcuts
+//! the shell must not steal.
 
 use crossbeam_channel::{Receiver, Sender};
+use nexus_model::hotkeys::Direction;
 use os_config::HotkeyChord;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -14,7 +19,7 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT, VK_SPACE,
+    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
@@ -41,6 +46,8 @@ static FS_WIN: AtomicBool = AtomicBool::new(false);
 static FS_VK: AtomicU32 = AtomicU32::new(0);
 static FAIL_SAFE: AtomicBool = AtomicBool::new(false);
 static MAIN_TID: AtomicU32 = AtomicU32::new(0);
+static KEYBINDINGS: parking_lot::RwLock<Option<nx_wm::KeybindingMap>> =
+    parking_lot::RwLock::new(None);
 
 pub struct GlobalKeyboardHook {
     thread_handle: Option<JoinHandle<()>>,
@@ -72,16 +79,53 @@ pub fn pump_messages() -> bool {
     saw
 }
 
+fn to_hotkey(action: nx_wm::Action) -> HotkeyAction {
+    match action {
+        nx_wm::Action::PanicFailSafe => HotkeyAction::PanicFailSafe,
+        nx_wm::Action::CommandBar => HotkeyAction::CommandBar,
+        nx_wm::Action::Terminal => HotkeyAction::Terminal,
+        nx_wm::Action::CloseWindow => HotkeyAction::CloseWindow,
+        nx_wm::Action::ToggleFullscreen => HotkeyAction::ToggleFullscreen,
+        nx_wm::Action::ToggleFloating => HotkeyAction::ToggleFloating,
+        nx_wm::Action::FocusWorkspace(ws) => HotkeyAction::FocusWorkspace(ws),
+        nx_wm::Action::MoveToWorkspace(ws) => HotkeyAction::MoveToWorkspace(ws),
+        nx_wm::Action::FocusDirection(dir) => {
+            let mapped = match dir {
+                nx_wm::Direction::Left => Direction::Left,
+                nx_wm::Direction::Right => Direction::Right,
+                nx_wm::Direction::Up => Direction::Up,
+                nx_wm::Direction::Down => Direction::Down,
+            };
+            HotkeyAction::FocusDirection(mapped)
+        }
+        nx_wm::Action::Execute(cmd) => HotkeyAction::Custom(format!("exec:{cmd}")),
+        nx_wm::Action::Custom(s) => HotkeyAction::Custom(s),
+        other => HotkeyAction::Custom(format!("{other:?}")),
+    }
+}
+
 impl GlobalKeyboardHook {
     /// Install the hook. `Err` means `SetWindowsHookExW` failed; the caller
     /// must restore any journaled state and abort startup.
     ///
-    /// Call this on the thread that will pump messages.
+    /// Call this on the thread that will pump messages. Bindings come from
+    /// the default keybinding table.
     pub fn start(chord: HotkeyChord) -> anyhow::Result<(Self, Receiver<HotkeyAction>)> {
+        Self::start_with_config(chord, &os_config::schema::KeybindingsConfig::default())
+    }
+
+    pub fn start_with_config(
+        chord: HotkeyChord,
+        config: &os_config::schema::KeybindingsConfig,
+    ) -> anyhow::Result<(Self, Receiver<HotkeyAction>)> {
         arm_fail_safe(chord);
         let main_tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
         MAIN_TID.store(main_tid, Ordering::SeqCst);
         let _ = pump_messages();
+
+        let map = nx_wm::KeybindingMap::load_from_config(&config.mod_key, &config.bindings)
+            .unwrap_or_default();
+        *KEYBINDINGS.write() = Some(map);
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let _ = HOTKEY_SENDER.set(tx);
@@ -151,6 +195,13 @@ impl GlobalKeyboardHook {
         }
     }
 
+    pub fn update_keybindings(config: &os_config::schema::KeybindingsConfig) {
+        if let Ok(map) = nx_wm::KeybindingMap::load_from_config(&config.mod_key, &config.bindings) {
+            *KEYBINDINGS.write() = Some(map);
+            info!("Hotkeys reloaded from configuration");
+        }
+    }
+
     pub fn unhook_global() {
         let mut h_guard = HOOK_HANDLE.lock();
         if let Some(h) = h_guard.take() {
@@ -159,6 +210,8 @@ impl GlobalKeyboardHook {
         IS_RUNNING.store(false, Ordering::SeqCst);
     }
 
+    /// Fail-safe path: set a flag, post to the main thread, call the next hook.
+    /// Bound chords are dispatched from the config map. Nothing else is swallowed.
     unsafe extern "system" fn low_level_keyboard_proc(
         n_code: i32,
         w_param: WPARAM,
@@ -194,37 +247,41 @@ impl GlobalKeyboardHook {
                 return CallNextHookEx(HHOOK::default(), n_code, w_param, l_param);
             }
 
-            if win && vk == VK_SPACE.0 as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::CommandBar);
-                }
-                return LRESULT(1);
-            }
+            if let Some(key) = nx_wm::Key::from_vk(vk) {
+                let modifiers = nx_wm::Modifiers {
+                    super_key: win,
+                    alt,
+                    ctrl,
+                    shift,
+                };
 
-            if win && !shift && vk == VK_RETURN.0 as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::Terminal);
-                }
-                return LRESULT(1);
-            }
+                let matched_action = {
+                    let guard = KEYBINDINGS.read();
+                    guard
+                        .as_ref()
+                        .and_then(|map| map.lookup(modifiers, key).cloned())
+                };
 
-            if win && vk == 'Q' as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::CloseWindow);
-                }
-                return LRESULT(1);
-            }
-
-            if win && (0x31..=0x39).contains(&vk) {
-                let ws_idx = (vk - 0x30) as u8;
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    if shift {
-                        let _ = sender.try_send(HotkeyAction::MoveToWorkspace(ws_idx));
-                    } else {
-                        let _ = sender.try_send(HotkeyAction::FocusWorkspace(ws_idx));
+                if let Some(action) = matched_action {
+                    let hotkey_action = to_hotkey(action);
+                    if let Some(sender) = HOTKEY_SENDER.get() {
+                        let _ = sender.try_send(hotkey_action);
                     }
+
+                    // Cancels the Windows Start Menu when Super was part of the chord.
+                    if win {
+                        unsafe {
+                            windows::Win32::UI::Input::KeyboardAndMouse::keybd_event(
+                                0,
+                                0,
+                                windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0),
+                                0,
+                            );
+                        }
+                    }
+
+                    return LRESULT(1);
                 }
-                return LRESULT(1);
             }
         }
 

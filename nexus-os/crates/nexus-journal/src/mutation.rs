@@ -103,6 +103,13 @@ pub enum Mutation {
         previous: Rect,
         new: Rect,
     },
+    /// `SetProcessInformation(ProcessPowerThrottling)`. `enabled` is what
+    /// apply installs. Revert installs `previous_enabled`.
+    EcoQos {
+        pid: u32,
+        previous_enabled: bool,
+        enabled: bool,
+    },
 }
 
 const KIND_PRIORITY: u8 = 1;
@@ -114,6 +121,7 @@ const KIND_TIMER: u8 = 6;
 const KIND_CLOAK: u8 = 7;
 const KIND_HIDE: u8 = 8;
 const KIND_POSITION: u8 = 9;
+const KIND_ECOQOS: u8 = 10;
 
 struct Writer {
     buf: Vec<u8>,
@@ -270,6 +278,16 @@ pub fn encode_payload(mutation: &Mutation) -> Vec<u8> {
             w.rect(previous);
             w.rect(new);
         }
+        Mutation::EcoQos {
+            pid,
+            previous_enabled,
+            enabled,
+        } => {
+            w.u8(KIND_ECOQOS);
+            w.u32(*pid);
+            w.u8(u8::from(*previous_enabled));
+            w.u8(u8::from(*enabled));
+        }
     }
     w.buf
 }
@@ -312,6 +330,11 @@ pub fn decode_payload(bytes: &[u8]) -> Option<Mutation> {
             hwnd: r.u64()?,
             previous: r.rect()?,
             new: r.rect()?,
+        },
+        KIND_ECOQOS => Mutation::EcoQos {
+            pid: r.u32()?,
+            previous_enabled: r.u8()? == 1,
+            enabled: r.u8()? == 1,
         },
         _ => return None,
     };
@@ -374,6 +397,11 @@ mod tests {
                     width: 900,
                     height: 700,
                 },
+            },
+            Mutation::EcoQos {
+                pid: 11,
+                previous_enabled: false,
+                enabled: true,
             },
         ]
     }

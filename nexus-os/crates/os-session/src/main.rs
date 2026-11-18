@@ -70,7 +70,10 @@ mod imp {
         // The keyboard hook is installed before any system mutation. If it cannot
         // be installed, startup stops and the drop guard restores the journal.
         info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
-        let (_keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start(fail_safe) {
+        let (_keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start_with_config(
+            fail_safe,
+            &config_arc.read().keybindings,
+        ) {
             Ok(hook) => hook,
             Err(err) => {
                 tracing::error!(
@@ -138,24 +141,26 @@ mod imp {
             BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
         });
 
-        info!("✅ Phase 1 & 2 Engine online. Entering 120Hz GPU Compositor & Event Loop.");
-
-        let target_frame_time = Duration::from_micros(8333); // ~120 Hz
+        // 9. Main Orchestration & Event Dispatch Loop (120Hz Animation Solver & Windows Message Pump)
+        info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
         let mut last_frame = Instant::now();
+        let target_frame_time = Duration::from_micros(8333); // 120Hz
 
         loop {
+            let now = Instant::now();
+            let dt = (now - last_frame).as_secs_f32();
+            last_frame = now;
             let frame_start = Instant::now();
-            let dt = (frame_start - last_frame).as_secs_f32().min(0.05);
-            last_frame = frame_start;
 
             os_core::heartbeat::pulse();
             if pump_messages() {
                 warn!("Emergency fail-safe triggered");
                 info!("Restoring the journaled session and exiting");
+                wm.write().restore_all_on_exit();
                 return Ok(());
             }
 
-            // Drain incoming Window Events
+            // Drain incoming WinEvents (Window creation, destruction, focus changes)
             while let Ok(event) = win_event_rx.try_recv() {
                 match &event {
                     os_compositor::hooks::WindowEvent::ForegroundChanged(hwnd) => {
@@ -169,6 +174,9 @@ mod imp {
                     | os_compositor::hooks::WindowEvent::WindowUncloaked(hwnd) => {
                         governor.on_window_restored(*hwnd);
                     }
+                    os_compositor::hooks::WindowEvent::WindowDestroyed(hwnd) => {
+                        governor.on_process_exit(hwnd.pid());
+                    }
                     _ => {}
                 }
                 wm.write().handle_event(event);
@@ -180,6 +188,7 @@ mod imp {
                     HotkeyAction::PanicFailSafe => {
                         warn!("Emergency fail-safe triggered");
                         info!("Restoring the journaled session and exiting");
+                        wm.write().restore_all_on_exit();
                         return Ok(());
                     }
                     HotkeyAction::Terminal => {
@@ -203,8 +212,12 @@ mod imp {
                 info!("Applying hot-reloaded configuration to Compositor and Governor...");
                 *compositor_config.write() = new_cfg.compositor.clone();
                 *governor_config.write() = new_cfg.governor.clone();
+                os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
+                    &new_cfg.keybindings,
+                );
+                let active_ws = wm.read().active_workspace();
                 *config_arc.write() = new_cfg;
-                wm.write().retile_workspace(1);
+                wm.write().retile_workspace(active_ws);
             }
 
             // Step Spring Physics solver and reposition windows at 120Hz

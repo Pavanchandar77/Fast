@@ -228,6 +228,10 @@ impl Default for CommandBarConfig {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernorConfig {
     pub ram_purge_enabled: bool,
@@ -254,12 +258,27 @@ pub struct GovernorConfig {
     /// Process names allowed to receive HIGH or REALTIME. Empty means never.
     #[serde(default)]
     pub priority_whitelist: Vec<String>,
+    /// Log governor plans and do not record or apply them.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Same allow-list as `priority_whitelist`. A name in either list may reach HIGH.
+    #[serde(default)]
+    pub whitelist_high_priority: Vec<String>,
+    /// EcoQoS for idle background apps. The change is journaled and cleared on restore.
+    #[serde(default = "default_true")]
+    pub eco_qos_enabled: bool,
+    /// Temporary one-class demotion of CPU hogs, restored when pressure drops.
+    #[serde(default = "default_true")]
+    pub pro_balance_enabled: bool,
+    /// Policy-engine suspend flag. The Win32 call still requires `allow_nt_suspend`.
+    #[serde(default)]
+    pub allow_suspend: bool,
 }
 
 impl Default for GovernorConfig {
     fn default() -> Self {
         Self {
-            ram_purge_enabled: true,
+            ram_purge_enabled: false,
             ram_purge_delay_secs: 10,
             trim_on_minimize: true,
             trim_on_unfocused: true,
@@ -281,13 +300,18 @@ impl Default for GovernorConfig {
             background_priority: "Normal".into(),
             boost_gpu_scheduling: true,
             perceived_fast_close: true,
-            force_terminate_unresponsive_ms: 400,
+            force_terminate_unresponsive_ms: 5000,
             game_mode_auto_detect: true,
-            timer_resolution_0_5ms: true,
-            unpark_cpu_cores: true,
+            timer_resolution_0_5ms: false,
+            unpark_cpu_cores: false,
             suspend_shell_shaders_on_fullscreen: true,
             allow_nt_suspend: false,
             priority_whitelist: Vec::new(),
+            dry_run: false,
+            whitelist_high_priority: Vec::new(),
+            eco_qos_enabled: true,
+            pro_balance_enabled: true,
+            allow_suspend: false,
         }
     }
 }

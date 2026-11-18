@@ -13,6 +13,8 @@ members = [
     "crates/os-session",
     "crates/nx-fs",
     "crates/nx-explorer",
+    "crates/nx-governor-policy",
+    "crates/nx-wm",
     "crates/nx-privacy",
     "crates/nx-ui",
     "crates/nx-privacy-dash",
@@ -28,6 +30,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 nexus-journal = { path = "crates/nexus-journal" }
 nexus-model = { path = "crates/nexus-model" }
+nx-governor-policy = { path = "crates/nx-governor-policy" }
 proptest = "1.4"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"

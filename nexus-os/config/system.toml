@@ -89,6 +89,15 @@ dynamic_priority_boost = false
 foreground_priority = "AboveNormal" # "High", "AboveNormal", "Normal"
 background_priority = "Normal"      # BELOW_NORMAL is ignored by the policy
 priority_whitelist = []
+# Smart governor. EcoQoS and ProBalance are on and journaled.
+# One-class foreground boost stays off until dynamic_priority_boost is set.
+# HIGH still needs priority_whitelist or whitelist_high_priority.
+# NtSuspendProcess stays off on both flags.
+dry_run = false
+eco_qos_enabled = true
+pro_balance_enabled = true
+allow_suspend = false
+whitelist_high_priority = []
 boost_gpu_scheduling = true
 
 # Fast Perceived Window Close

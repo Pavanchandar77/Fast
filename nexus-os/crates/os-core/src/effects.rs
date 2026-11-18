@@ -6,6 +6,10 @@ use std::ffi::c_void;
 use nexus_journal::{JournalError, Mutation, SystemMutator};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+use windows::Win32::System::Threading::{
+    ProcessPowerThrottling, SetProcessInformation, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_NEW, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::{IsWindow, ShowWindow, SW_HIDE, SW_SHOW};
 
@@ -36,6 +40,7 @@ impl SystemMutator for Win32Mutator {
             Mutation::WindowCloak { hwnd } => set_cloak(*hwnd, true),
             Mutation::WindowHide { hwnd } => set_hidden(*hwnd, true),
             Mutation::WindowPosition { hwnd, new, .. } => place(*hwnd, *new),
+            Mutation::EcoQos { pid, enabled, .. } => set_eco_qos(*pid, *enabled),
         }
     }
 
@@ -73,6 +78,11 @@ impl SystemMutator for Win32Mutator {
             Mutation::WindowCloak { hwnd } => set_cloak(*hwnd, false),
             Mutation::WindowHide { hwnd } => set_hidden(*hwnd, false),
             Mutation::WindowPosition { hwnd, previous, .. } => place(*hwnd, *previous),
+            Mutation::EcoQos {
+                pid,
+                previous_enabled,
+                ..
+            } => set_eco_qos(*pid, *previous_enabled),
         }
     }
 }
@@ -83,6 +93,32 @@ fn apply_err(err: impl std::fmt::Display) -> JournalError {
 
 fn open_live(pid: u32) -> Result<ProcessHandle, JournalError> {
     ProcessHandle::open_for_governance(pid).map_err(apply_err)
+}
+
+/// Efficiency mode. A dead pid is success: there is nothing left to restore.
+fn set_eco_qos(pid: u32, enabled: bool) -> Result<(), JournalError> {
+    let Ok(handle) = ProcessHandle::open_for_governance(pid) else {
+        return Ok(());
+    };
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        StateMask: if enabled {
+            PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        } else {
+            0
+        },
+    };
+    unsafe {
+        SetProcessInformation(
+            handle.handle(),
+            ProcessPowerThrottling,
+            &state as *const _ as *const c_void,
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+        .map_err(apply_err)?;
+    }
+    Ok(())
 }
 
 fn set_timer(hundred_ns: u32, set_resolution: bool) -> Result<(), JournalError> {

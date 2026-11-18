@@ -17,6 +17,8 @@ pub struct FakeSystem {
     pub cloaked: BTreeSet<u64>,
     pub hidden: BTreeSet<u64>,
     pub positions: BTreeMap<u64, Rect>,
+    /// `true` means EcoQoS is enabled for that pid.
+    pub eco_qos: BTreeMap<u32, bool>,
 }
 
 impl FakeSystem {
@@ -46,6 +48,7 @@ impl FakeSystem {
             cloaked: BTreeSet::new(),
             hidden: BTreeSet::new(),
             positions,
+            eco_qos: BTreeMap::new(),
         }
     }
 
@@ -102,6 +105,9 @@ impl SystemMutator for FakeSystem {
             Mutation::WindowPosition { hwnd, new, .. } => {
                 self.positions.insert(*hwnd, *new);
             }
+            Mutation::EcoQos { pid, enabled, .. } => {
+                self.eco_qos.insert(*pid, *enabled);
+            }
         }
         Ok(())
     }
@@ -143,6 +149,13 @@ impl SystemMutator for FakeSystem {
             }
             Mutation::WindowPosition { hwnd, previous, .. } => {
                 self.positions.insert(*hwnd, *previous);
+            }
+            Mutation::EcoQos {
+                pid,
+                previous_enabled,
+                ..
+            } => {
+                self.eco_qos.insert(*pid, *previous_enabled);
             }
         }
         Ok(())
