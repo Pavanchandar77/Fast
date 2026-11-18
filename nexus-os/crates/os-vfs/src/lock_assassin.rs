@@ -1,14 +1,21 @@
 use std::path::Path;
+
+#[cfg(windows)]
 use std::time::Duration;
+#[cfg(windows)]
 use tracing::{debug, info, warn};
+#[cfg(windows)]
 use windows::Win32::Foundation::{
     CloseHandle, DuplicateHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, HANDLE,
 };
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_DISK};
+#[cfg(windows)]
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE};
 
 pub struct FileLockAssassin;
 
+#[cfg(windows)]
 impl FileLockAssassin {
     /// Attempts to release a locked file by inspecting system handles.
     pub fn release_file_lock<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
@@ -100,6 +107,13 @@ impl FileLockAssassin {
             );
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+impl FileLockAssassin {
+    pub fn release_file_lock<P: AsRef<Path>>(_path: P) -> anyhow::Result<()> {
         Ok(())
     }
 }

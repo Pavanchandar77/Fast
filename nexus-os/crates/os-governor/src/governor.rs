@@ -1,6 +1,9 @@
 use crate::app_nap::AppNapManager;
 use crate::booster::ForegroundBooster;
 use crate::ram_purger::RamPurger;
+use nexus_model::governor::{
+    GovernorPolicy, GovernorPolicyConfig, MemoryDecision, ProcessSnapshot, ThrottleDecision,
+};
 use os_config::schema::GovernorConfig;
 use os_core::process::enable_debug_privilege;
 use os_core::window::WindowHandle;
@@ -76,16 +79,33 @@ impl Governor {
             return;
         }
 
-        let (trim, nap) = {
+        let policy_cfg = {
             let cfg = self.config.read();
-            (cfg.trim_on_minimize, cfg.app_nap_enabled)
+            GovernorPolicyConfig {
+                trim_on_minimize: cfg.trim_on_minimize,
+                app_nap_enabled: cfg.app_nap_enabled,
+                cpu_throttle_percent: cfg.cpu_throttle_percent,
+                user_exclusions: cfg.exclude_from_nap.clone(),
+                ..Default::default()
+            }
         };
 
-        if trim {
+        let title = hwnd.title();
+        let snap = ProcessSnapshot {
+            pid,
+            name: &title,
+            is_foreground: false,
+            is_minimized: true,
+            is_cloaked: false,
+            idle_seconds: 0,
+        };
+
+        let decision = GovernorPolicy::evaluate_minimize(&snap, &policy_cfg);
+        if decision.memory == MemoryDecision::PurgeWorkingSet {
             let _ = self.ram_purger.purge_pid(pid);
         }
 
-        if nap {
+        if matches!(decision.throttle, ThrottleDecision::Throttle { .. }) {
             let _ = self.app_nap.suspend_pid(pid);
         }
     }

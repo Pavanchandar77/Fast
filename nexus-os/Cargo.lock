@@ -880,6 +880,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "proptest",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
 name = "notify"
 version = "6.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -976,6 +988,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "crossbeam-channel",
+ "nexus-model",
  "os-config",
  "os-core",
  "parking_lot",
@@ -991,6 +1004,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "nexus-model",
  "notify",
  "parking_lot",
  "serde",
@@ -1002,6 +1016,7 @@ dependencies = [
 name = "os-core"
 version = "0.1.0"
 dependencies = [
+ "nexus-model",
  "thiserror 1.0.69",
  "tracing",
  "windows",
@@ -1013,6 +1028,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "nexus-model",
  "os-config",
  "os-core",
  "parking_lot",
