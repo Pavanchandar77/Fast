@@ -19,7 +19,9 @@ use std::ffi::c_void;
 #[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, WPARAM};
 #[cfg(windows)]
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_TRANSITIONS_FORCEDISABLED,
+};
 #[cfg(windows)]
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectCpuRateControlInformation,
@@ -27,8 +29,8 @@ use windows::Win32::System::JobObjects::{
 };
 #[cfg(windows)]
 use windows::Win32::System::Threading::{
-    BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    REALTIME_PRIORITY_CLASS,
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
+    IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS,
 };
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -88,6 +90,22 @@ impl Platform for Win32Platform {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
         Ok(())
+    }
+
+    fn set_window_cloaked(&self, id: WindowId, cloaked: bool) -> Result<(), PlatformError> {
+        let hwnd = HWND(id.0 as *mut _);
+        let val: BOOL = BOOL(if cloaked { 1 } else { 0 });
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAK,
+                &val as *const _ as *const c_void,
+                std::mem::size_of::<BOOL>() as u32,
+            )
+            .map_err(|e| {
+                PlatformError::OperationFailed(format!("DwmSetWindowAttribute cloak failed: {e}"))
+            })
+        }
     }
 
     fn set_foreground_window(&self, id: WindowId) -> Result<(), PlatformError> {
@@ -151,7 +169,7 @@ impl Platform for Win32Platform {
             ProcessPriority::Idle => IDLE_PRIORITY_CLASS,
             ProcessPriority::BelowNormal => BELOW_NORMAL_PRIORITY_CLASS,
             ProcessPriority::Normal => NORMAL_PRIORITY_CLASS,
-            ProcessPriority::AboveNormal => NORMAL_PRIORITY_CLASS,
+            ProcessPriority::AboveNormal => ABOVE_NORMAL_PRIORITY_CLASS,
             ProcessPriority::High => HIGH_PRIORITY_CLASS,
             ProcessPriority::Realtime => REALTIME_PRIORITY_CLASS,
         };
@@ -405,6 +423,9 @@ impl Platform for Win32Platform {
         Err(PlatformError::Unsupported)
     }
     fn hide_window(&self, _id: WindowId) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_window_cloaked(&self, _id: WindowId, _cloaked: bool) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported)
     }
     fn set_foreground_window(&self, _id: WindowId) -> Result<(), PlatformError> {

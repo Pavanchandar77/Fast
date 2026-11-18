@@ -3,6 +3,7 @@
 //! Pure, fully deterministic, zero OS dependencies.
 
 use crate::layout::{LayoutEngine, LayoutKind, LayoutOptions, Rect, WindowId};
+use crate::platform::{Platform, PlatformError};
 use crate::spring::{SpringConfig, SpringRect};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -59,6 +60,30 @@ pub enum WindowMutation {
     Hide { id: WindowId },
     Focus { id: WindowId },
     Close { id: WindowId },
+}
+
+impl WindowMutation {
+    /// Applies one shell mutation through the platform seam.
+    pub fn apply(&self, platform: &impl Platform) -> Result<(), PlatformError> {
+        match self {
+            Self::MoveResize { id, rect } => platform.move_resize_window(*id, *rect),
+            Self::Show { id } => platform.show_window(*id),
+            Self::Hide { id } => platform.hide_window(*id),
+            Self::Focus { id } => platform.set_foreground_window(*id),
+            Self::Close { id } => platform.close_window(*id),
+        }
+    }
+}
+
+/// Applies a batch of state-machine mutations. Stops at the first platform error.
+pub fn apply_mutations(
+    platform: &impl Platform,
+    mutations: &[WindowMutation],
+) -> Result<(), PlatformError> {
+    for mutation in mutations {
+        mutation.apply(platform)?;
+    }
+    Ok(())
 }
 
 /// High-level events processed by the window manager state machine
@@ -661,5 +686,39 @@ mod tests {
         });
         let titles: Vec<String> = sm.all_windows().map(|w| w.title.clone()).collect();
         assert_eq!(titles.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_workspace_switch_on_fake_platform() {
+        use crate::platform::FakePlatform;
+
+        let mut sm = setup_sm();
+        let w1 = WindowId::new(1);
+        let w2 = WindowId::new(2);
+        let created = sm.handle_event(StateEvent::WindowCreated {
+            id: w1,
+            title: "App 1".into(),
+            initial_rect: Rect::new(0, 0, 400, 300),
+        });
+        let platform = FakePlatform::new();
+        apply_mutations(&platform, &created).expect("create mutations apply");
+
+        sm.handle_event(StateEvent::WindowCreated {
+            id: w2,
+            title: "App 2".into(),
+            initial_rect: Rect::new(0, 0, 400, 300),
+        });
+        let moved = sm.handle_event(StateEvent::MoveWindowToWorkspace {
+            id: w2,
+            workspace: 2,
+        });
+        apply_mutations(&platform, &moved).expect("move mutations apply");
+        assert!(!platform.is_window_visible(w2));
+
+        platform.clear_calls();
+        let switched = sm.handle_event(StateEvent::SwitchWorkspace { workspace: 2 });
+        apply_mutations(&platform, &switched).expect("switch mutations apply");
+        assert!(!platform.is_window_visible(w1));
+        assert!(platform.is_window_visible(w2));
     }
 }

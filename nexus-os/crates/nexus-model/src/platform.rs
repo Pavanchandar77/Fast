@@ -46,6 +46,7 @@ pub trait Platform: Send + Sync {
     fn move_resize_window(&self, id: WindowId, rect: Rect) -> Result<(), PlatformError>;
     fn show_window(&self, id: WindowId) -> Result<(), PlatformError>;
     fn hide_window(&self, id: WindowId) -> Result<(), PlatformError>;
+    fn set_window_cloaked(&self, id: WindowId, cloaked: bool) -> Result<(), PlatformError>;
     fn set_foreground_window(&self, id: WindowId) -> Result<(), PlatformError>;
     fn close_window(&self, id: WindowId) -> Result<(), PlatformError>;
     fn set_dwm_transitions(&self, id: WindowId, enabled: bool) -> Result<(), PlatformError>;
@@ -94,6 +95,10 @@ pub enum PlatformCall {
     },
     HideWindow {
         id: WindowId,
+    },
+    SetWindowCloaked {
+        id: WindowId,
+        cloaked: bool,
     },
     SetForegroundWindow {
         id: WindowId,
@@ -283,6 +288,21 @@ impl Platform for FakePlatform {
         if let Some(win) = self.windows.write().get_mut(&id) {
             win.visible = false;
         }
+        Ok(())
+    }
+
+    fn set_window_cloaked(&self, id: WindowId, cloaked: bool) -> Result<(), PlatformError> {
+        self.calls
+            .write()
+            .push(PlatformCall::SetWindowCloaked { id, cloaked });
+        let mut guard = self.windows.write();
+        let win = guard.entry(id).or_insert(FakeWindowState {
+            rect: Rect::new(0, 0, 800, 600),
+            visible: true,
+            cloaked: false,
+            dwm_transitions: true,
+        });
+        win.cloaked = cloaked;
         Ok(())
     }
 
@@ -555,6 +575,15 @@ mod tests {
             id: w,
             enabled: false
         }));
+        assert!(!platform.is_window_cloaked(w));
+
+        assert!(platform.set_window_cloaked(w, true).is_ok());
+        assert!(platform.is_window_cloaked(w));
+        assert!(platform.has_call(&PlatformCall::SetWindowCloaked {
+            id: w,
+            cloaked: true
+        }));
+        assert!(platform.set_window_cloaked(w, false).is_ok());
         assert!(!platform.is_window_cloaked(w));
     }
 

@@ -32,4 +32,6 @@ pub use platform::{
     PlatformError, ProcessPriority,
 };
 pub use spring::{Spring1D, Spring2D, SpringConfig, SpringRect, SpringSolver};
-pub use state::{ManagedWindowState, StateEvent, WindowManagerStateMachine, WindowMutation};
+pub use state::{
+    apply_mutations, ManagedWindowState, StateEvent, WindowManagerStateMachine, WindowMutation,
+};
