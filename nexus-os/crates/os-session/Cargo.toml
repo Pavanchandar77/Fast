@@ -26,6 +26,9 @@ name = "nexus-vfs"
 path = "src/bin/vfs_daemon.rs"
 
 [dependencies]
+anyhow.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
 os-governor = { path = "../os-governor" }
@@ -35,7 +38,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
-anyhow.workspace = true
-
-[target.'cfg(windows)'.dependencies]
 windows.workspace = true
