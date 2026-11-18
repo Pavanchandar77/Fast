@@ -1,15 +1,15 @@
+use crate::job_object::JobThrottleManager;
+use os_config::schema::GovernorConfig;
+use os_core::process::ProcessHandle;
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tracing::{info, warn};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
-use os_core::process::ProcessHandle;
-use os_config::schema::GovernorConfig;
-use crate::job_object::JobThrottleManager;
 
 /// Hardcoded Windows NT critical processes that must NEVER be suspended or trimmed.
 const CRITICAL_SYSTEM_PROCESSES: &[&str] = &[
@@ -76,7 +76,10 @@ impl AppNapManager {
                 if let Err(e) = handle.resume() {
                     warn!("Failed to resume App Nap process PID {}: {:?}", pid, e);
                 } else {
-                    info!("⚡ App Nap: Instantly resumed PID {} via NtResumeProcess", pid);
+                    info!(
+                        "⚡ App Nap: Instantly resumed PID {} via NtResumeProcess",
+                        pid
+                    );
                 }
             }
         }
@@ -123,8 +126,14 @@ impl AppNapManager {
         let throttle_rate = { self.config.read().cpu_throttle_percent.clamp(1, 10) };
 
         // Prefer documented Win32 Job Objects (1% CPU rate limit cap) - zero update breakage
-        if let Err(e) = self.job_throttler.throttle_process(pid, handle.handle(), throttle_rate) {
-            warn!("Job Object throttling fallback to NtSuspendProcess for PID {}: {:?}", pid, e);
+        if let Err(e) = self
+            .job_throttler
+            .throttle_process(pid, handle.handle(), throttle_rate)
+        {
+            warn!(
+                "Job Object throttling fallback to NtSuspendProcess for PID {}: {:?}",
+                pid, e
+            );
             handle.suspend()?;
             self.suspended_pids.write().insert(pid);
         }
@@ -149,7 +158,11 @@ impl AppNapManager {
 
                 let (enabled, idle_secs, throttle_percent) = {
                     let cfg = config.read();
-                    (cfg.app_nap_enabled, cfg.app_nap_idle_secs.max(15), cfg.cpu_throttle_percent.clamp(1, 10))
+                    (
+                        cfg.app_nap_enabled,
+                        cfg.app_nap_idle_secs.max(15),
+                        cfg.cpu_throttle_percent.clamp(1, 10),
+                    )
                 };
 
                 if !enabled {
@@ -188,14 +201,23 @@ impl AppNapManager {
                         let cfg = config.read();
                         cfg.exclude_from_nap.clone()
                     };
-                    if user_exclusions.iter().any(|ex| process_name.contains(&ex.to_lowercase())) {
+                    if user_exclusions
+                        .iter()
+                        .any(|ex| process_name.contains(&ex.to_lowercase()))
+                    {
                         continue;
                     }
 
                     if let Ok(handle) = ProcessHandle::open_for_governance(pid) {
                         // Apply documented Win32 Job Object rate cap (1%)
-                        if job_throttler.throttle_process(pid, handle.handle(), throttle_percent).is_ok() {
-                            info!("⚡ App Nap: Throttled background PID {} ({}) to {}% CPU", pid, process_name, throttle_percent);
+                        if job_throttler
+                            .throttle_process(pid, handle.handle(), throttle_percent)
+                            .is_ok()
+                        {
+                            info!(
+                                "⚡ App Nap: Throttled background PID {} ({}) to {}% CPU",
+                                pid, process_name, throttle_percent
+                            );
                         }
                     }
                 }
@@ -207,8 +229,10 @@ impl AppNapManager {
 pub fn get_process_name(pid: u32) -> anyhow::Result<String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-        let mut entry = PROCESSENTRY32W::default();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
 
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {

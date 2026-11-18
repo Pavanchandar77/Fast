@@ -13,6 +13,7 @@ pub struct MftEntry {
     pub size: u64,
 }
 
+#[derive(Default)]
 pub struct MftIndexer {
     indexed_files: Vec<MftEntry>,
     last_usn: u64,
@@ -20,16 +21,16 @@ pub struct MftIndexer {
 
 impl MftIndexer {
     pub fn new() -> Self {
-        Self {
-            indexed_files: Vec::new(),
-            last_usn: 0,
-        }
+        Self::default()
     }
 
     /// Indexes volume with wrap-around recovery.
     /// If ERROR_JOURNAL_ENTRY_DELETED is returned, automatically resets state and falls back to full MFT re-enumeration.
     pub fn index_volume(&mut self, volume_letter: char) -> anyhow::Result<usize> {
-        info!("Indexing NTFS MFT volume {}:\\ via USN Journal...", volume_letter);
+        info!(
+            "Indexing NTFS MFT volume {}:\\ via USN Journal...",
+            volume_letter
+        );
 
         match self.read_usn_journal(volume_letter) {
             Ok(count) => Ok(count),
@@ -46,7 +47,10 @@ impl MftIndexer {
     }
 
     fn full_mft_enumeration_fallback(&mut self, volume_letter: char) -> anyhow::Result<usize> {
-        info!("Executing clean full MFT re-enumeration for {}:\\...", volume_letter);
+        info!(
+            "Executing clean full MFT re-enumeration for {}:\\...",
+            volume_letter
+        );
         self.indexed_files.clear();
         self.last_usn = 0;
         // FSCTL_ENUM_USN_DATA starting from USN 0

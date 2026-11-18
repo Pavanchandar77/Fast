@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SystemConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -373,20 +373,6 @@ impl Default for KeybindingsConfig {
         Self {
             mod_key: "Super".into(),
             bindings,
-        }
-    }
-}
-
-impl Default for SystemConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            compositor: CompositorConfig::default(),
-            governor: GovernorConfig::default(),
-            vfs: VfsConfig::default(),
-            shield: ShieldConfig::default(),
-            hal: HalConfig::default(),
-            keybindings: KeybindingsConfig::default(),
         }
     }
 }

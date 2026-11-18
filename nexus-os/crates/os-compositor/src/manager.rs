@@ -1,17 +1,16 @@
-use std::collections::HashMap;
+use crate::hooks::WindowEvent;
+use crate::hotkeys::HotkeyAction;
+use crate::spring::{SpringConfig, SpringRect};
+use os_config::schema::{CompositorConfig, SpringConfigDto};
+use os_core::window::WindowHandle;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SetWindowPos, SM_CXSCREEN, SM_CYSCREEN,
-    SWP_NOACTIVATE, SWP_NOZORDER,
+    GetSystemMetrics, SetWindowPos, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER,
 };
-use os_core::window::WindowHandle;
-use os_config::schema::{CompositorConfig, SpringConfigDto};
-use crate::hooks::WindowEvent;
-use crate::hotkeys::HotkeyAction;
-use crate::spring::{SpringConfig, SpringRect};
 
 #[derive(Debug, Clone)]
 pub struct ManagedWindow {
@@ -61,7 +60,10 @@ impl WindowManager {
 
         // 1. Enforce DWM animation suppression for instant interruptible spring physics
         if let Err(e) = hwnd.disable_dwm_transitions() {
-            debug!("Could not disable DWM transitions for {:?}: {:?}", hwnd.0, e);
+            debug!(
+                "Could not disable DWM transitions for {:?}: {:?}",
+                hwnd.0, e
+            );
         }
 
         let initial_rect = hwnd.rect().unwrap_or(RECT {
@@ -117,17 +119,17 @@ impl WindowManager {
     }
 
     pub fn retile_workspace(&mut self, workspace_id: u8) {
-        let (screen_w, screen_h) = unsafe {
-            (
-                GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            )
-        };
+        let (screen_w, screen_h) =
+            unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
 
         let (top_bar_height, inner_gap, outer_gap, master_ratio, layout) = {
             let cfg = self.config.read();
             (
-                if cfg.top_bar.enabled { cfg.top_bar.height } else { 0 },
+                if cfg.top_bar.enabled {
+                    cfg.top_bar.height
+                } else {
+                    0
+                },
                 cfg.inner_gap,
                 cfg.outer_gap,
                 cfg.master_ratio,
@@ -206,19 +208,15 @@ impl WindowManager {
 
             if let Some(win) = self.windows.get_mut(hwnd) {
                 win.target_rect = (stack_x, stack_y, stack_w, h);
-                win.spring.set_target(
-                    stack_x as f32,
-                    stack_y as f32,
-                    stack_w as f32,
-                    h as f32,
-                );
+                win.spring
+                    .set_target(stack_x as f32, stack_y as f32, stack_w as f32, h as f32);
             }
         }
     }
 
     /// Advances physics simulation and applies smooth window coordinates at 120Hz
     pub fn update_animations(&mut self, dt: f32) {
-        for (_, win) in self.windows.iter_mut() {
+        for win in self.windows.values_mut() {
             if !win.spring.is_at_rest() {
                 win.spring.step(dt);
                 let (x, y, w, h) = win.spring.current_rect();

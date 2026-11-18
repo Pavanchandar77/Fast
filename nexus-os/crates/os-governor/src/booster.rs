@@ -1,8 +1,8 @@
+use os_core::ntdll::NtSetTimerResolution;
+use os_core::process::ProcessHandle;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{debug, info};
 use windows::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS};
-use os_core::ntdll::NtSetTimerResolution;
-use os_core::process::ProcessHandle;
 
 pub struct ForegroundBooster {
     current_foreground_pid: AtomicU32,
@@ -22,9 +22,15 @@ impl ForegroundBooster {
         // 5000 units of 100ns = 0.5ms resolution
         let status = unsafe { NtSetTimerResolution(5000, 1, &mut current) };
         if status.0 < 0 {
-            anyhow::bail!("NtSetTimerResolution failed with NTSTATUS: 0x{:08X}", status.0 as u32);
+            anyhow::bail!(
+                "NtSetTimerResolution failed with NTSTATUS: 0x{:08X}",
+                status.0 as u32
+            );
         }
-        info!("Kernel timer resolution locked to 0.5ms (current: {} units)", current);
+        info!(
+            "Kernel timer resolution locked to 0.5ms (current: {} units)",
+            current
+        );
         Ok(())
     }
 
@@ -38,7 +44,8 @@ impl ForegroundBooster {
             return;
         }
 
-        self.previous_foreground_pid.store(old_pid, Ordering::SeqCst);
+        self.previous_foreground_pid
+            .store(old_pid, Ordering::SeqCst);
 
         // 1. Demote old foreground process
         if old_pid != 0 {
@@ -46,7 +53,10 @@ impl ForegroundBooster {
                 if let Err(e) = handle.set_priority(BELOW_NORMAL_PRIORITY_CLASS) {
                     debug!("Could not demote PID {}: {:?}", old_pid, e);
                 } else {
-                    debug!("Demoted previous foreground PID {} to BELOW_NORMAL", old_pid);
+                    debug!(
+                        "Demoted previous foreground PID {} to BELOW_NORMAL",
+                        old_pid
+                    );
                 }
             }
         }
@@ -56,8 +66,17 @@ impl ForegroundBooster {
             if let Err(e) = handle.set_priority(HIGH_PRIORITY_CLASS) {
                 debug!("Could not boost PID {}: {:?}", new_pid, e);
             } else {
-                info!("⚡ Elevated active foreground PID {} to HIGH_PRIORITY_CLASS", new_pid);
+                info!(
+                    "⚡ Elevated active foreground PID {} to HIGH_PRIORITY_CLASS",
+                    new_pid
+                );
             }
         }
+    }
+}
+
+impl Default for ForegroundBooster {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -7,13 +7,14 @@ pub enum PreviewContent {
     Binary { size: u64, mime: String },
 }
 
+#[derive(Default)]
 pub struct QuickLookViewer {
     pub active_path: Option<PathBuf>,
 }
 
 impl QuickLookViewer {
     pub fn new() -> Self {
-        Self { active_path: None }
+        Self::default()
     }
 
     pub fn inspect_file<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<PreviewContent> {

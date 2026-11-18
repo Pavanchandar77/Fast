@@ -2,13 +2,15 @@
 //! Prevents the "Black Screen of Death" by monitoring nexus-os.exe health
 //! and automatically falling back to C:\Windows\explorer.exe upon repeated crashes or config errors.
 
-use std::path::PathBuf;
+use os_config::schema::SystemConfig;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, MB_SYSTEMMODAL};
-use os_config::schema::SystemConfig;
 
 const MAX_CRASHES_IN_WINDOW: usize = 2;
 const CRASH_WINDOW_DURATION: Duration = Duration::from_secs(10);
@@ -58,7 +60,10 @@ fn main() {
             Err(e) => {
                 show_alert(
                     "Nexus-OS Launch Failure",
-                    &format!("Failed to execute {:?}: {}\nFalling back to Windows Explorer.", daemon_exe, e),
+                    &format!(
+                        "Failed to execute {:?}: {}\nFalling back to Windows Explorer.",
+                        daemon_exe, e
+                    ),
                 );
                 launch_explorer_fallback();
                 return;
@@ -108,7 +113,7 @@ fn main() {
     launch_explorer_fallback();
 }
 
-fn validate_config(path: &PathBuf) -> anyhow::Result<()> {
+fn validate_config(path: &Path) -> anyhow::Result<()> {
     if !path.exists() {
         return Ok(()); // Will generate default
     }
@@ -147,17 +152,14 @@ fn find_daemon_executable() -> Option<PathBuf> {
         PathBuf::from("target/debug/nexus-os.exe"),
     ];
 
-    for c in candidates {
-        if c.exists() {
-            return Some(c);
-        }
-    }
-
-    None
+    candidates.into_iter().find(|c| c.exists())
 }
 
 fn launch_explorer_fallback() {
-    println!("[nexus-watchdog] Launching fallback shell: {}", EXPLORER_PATH);
+    println!(
+        "[nexus-watchdog] Launching fallback shell: {}",
+        EXPLORER_PATH
+    );
     let _ = Command::new(EXPLORER_PATH).spawn();
 }
 

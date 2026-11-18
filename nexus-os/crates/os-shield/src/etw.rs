@@ -1,12 +1,13 @@
 use tracing::info;
 
+#[derive(Default)]
 pub struct EtwBehavioralGuard {
     active: bool,
 }
 
 impl EtwBehavioralGuard {
     pub fn new() -> Self {
-        Self { active: false }
+        Self::default()
     }
 
     pub fn start_kernel_trace(&mut self) -> anyhow::Result<()> {

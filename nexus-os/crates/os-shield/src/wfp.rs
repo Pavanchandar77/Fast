@@ -29,3 +29,9 @@ impl WfpFirewall {
         Ok(())
     }
 }
+
+impl Default for WfpFirewall {
+    fn default() -> Self {
+        Self::new()
+    }
+}

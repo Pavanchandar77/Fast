@@ -1,7 +1,9 @@
 use std::path::Path;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-use windows::Win32::Foundation::{CloseHandle, DuplicateHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, HANDLE};
+use windows::Win32::Foundation::{
+    CloseHandle, DuplicateHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, HANDLE,
+};
 use windows::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_DISK};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE};
 
@@ -11,7 +13,10 @@ impl FileLockAssassin {
     /// Attempts to release a locked file by inspecting system handles.
     pub fn release_file_lock<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
         let path_ref = path.as_ref().to_path_buf();
-        info!("FileLockAssassin: Safely inspecting locks on {:?}", path_ref);
+        info!(
+            "FileLockAssassin: Safely inspecting locks on {:?}",
+            path_ref
+        );
         Self::inspect_and_unlock_file(&path_ref)
     }
 
@@ -62,7 +67,16 @@ impl FileLockAssassin {
     }
 
     /// Forcefully duplicates a handle with DUPLICATE_CLOSE_SOURCE to terminate an external process's hold.
-    pub unsafe fn force_close_remote_handle(source_pid: u32, remote_handle: HANDLE) -> anyhow::Result<()> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `remote_handle` is a valid handle within the target process
+    /// identified by `source_pid`, and that closing it will not cause undefined behavior or
+    /// fatal instability in the target process.
+    pub unsafe fn force_close_remote_handle(
+        source_pid: u32,
+        remote_handle: HANDLE,
+    ) -> anyhow::Result<()> {
         let process_handle = OpenProcess(PROCESS_DUP_HANDLE, false, source_pid)?;
         let mut target_handle = HANDLE::default();
 
@@ -80,7 +94,10 @@ impl FileLockAssassin {
 
         if res.is_ok() && !target_handle.is_invalid() {
             let _ = CloseHandle(target_handle);
-            info!("Successfully forcibly closed remote handle {:?} in PID {}", remote_handle, source_pid);
+            info!(
+                "Successfully forcibly closed remote handle {:?} in PID {}",
+                remote_handle, source_pid
+            );
         }
 
         Ok(())

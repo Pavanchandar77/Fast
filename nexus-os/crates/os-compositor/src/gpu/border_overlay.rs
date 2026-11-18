@@ -3,17 +3,17 @@
 
 use std::sync::Arc;
 use tracing::info;
+use wgpu::util::DeviceExt;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, RegisterClassExW,
-    ShowWindow, CS_HREDRAW, CS_VREDRAW, HMENU,
-    SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, RegisterClassExW, ShowWindow,
+    CS_HREDRAW, CS_VREDRAW, HMENU, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WNDCLASSEXW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
-use wgpu::util::DeviceExt;
 
 use crate::gpu::context::GpuContext;
 use crate::gpu::shaders::{SquirclePipeline, SquircleUniforms};
@@ -76,7 +76,12 @@ pub fn create_border_overlay_window() -> anyhow::Result<HWND> {
 
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+            WS_EX_LAYERED
+                | WS_EX_TRANSPARENT
+                | WS_EX_TOPMOST
+                | WS_EX_TOOLWINDOW
+                | WS_EX_NOACTIVATE
+                | WS_EX_NOREDIRECTIONBITMAP,
             class_name,
             w!("Nexus-OS Border Overlay"),
             WS_POPUP,
@@ -114,14 +119,18 @@ impl BorderOverlay {
 
         let pipeline = SquirclePipeline::new(&gpu.device, surface.format);
 
-        let mut initial_uniforms = SquircleUniforms::default();
-        initial_uniforms.viewport_size = [screen_width as f32, screen_height as f32];
+        let initial_uniforms = SquircleUniforms {
+            viewport_size: [screen_width as f32, screen_height as f32],
+            ..Default::default()
+        };
 
-        let uniform_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("border_overlay_uniform_buffer"),
-            contents: bytemuck::bytes_of(&initial_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("border_overlay_uniform_buffer"),
+                contents: bytemuck::bytes_of(&initial_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("border_overlay_bind_group"),
@@ -151,7 +160,8 @@ impl BorderOverlay {
 
     /// Set target bounding rectangle for the focused window [x, y, w, h]
     pub fn set_target_rect(&mut self, target: [f32; 4]) {
-        self.spring.set_target(target[0], target[1], target[2], target[3]);
+        self.spring
+            .set_target(target[0], target[1], target[2], target[3]);
         self.is_dirty = true;
     }
 
@@ -176,10 +186,15 @@ impl BorderOverlay {
         // If window is degenerate or minimized, clear and rest
         if w < 10.0 || h < 10.0 {
             let output = self.surface.surface.get_current_texture()?;
-            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("border_overlay_clear_encoder"),
-            });
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder =
+                self.gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("border_overlay_clear_encoder"),
+                    });
             {
                 let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("border_overlay_clear_pass"),
@@ -212,26 +227,29 @@ impl BorderOverlay {
             corner_radius: 12.0,
             border_width: 2.0,
             _pad0: [0.0, 0.0],
-            border_color: [0.23, 0.51, 0.96, 0.95],   // macOS-style accent blue
-            specular_color: [1.0, 1.0, 1.0, 0.90],   // 1px specular highlight
+            border_color: [0.23, 0.51, 0.96, 0.95], // macOS-style accent blue
+            specular_color: [1.0, 1.0, 1.0, 0.90],  // 1px specular highlight
             glow_color: [0.23, 0.51, 0.96, 0.20],
             viewport_size: [self.screen_width as f32, self.screen_height as f32],
             specular_intensity: 1.0,
             _pad1: 0.0,
         };
 
-        self.gpu.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.gpu
+            .queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let output = self.surface.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("border_overlay_render_encoder"),
-        });
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("border_overlay_render_encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
