@@ -28,7 +28,7 @@ pub mod pane;
 pub mod sidebar;
 pub mod tab;
 
-pub use action::{Action, CursorMove, Effect, Msg, PaneId, ViewKind};
+pub use action::{Action, CursorMove, DirDiff, Effect, Msg, PaneId, ViewKind};
 pub use explorer::{Explorer, Focus, Prompt};
 pub use keymap::{Chord, Key, Keymap, Mods};
 pub use pane::{Location, Pane};

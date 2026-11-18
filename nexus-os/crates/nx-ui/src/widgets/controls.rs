@@ -362,6 +362,13 @@ impl Segmented {
         self.index
     }
 
+    pub fn set_index(&mut self, idx: usize) {
+        if !self.labels.is_empty() {
+            self.index = idx.min(self.labels.len() - 1);
+            self.thumb.set_target(self.index as f32);
+        }
+    }
+
     pub fn thumb(&self) -> f32 {
         self.thumb.position
     }

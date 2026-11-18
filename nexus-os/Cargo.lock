@@ -1505,9 +1505,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-explorer-ui"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "criterion",
+ "crossbeam-channel",
+ "notify",
+ "nx-explorer",
+ "nx-fs",
+ "nx-ui",
+ "parking_lot",
+ "pollster",
+ "proptest",
+ "raw-window-handle",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "wgpu",
+ "windows",
+ "winit",
+]
+
+[[package]]
 name = "nx-fs"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "criterion",
  "crossbeam-channel",
  "memchr",

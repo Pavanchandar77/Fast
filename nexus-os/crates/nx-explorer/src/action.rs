@@ -38,6 +38,18 @@ pub enum CursorMove {
     End,
 }
 
+/// An incremental change to a directory entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirDiff {
+    Created(DirEntry),
+    Removed(std::ffi::OsString),
+    Updated(DirEntry),
+    Renamed {
+        from: std::ffi::OsString,
+        to: DirEntry,
+    },
+}
+
 /// User intents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -133,6 +145,11 @@ pub enum Msg {
     /// Something changed inside `dir` (file op finished, watcher event).
     DirChanged {
         dir: PathBuf,
+    },
+    /// Live folder watcher update: debounced, coalesced diffs (no full reload).
+    DirDiff {
+        dir: PathBuf,
+        diffs: Vec<DirDiff>,
     },
     /// The pane's viewport: first visible row, row count, grid columns.
     Viewport {
