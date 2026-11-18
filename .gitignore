@@ -1,0 +1,25 @@
+# Rust build artifacts
+target/
+**/target/
+*.d
+*.rlib
+*.rmeta
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Cargo
+Cargo.lock.bak
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
