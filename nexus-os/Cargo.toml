@@ -9,6 +9,8 @@ members = [
     "crates/os-shield",
     "crates/os-hal",
     "crates/os-session",
+    "crates/nx-fs",
+    "crates/nx-explorer",
 ]
 
 [workspace.package]
