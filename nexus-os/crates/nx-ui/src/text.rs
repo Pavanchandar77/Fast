@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 
 use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent, Weight, Wrap,
+    Attrs, Buffer, CacheKey, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent,
+    Weight, Wrap,
 };
 use fontdb::Database;
 
@@ -58,6 +59,7 @@ pub struct TextEngine {
     buffer: Buffer,
     entries: Vec<Entry>,
     index: HashMap<u64, Vec<u32>>,
+    glyph_cache: HashMap<CacheKey, Option<(PixelRect, i32, i32)>>,
 }
 
 impl TextEngine {
@@ -88,6 +90,7 @@ impl TextEngine {
             buffer,
             entries: Vec::new(),
             index: HashMap::new(),
+            glyph_cache: HashMap::new(),
         })
     }
 
@@ -185,21 +188,30 @@ impl TextEngine {
 
         let mut glyphs = Vec::with_capacity(pending.len());
         for (cache_key, x, y) in pending {
-            let Some(image) = self
-                .swash
-                .get_image(&mut self.font_system, cache_key)
-                .clone()
-            else {
+            let cached = if let Some(cached) = self.glyph_cache.get(&cache_key) {
+                *cached
+            } else {
+                let packed = self
+                    .swash
+                    .get_image(&mut self.font_system, cache_key)
+                    .as_ref()
+                    .and_then(|image| {
+                        if image.placement.width == 0 || image.placement.height == 0 {
+                            None
+                        } else {
+                            pack_image(atlas, image)
+                                .map(|rect| (rect, image.placement.left, image.placement.top))
+                        }
+                    });
+                self.glyph_cache.insert(cache_key, packed);
+                packed
+            };
+            let Some((rect, left, top)) = cached else {
                 continue;
             };
-            if image.placement.width == 0 || image.placement.height == 0 {
-                continue;
-            }
-            let packed = pack_image(atlas, &image);
-            let Some(rect) = packed else { continue };
             glyphs.push(PlacedGlyph {
-                dx: x as f32 + image.placement.left as f32,
-                dy: y as f32 - image.placement.top as f32,
+                dx: x as f32 + left as f32,
+                dy: y as f32 - top as f32,
                 w: rect.w as f32,
                 h: rect.h as f32,
                 src_x: rect.x as f32,
