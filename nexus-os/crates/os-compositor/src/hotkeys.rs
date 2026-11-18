@@ -5,8 +5,7 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
-    VK_SPACE,
+    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
@@ -25,6 +24,8 @@ unsafe impl Sync for SendHhook {}
 static HOTKEY_SENDER: OnceLock<Sender<HotkeyAction>> = OnceLock::new();
 static HOOK_HANDLE: parking_lot::Mutex<Option<SendHhook>> = parking_lot::Mutex::new(None);
 static IS_RUNNING: AtomicBool = AtomicBool::new(false);
+static KEYBINDINGS: parking_lot::RwLock<Option<nx_wm::KeybindingMap>> =
+    parking_lot::RwLock::new(None);
 
 pub struct GlobalKeyboardHook {
     thread_handle: Option<JoinHandle<()>>,
@@ -33,6 +34,16 @@ pub struct GlobalKeyboardHook {
 
 impl GlobalKeyboardHook {
     pub fn start() -> anyhow::Result<(Self, Receiver<HotkeyAction>)> {
+        Self::start_with_config(&os_config::schema::KeybindingsConfig::default())
+    }
+
+    pub fn start_with_config(
+        config: &os_config::schema::KeybindingsConfig,
+    ) -> anyhow::Result<(Self, Receiver<HotkeyAction>)> {
+        let map = nx_wm::KeybindingMap::load_from_config(&config.mod_key, &config.bindings)
+            .unwrap_or_default();
+        *KEYBINDINGS.write() = Some(map);
+
         let (tx, rx) = crossbeam_channel::unbounded();
         let _ = HOTKEY_SENDER.set(tx);
 
@@ -91,6 +102,13 @@ impl GlobalKeyboardHook {
         ))
     }
 
+    pub fn update_keybindings(config: &os_config::schema::KeybindingsConfig) {
+        if let Ok(map) = nx_wm::KeybindingMap::load_from_config(&config.mod_key, &config.bindings) {
+            *KEYBINDINGS.write() = Some(map);
+            info!("Hotkeys reloaded from configuration");
+        }
+    }
+
     /// Global unhook function called on panic, exit, or fail-safe
     pub fn unhook_global() {
         let mut h_guard = HOOK_HANDLE.lock();
@@ -102,7 +120,7 @@ impl GlobalKeyboardHook {
 
     /// Ultra-fast low-level keyboard callback.
     /// MUST complete in <0.01ms (10 microseconds) to strictly avoid Windows `LowLevelHooksTimeout` unhooking.
-    /// Never performs heap allocations, locking, or blocking operations.
+    /// Never performs heap allocations or blocking operations.
     unsafe extern "system" fn low_level_keyboard_proc(
         n_code: i32,
         w_param: WPARAM,
@@ -125,48 +143,61 @@ impl GlobalKeyboardHook {
 
             // 1. Critical Fail-Safe Watchdog: Ctrl + Alt + Shift + Esc
             if ctrl && alt && shift && vk == VK_ESCAPE.0 as u32 {
-                // Instant out-of-band panic shortcut: Zero dependency on message loop or channels
                 os_core::hollow_shell::HollowShellManager::restore_taskbar();
                 crate::gpu::top_bar::TopBar::unregister_global();
                 Self::unhook_global();
                 std::process::exit(0);
             }
 
-            // 2. Command Bar: Super + Space
-            if win && vk == VK_SPACE.0 as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::CommandBar);
-                }
-                return LRESULT(1);
-            }
+            // 2. Config-driven keybinding lookup with passthrough for Windows reserved shortcuts
+            if let Some(key) = nx_wm::Key::from_vk(vk) {
+                let modifiers = nx_wm::Modifiers {
+                    super_key: win,
+                    alt,
+                    ctrl,
+                    shift,
+                };
 
-            // 3. Terminal: Super + Return
-            if win && !shift && vk == VK_RETURN.0 as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::Terminal);
-                }
-                return LRESULT(1);
-            }
+                let matched_action = {
+                    let guard = KEYBINDINGS.read();
+                    guard
+                        .as_ref()
+                        .and_then(|map| map.lookup(modifiers, key).cloned())
+                };
 
-            // 4. Close Window: Super + Q
-            if win && vk == 'Q' as u32 {
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    let _ = sender.try_send(HotkeyAction::CloseWindow);
-                }
-                return LRESULT(1);
-            }
+                if let Some(action) = matched_action {
+                    let hotkey_action = match action {
+                        nx_wm::Action::PanicFailSafe => HotkeyAction::PanicFailSafe,
+                        nx_wm::Action::CommandBar => HotkeyAction::CommandBar,
+                        nx_wm::Action::Terminal => HotkeyAction::Terminal,
+                        nx_wm::Action::CloseWindow => HotkeyAction::CloseWindow,
+                        nx_wm::Action::ToggleFullscreen => HotkeyAction::ToggleFullscreen,
+                        nx_wm::Action::ToggleFloating => HotkeyAction::ToggleFloating,
+                        nx_wm::Action::FocusWorkspace(ws) => HotkeyAction::FocusWorkspace(ws),
+                        nx_wm::Action::MoveToWorkspace(ws) => HotkeyAction::MoveToWorkspace(ws),
+                        nx_wm::Action::Execute(cmd) => HotkeyAction::Custom(format!("exec:{cmd}")),
+                        nx_wm::Action::Custom(s) => HotkeyAction::Custom(s),
+                        other => HotkeyAction::Custom(format!("{other:?}")),
+                    };
 
-            // 5. Workspaces 1-9: Super + [1-9] or Super + Shift + [1-9]
-            if win && (0x31..=0x39).contains(&vk) {
-                let ws_idx = (vk - 0x30) as u8;
-                if let Some(sender) = HOTKEY_SENDER.get() {
-                    if shift {
-                        let _ = sender.try_send(HotkeyAction::MoveToWorkspace(ws_idx));
-                    } else {
-                        let _ = sender.try_send(HotkeyAction::FocusWorkspace(ws_idx));
+                    if let Some(sender) = HOTKEY_SENDER.get() {
+                        let _ = sender.try_send(hotkey_action);
                     }
+
+                    // Win-key-up masking: cancels Windows Start Menu popup when Super was part of the combination
+                    if win {
+                        unsafe {
+                            windows::Win32::UI::Input::KeyboardAndMouse::keybd_event(
+                                0,
+                                0,
+                                windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0),
+                                0,
+                            );
+                        }
+                    }
+
+                    return LRESULT(1);
                 }
-                return LRESULT(1);
             }
         }
 

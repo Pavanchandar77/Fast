@@ -13,6 +13,7 @@ members = [
     "crates/nx-fs",
     "crates/nx-explorer",
     "crates/nx-governor-policy",
+    "crates/nx-wm",
     "crates/nx-privacy",
     "crates/nx-ui",
     "crates/nx-privacy-dash",

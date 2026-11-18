@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 nexus-model.workspace = true
+nx-wm = { path = "../nx-wm" }
 
 [target.'cfg(windows)'.dependencies]
 os-core = { path = "../os-core" }
