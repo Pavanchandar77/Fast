@@ -689,10 +689,8 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "notify",
- "os-core",
  "parking_lot",
  "serde",
- "thiserror 1.0.69",
  "toml",
  "tracing",
 ]
@@ -701,7 +699,6 @@ dependencies = [
 name = "os-core"
 version = "0.1.0"
 dependencies = [
- "parking_lot",
  "thiserror 1.0.69",
  "tracing",
  "windows",
@@ -725,9 +722,7 @@ name = "os-hal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "os-core",
  "tracing",
- "windows",
 ]
 
 [[package]]
@@ -740,8 +735,6 @@ dependencies = [
  "os-config",
  "os-core",
  "os-governor",
- "os-hal",
- "os-shield",
  "os-vfs",
  "parking_lot",
  "tracing",
@@ -754,9 +747,7 @@ name = "os-shield"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "os-core",
  "tracing",
- "windows",
 ]
 
 [[package]]
@@ -765,7 +756,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
- "os-core",
  "tracing",
  "windows",
 ]

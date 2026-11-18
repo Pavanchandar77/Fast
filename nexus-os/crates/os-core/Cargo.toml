@@ -9,4 +9,3 @@ license.workspace = true
 windows.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-parking_lot.workspace = true
