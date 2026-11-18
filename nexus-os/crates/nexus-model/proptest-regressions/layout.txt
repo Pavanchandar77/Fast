@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc bca49bbb52078fa80b70bde3787c46d14275f0078d3881b4dd5b007feb7d667b # shrinks to screen_w = 64, screen_h = 89, inner_gap = 2, outer_gap = 20, top_bar = 30, master_ratio = 0.1, win_count = 11
+cc 9df5745fe273ee143a92e9f5059cf5a92b64046421497450c250eef43a6771e8 # shrinks to screen_w = 120, screen_h = 120, inner_gap = 0, outer_gap = 0, top_bar = 0, master_ratio = 0.78085595, win_count = 8

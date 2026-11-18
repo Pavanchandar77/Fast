@@ -323,6 +323,12 @@ impl LayoutEngine {
     }
 
     /// Pack windows into `area` on the axis that can separate them.
+    ///
+    /// A positive tile needs one pixel on the split axis. When the area cannot
+    /// give every window its own pixel, the extras are cloaked as one shared
+    /// zero-area rect on the area's bottom-right corner. `intersects` is strict,
+    /// so that corner point does not overlap any tile contained in `area`, and
+    /// it is still inside the work area.
     fn pack_tiles(
         area: Rect,
         windows: &[WindowId],
@@ -332,17 +338,35 @@ impl LayoutEngine {
         if windows.is_empty() {
             return;
         }
-        let n = windows.len() as i32;
-        let col_ok = area.height >= n && area.width > 0;
-        let row_ok = area.width >= n && area.height > 0;
-        if col_ok && (area.height >= area.width || !row_ok) {
-            Self::place_column(area, windows, inner_gap, out);
-        } else if row_ok {
-            Self::place_row(area, windows, inner_gap, out);
-        } else {
+        if area.is_empty() {
             for &w in windows {
                 out.insert(w, area);
             }
+            return;
+        }
+
+        let count = windows.len() as i32;
+        let col_ok = area.height >= count;
+        let row_ok = area.width >= count;
+        if col_ok && (area.height >= area.width || !row_ok) {
+            Self::place_column(area, windows, inner_gap, out);
+            return;
+        }
+        if row_ok {
+            Self::place_row(area, windows, inner_gap, out);
+            return;
+        }
+
+        let capacity = (area.height.max(area.width) as usize).min(windows.len());
+        let (placed, cloaked) = windows.split_at(capacity);
+        if area.height >= area.width {
+            Self::place_column(area, placed, inner_gap, out);
+        } else {
+            Self::place_row(area, placed, inner_gap, out);
+        }
+        let cloak = Rect::new(area.right(), area.bottom(), 0, 0);
+        for &w in cloaked {
+            out.insert(w, cloak);
         }
     }
 
@@ -821,6 +845,39 @@ mod tests {
         assert_eq!(w1.as_u64(), 42);
         let w2 = WindowId::from(77usize);
         assert_eq!(w2.as_u64(), 77);
+    }
+
+    /// Proptest shrink: screen 131x384, gaps 8/10, top bar 35, ratio ~0.775, 8 windows.
+    /// The last two dwindle tiles used to be the same 1x1 rect.
+    #[test]
+    fn test_tiny_screen_dwindle_and_master_stack_do_not_overlap() {
+        let screen = Rect::new(0, 0, 131, 384);
+        let opts = LayoutOptions {
+            inner_gap: 8,
+            outer_gap: 10,
+            master_ratio: 0.7746066,
+            top_bar_height: 35,
+        };
+        let usable = LayoutEngine::compute_usable_area(screen, &opts);
+        let windows: Vec<WindowId> = (1..=8).map(|i| WindowId::new(i as u64)).collect();
+
+        for kind in [LayoutKind::Dwindle, LayoutKind::MasterStack] {
+            let layout = LayoutEngine::compute_layout(kind, screen, &windows, &opts);
+            assert_eq!(layout.len(), windows.len(), "{kind:?}");
+            let rects: Vec<Rect> = windows.iter().map(|w| layout[w]).collect();
+            assert!(
+                LayoutValidator::verify_within_bounds(&usable, &rects),
+                "{kind:?} escaped usable={usable:?} rects={rects:?}"
+            );
+            assert!(
+                LayoutValidator::verify_no_overlap(&rects),
+                "{kind:?} overlap usable={usable:?} rects={rects:?}"
+            );
+            assert!(
+                LayoutValidator::verify_gaps_respected(opts.inner_gap, &rects),
+                "{kind:?} gap usable={usable:?} rects={rects:?}"
+            );
+        }
     }
 
     proptest! {
