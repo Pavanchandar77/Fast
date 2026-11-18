@@ -940,6 +940,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-governor-policy"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1013,6 +1025,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "nx-governor-policy",
  "os-config",
  "os-core",
  "parking_lot",
