@@ -31,9 +31,11 @@ os-config = { path = "../os-config" }
 os-governor = { path = "../os-governor" }
 os-compositor = { path = "../os-compositor" }
 os-vfs = { path = "../os-vfs" }
-windows.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
 anyhow.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
