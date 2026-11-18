@@ -200,36 +200,64 @@ impl Default for CommandBarConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernorConfig {
+    #[serde(default)]
     pub ram_purge_enabled: bool,
+    #[serde(default)]
     pub ram_purge_delay_secs: u64,
+    #[serde(default)]
     pub trim_on_minimize: bool,
+    #[serde(default)]
     pub trim_on_unfocused: bool,
+    #[serde(default)]
     pub app_nap_enabled: bool,
+    #[serde(default)]
     pub app_nap_idle_secs: u64,
+    #[serde(default)]
     pub cpu_throttle_percent: u32,
+    #[serde(default)]
     pub exclude_from_nap: Vec<String>,
+    #[serde(default)]
     pub dynamic_priority_boost: bool,
+    #[serde(default)]
     pub foreground_priority: String,
+    #[serde(default)]
     pub background_priority: String,
+    #[serde(default)]
     pub boost_gpu_scheduling: bool,
+    #[serde(default)]
     pub perceived_fast_close: bool,
+    #[serde(default)]
     pub force_terminate_unresponsive_ms: u64,
+    #[serde(default)]
     pub game_mode_auto_detect: bool,
+    #[serde(default)]
     pub timer_resolution_0_5ms: bool,
+    #[serde(default)]
     pub unpark_cpu_cores: bool,
+    #[serde(default)]
     pub suspend_shell_shaders_on_fullscreen: bool,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub whitelist_high_priority: Vec<String>,
+    #[serde(default)]
+    pub eco_qos_enabled: bool,
+    #[serde(default)]
+    pub pro_balance_enabled: bool,
+    #[serde(default)]
+    pub allow_suspend: bool,
 }
 
 impl Default for GovernorConfig {
     fn default() -> Self {
         Self {
-            ram_purge_enabled: true,
-            ram_purge_delay_secs: 10,
-            trim_on_minimize: true,
-            trim_on_unfocused: true,
-            app_nap_enabled: true,
-            app_nap_idle_secs: 30,
-            cpu_throttle_percent: 1,
+            ram_purge_enabled: false,
+            ram_purge_delay_secs: 60,
+            trim_on_minimize: false,
+            trim_on_unfocused: false,
+            app_nap_enabled: false,
+            app_nap_idle_secs: 60,
+            cpu_throttle_percent: 50,
             exclude_from_nap: vec![
                 "spotify.exe".into(),
                 "discord.exe".into(),
@@ -241,15 +269,20 @@ impl Default for GovernorConfig {
                 "cl.exe".into(),
             ],
             dynamic_priority_boost: true,
-            foreground_priority: "High".into(),
-            background_priority: "BelowNormal".into(),
+            foreground_priority: "AboveNormal".into(),
+            background_priority: "Normal".into(),
             boost_gpu_scheduling: true,
             perceived_fast_close: true,
             force_terminate_unresponsive_ms: 400,
             game_mode_auto_detect: true,
-            timer_resolution_0_5ms: true,
-            unpark_cpu_cores: true,
+            timer_resolution_0_5ms: false,
+            unpark_cpu_cores: false,
             suspend_shell_shaders_on_fullscreen: true,
+            dry_run: false,
+            whitelist_high_priority: Vec::new(),
+            eco_qos_enabled: true,
+            pro_balance_enabled: true,
+            allow_suspend: false,
         }
     }
 }
