@@ -940,6 +940,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-privacy-dash"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "windows",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
