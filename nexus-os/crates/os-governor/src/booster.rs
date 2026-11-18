@@ -2,7 +2,13 @@ use os_core::ntdll::NtSetTimerResolution;
 use os_core::process::ProcessHandle;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{debug, info};
+#[cfg(windows)]
 use windows::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS};
+
+#[cfg(not(windows))]
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
+#[cfg(not(windows))]
+const HIGH_PRIORITY_CLASS: u32 = 0x00000080;
 
 pub struct ForegroundBooster {
     current_foreground_pid: AtomicU32,

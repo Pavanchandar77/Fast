@@ -6,10 +6,12 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+nexus-model.workspace = true
 nx-wm = { path = "../nx-wm" }
+
+[target.'cfg(windows)'.dependencies]
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
-windows.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
@@ -17,3 +19,4 @@ anyhow.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
 raw-window-handle.workspace = true
+windows.workspace = true

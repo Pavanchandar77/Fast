@@ -1,12 +1,19 @@
+#[cfg(windows)]
 use crate::error::{CoreError, CoreResult};
+#[cfg(windows)]
 use crate::ntdll::{NtResumeProcess, NtSuspendProcess, NtTerminateProcess};
+#[cfg(windows)]
 use windows::core::{w, PCWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID, NTSTATUS};
+#[cfg(windows)]
 use windows::Win32::Security::{
     AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
     TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
+#[cfg(windows)]
 use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+#[cfg(windows)]
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, SetPriorityClass,
     BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
@@ -14,11 +21,13 @@ use windows::Win32::System::Threading::{
     PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME,
 };
 
+#[cfg(windows)]
 pub struct ProcessHandle {
     handle: HANDLE,
     pid: u32,
 }
 
+#[cfg(windows)]
 impl ProcessHandle {
     pub fn open(pid: u32, desired_access: u32) -> CoreResult<Self> {
         let handle = unsafe {
@@ -112,6 +121,7 @@ impl ProcessHandle {
     }
 }
 
+#[cfg(windows)]
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
         if !self.handle.is_invalid() {
@@ -120,6 +130,7 @@ impl Drop for ProcessHandle {
     }
 }
 
+#[cfg(windows)]
 pub fn enable_debug_privilege() -> CoreResult<()> {
     unsafe {
         let mut token = HANDLE::default();
@@ -145,4 +156,69 @@ pub fn enable_debug_privilege() -> CoreResult<()> {
         let _ = CloseHandle(token);
         Ok(())
     }
+}
+
+#[cfg(not(windows))]
+pub struct ProcessHandle {
+    pid: u32,
+}
+
+#[cfg(not(windows))]
+impl ProcessHandle {
+    pub fn open(pid: u32, _desired_access: u32) -> crate::error::CoreResult<Self> {
+        Ok(Self { pid })
+    }
+
+    pub fn open_for_governance(pid: u32) -> crate::error::CoreResult<Self> {
+        Ok(Self { pid })
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn handle(&self) -> usize {
+        0
+    }
+
+    pub fn set_priority(&self, _priority: u32) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn empty_working_set(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn boost_to_high(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn demote_to_below_normal(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn set_normal(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn set_idle(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn suspend(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn resume(&self) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+
+    pub fn terminate(&self, _exit_code: u32) -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub fn enable_debug_privilege() -> crate::error::CoreResult<()> {
+    Ok(())
 }
