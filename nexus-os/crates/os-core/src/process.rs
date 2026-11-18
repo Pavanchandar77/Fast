@@ -1,5 +1,6 @@
 use crate::error::{CoreError, CoreResult};
-use crate::ntdll::{NtResumeProcess, NtSuspendProcess, NtTerminateProcess};
+use crate::ntdll::{NtResumeProcess, NtTerminateProcess};
+use crate::PriorityClass;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID, NTSTATUS};
 use windows::Win32::Security::{
@@ -8,10 +9,11 @@ use windows::Win32::Security::{
 };
 use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, SetPriorityClass,
-    BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    PROCESS_CREATION_FLAGS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
-    PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME,
+    GetCurrentProcess, GetPriorityClass, OpenProcess, OpenProcessToken, SetPriorityClass,
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
+    IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, PROCESS_CREATION_FLAGS,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
+    PROCESS_SUSPEND_RESUME, REALTIME_PRIORITY_CLASS,
 };
 
 pub struct ProcessHandle {
@@ -61,31 +63,35 @@ impl ProcessHandle {
         Ok(())
     }
 
-    pub fn set_priority(&self, priority: PROCESS_CREATION_FLAGS) -> CoreResult<()> {
+    pub fn priority(&self) -> CoreResult<PriorityClass> {
+        let raw = unsafe { GetPriorityClass(self.handle) };
+        if raw == 0 {
+            return Err(CoreError::Generic("GetPriorityClass failed".to_string()));
+        }
+        Ok(priority_from_raw(raw))
+    }
+
+    /// Low-level priority write. Callers must journal the previous class
+    /// and run it through [`crate::clamp_priority`] before raising a process.
+    pub(crate) fn set_priority_class(&self, class: PriorityClass) -> CoreResult<()> {
         unsafe {
-            SetPriorityClass(self.handle, priority)?;
+            SetPriorityClass(self.handle, priority_to_flags(class))?;
         }
         Ok(())
     }
 
-    pub fn boost_to_high(&self) -> CoreResult<()> {
-        self.set_priority(HIGH_PRIORITY_CLASS)
+    /// Suspend only when `allow_nt_suspend` is true.
+    /// The default configuration passes false, and this returns without
+    /// calling `NtSuspendProcess`.
+    pub fn suspend_if_allowed(&self, allow_nt_suspend: bool) -> CoreResult<()> {
+        if !allow_nt_suspend {
+            return Ok(());
+        }
+        self.suspend()
     }
 
-    pub fn demote_to_below_normal(&self) -> CoreResult<()> {
-        self.set_priority(BELOW_NORMAL_PRIORITY_CLASS)
-    }
-
-    pub fn set_normal(&self) -> CoreResult<()> {
-        self.set_priority(NORMAL_PRIORITY_CLASS)
-    }
-
-    pub fn set_idle(&self) -> CoreResult<()> {
-        self.set_priority(IDLE_PRIORITY_CLASS)
-    }
-
-    pub fn suspend(&self) -> CoreResult<()> {
-        let status = unsafe { NtSuspendProcess(self.handle) };
+    fn suspend(&self) -> CoreResult<()> {
+        let status = unsafe { crate::ntdll::NtSuspendProcess(self.handle) };
         if status.0 < 0 {
             Err(CoreError::NtStatus(status.0 as u32))
         } else {
@@ -117,6 +123,33 @@ impl Drop for ProcessHandle {
         if !self.handle.is_invalid() {
             let _ = unsafe { CloseHandle(self.handle) };
         }
+    }
+}
+
+pub fn priority_from_raw(raw: u32) -> PriorityClass {
+    if raw == IDLE_PRIORITY_CLASS.0 {
+        PriorityClass::Idle
+    } else if raw == BELOW_NORMAL_PRIORITY_CLASS.0 {
+        PriorityClass::BelowNormal
+    } else if raw == ABOVE_NORMAL_PRIORITY_CLASS.0 {
+        PriorityClass::AboveNormal
+    } else if raw == HIGH_PRIORITY_CLASS.0 {
+        PriorityClass::High
+    } else if raw == REALTIME_PRIORITY_CLASS.0 {
+        PriorityClass::Realtime
+    } else {
+        PriorityClass::Normal
+    }
+}
+
+pub fn priority_to_flags(class: PriorityClass) -> PROCESS_CREATION_FLAGS {
+    match class {
+        PriorityClass::Idle => IDLE_PRIORITY_CLASS,
+        PriorityClass::BelowNormal => BELOW_NORMAL_PRIORITY_CLASS,
+        PriorityClass::Normal => NORMAL_PRIORITY_CLASS,
+        PriorityClass::AboveNormal => ABOVE_NORMAL_PRIORITY_CLASS,
+        PriorityClass::High => HIGH_PRIORITY_CLASS,
+        PriorityClass::Realtime => REALTIME_PRIORITY_CLASS,
     }
 }
 
