@@ -12,6 +12,7 @@ members = [
     "crates/os-session",
     "crates/nx-fs",
     "crates/nx-explorer",
+    "crates/nx-privacy",
 ]
 
 [workspace.package]
