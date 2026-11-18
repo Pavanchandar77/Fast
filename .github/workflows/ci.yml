@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - 'leap/**'
+  pull_request:
+    branches:
+      - master
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ubuntu-cross:
+    name: Ubuntu Cross-Check (x86_64-pc-windows-gnu)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-os
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Cross-check workspace (x86_64-pc-windows-gnu)
+        run: cargo check --workspace --all-targets --target x86_64-pc-windows-gnu
+
+      - name: Clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+
+  windows-native:
+    name: Windows Native Build & Test
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: nexus-os
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build release
+        run: cargo build --workspace --release
+
+      - name: Test
+        run: cargo test --workspace
