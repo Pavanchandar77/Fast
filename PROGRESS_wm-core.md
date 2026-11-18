@@ -4,7 +4,22 @@
 
 Branch: `leap/wm-core`  
 Worktree: `/workspace/nx-wt-wm-core`  
-Audit Reference: `/workspace/Fast/AUDIT_chief.md` (§3 Compositor/WM + Hotkeys, L4 wm-core)
+Integrated with: `nexus-int` at commit `4759b12` (testable-core, privacy-shield, nx-ui, privacy-dashboard, power-features)  
+Merge commit: `9fb0bd2` (`git merge nexus-int`, no rebase)  
+Audit Reference: `/workspace/Fast/AUDIT_chief.md` (§3 Compositor/WM + Hotkeys, L4 wm-core)  
+Toolchain: Rust 1.100, host Linux, target `x86_64-pc-windows-gnu`
+
+---
+
+## 0. Integration merge and dwindle overlap fix
+
+`git merge nexus-int` is committed as `9fb0bd2`. Both sides survive:
+
+- **Workspace `Cargo.toml` / `Cargo.lock`**: union of members — `nexus-model`, `os-core`, `os-config`, `os-governor`, `os-compositor`, `os-vfs`, `os-shield`, `os-hal`, `os-session`, `nx-fs`, `nx-explorer`, `nx-wm`, `nx-privacy`, `nx-ui`, `nx-privacy-dash`, `nx-power`.
+- **`os-compositor/Cargo.toml`**: `nexus-model` and `nx-wm` stay normal dependencies. Win32 crates (`os-core`, `os-config`, `windows`, `wgpu`, …) stay under `[target.'cfg(windows)'.dependencies]`.
+- **`os-compositor` sources**: `manager`, `hooks`, `hotkeys`, and `gpu` stay `#[cfg(windows)]`. The window manager still drives `nx_wm::WindowManagerModel`. `spring` re-exports `nexus_model::spring`, and hotkeys re-export `nexus_model::hotkeys::HotkeyAction`, so the Platform / pure-model seam from testable-core stays in place.
+
+**Dwindle / master-stack overlap (testable-core proptest).** On a tiny work area the BSP splitter handed the last pane to every leftover window. Minimal input `screen_w=131`, `screen_h=384`, `inner_gap=8`, `outer_gap=10`, `top_bar=35`, `master_ratio=0.7746066`, `win_count=8` put the last two tiles on the same `Rect { x: 120, y: 373, w: 1, h: 1 }`. `pack_tiles` now places as many 1px tiles as the longer axis can separate and cloaks the rest as one shared zero-area rect on the area's bottom-right corner. `Rect::intersects` is strict, so that corner does not overlap a tile inside the area, and it still passes the inside-bounds check. Master-stack uses the same packer when the work area is too narrow to split. Covered by `test_tiny_screen_dwindle_and_master_stack_do_not_overlap` and proptest regression seed `9df5745fe273ee143a92e9f5059cf5a92b64046421497450c250eef43a6771e8` (shrinks to the 120×120, 8-window case of the same bug).
 
 ---
 
@@ -37,10 +52,11 @@ Thin call-site wiring has been integrated into `os-compositor` behind Windows ta
 
 ## 3. Universal Gates & Exact Command Outputs
 
+All commands from `nexus-os/` with `PATH=$HOME/.cargo/bin:$PATH`. Three `cargo test --workspace` runs each reported 510 passed and 0 failed (pass counts identical across runs).
+
 ### Gate 1: `cargo check --workspace --all-targets --target x86_64-pc-windows-gnu`
 ```
-$ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo check --workspace --all-targets --target x86_64-pc-windows-gnu
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.25s
 ```
 **Result: 0 errors.**
 
@@ -48,8 +64,7 @@ $ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo check --workspace -
 
 ### Gate 2: `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings`
 ```
-$ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.94s
 ```
 **Result: 0 warnings, clean.**
 
@@ -57,81 +72,35 @@ $ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo clippy --workspace 
 
 ### Gate 3: `cargo fmt --all -- --check`
 ```
-$ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo fmt --all -- --check
+(no diff)
 ```
-**Result: 0 diffs, clean.**
+**Result: clean.**
 
 ---
 
-### Gate 4: `cargo test -p nx-wm` (Linux host)
-```
-$ export PATH=$HOME/.cargo/bin:$PATH && cd nexus-os && cargo test -p nx-wm
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
-     Running unittests src/lib.rs (target/debug/build/nx-wm/b12b978fd7fab694/out/nx_wm-b12b978fd7fab694)
+### Gate 4: `cargo test --workspace` (Linux host, 3 runs)
 
-running 0 tests
+| Run | Exit | Passed | Failed |
+|---|---|---|---|
+| 1 | 0 | 510 | 0 |
+| 2 | 0 | 510 | 0 |
+| 3 | 0 | 510 | 0 |
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Non-zero suites (same on every run):
 
-     Running tests/wm_core_tests.rs (target/debug/build/nx-wm/602bbbc027d37e79/out/wm_core_tests-602bbbc027d37e79)
+| Crate | Passed |
+|---|---|
+| nexus-model | 89 |
+| nx-fs | 88 |
+| nx-ui | 84 |
+| nx-power | 65 |
+| nx-privacy | 53 |
+| nx-wm (`wm_core_tests`) | 46 |
+| nx-privacy-dash | 44 |
+| nx-explorer | 40 |
+| os-vfs | 1 |
 
-running 46 tests
-test test_directional_distance_cardinal ... ok
-test test_cycle_layout_order ... ok
-test test_auto_exclude_fullscreen_games ... ok
-test test_close_window_action_emits_visibility_mutation ... ok
-test test_directional_focus_left_right ... ok
-test test_dry_run_apply_revert_identity ... ok
-test test_exit_plan_restores_all_cloaked_windows ... ok
-test test_directional_focus_none_when_blocked ... ok
-test test_follow_mouse_focus ... ok
-test test_fullscreen_toggle_state_machine ... ok
-test test_keybinding_parsing ... ok
-test test_layout_dwindle_four_windows_spiral ... ok
-test test_layout_dwindle_single_window ... ok
-test test_layout_dwindle_two_windows_horizontal_split ... ok
-test test_layout_empty_windows ... ok
-test test_layout_master_stack_distribution ... ok
-test test_layout_monocle ... ok
-test test_layout_scrolling_ribbon ... ok
-test test_monitor_reposition_retiles_workspace ... ok
-test test_move_direction_swaps_windows ... ok
-test test_move_window_to_inactive_workspace ... ok
-test test_multi_monitor_add_and_workspaces ... ok
-test test_rect_basic_properties ... ok
-test test_pointer_moved_disabled_follow_mouse ... ok
-test test_rect_shrink_and_gap_safety ... ok
-test test_multi_monitor_unplug_never_loses_windows ... ok
-test test_rect_intersection ... ok
-test test_snap_zones_computation ... ok
-test test_snap_thirds_computation ... ok
-test test_register_on_show_bugfix ... ok
-test test_tree_cycle_active ... ok
-test test_tree_mru_focus_history ... ok
-test test_tree_stable_insertion_order ... ok
-test test_tree_swap_and_move ... ok
-test test_win_key_up_masking_planned ... ok
-test test_window_destroyed_focus_reversion ... ok
-test test_window_rule_conjunction_matching ... ok
-test test_window_rule_dialog_auto_float ... ok
-test test_window_rule_per_app_workspace ... ok
-test test_windows_reserved_shortcuts_protection ... ok
-test test_window_rule_pip_compact_size ... ok
-test test_workspace_switch_cloaking_and_restoration ... ok
-test test_workspace_switch_restores_last_focused ... ok
-test proptest_scrolling_invariants ... ok
-test proptest_master_stack_invariants ... ok
-test proptest_dwindle_invariants ... ok
-
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-
-   Doc-tests nx_wm
-
-running 0 tests
-
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-```
-**Result: 46 passed, 0 failed (target was ≥40).**
+`nx-wm` still has 46 tests (target was ≥40), including dwindle / master-stack / scrolling proptests. `nexus-model` includes `test_tiny_screen_dwindle_and_master_stack_do_not_overlap` plus the layout proptests (100 cases each, regression seeds replayed first). Windows-only crates (`os-compositor`, `os-core`, `os-config`, `os-governor`, `os-session`, `os-hal`, `os-shield`) compile on Linux and report 0 host tests.
 
 ---
 
@@ -163,5 +132,5 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## 5. Remaining Issues & Next Steps
 
 1. **Spring Animator Integration (Leap L5 `macos-shell`)**: `LayoutTransition` is cleanly emitted from `nx-wm`. When L5 arrives, the wgpu compositor can consume `transition.from_rects` and `transition.to_rects` to drive the spring interpolation solver without altering `nx-wm`.
-2. **Platform Abstraction Integration (Leap L2 `testable-core`)**: When `nexus-model` lands on its branch, `nx-wm` can plug into the `Platform` trait implementation seamlessly.
+2. **Platform seam**: `nexus-model` is on this branch. `os-compositor` re-exports its spring solver and hotkey action. `nx-wm` remains the window-manager model the Windows `WindowManager` applies. A later pass can route `nx-wm` mutations through `nexus_model::Platform` without changing the plans.
 3. **Undo Journal Integration (Leap L3 `never-brick`)**: `MutationPlan` is already modeled as pure data with `compute_inverse(&snapshots)`, ready to serialize to the crash-safe journal when L3 lands.
