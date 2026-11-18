@@ -13,6 +13,7 @@ use windows::Win32::UI::HiDpi::{
 };
 
 fn main() -> anyhow::Result<()> {
+    os_core::recovery::install_panic_hook();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
@@ -24,6 +25,11 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     info!("Starting nexus-governor micro-daemon...");
+
+    let dry_run = std::env::args().any(|arg| arg == "--dry-run");
+    os_core::recovery::bootstrap(dry_run)?;
+    let _restore = os_core::recovery::RestoreOnDrop::new();
+    os_shield::attach(true, os_core::recovery::is_dry_run());
 
     let config_path = find_config_path();
     let (watcher, _config_rx) = ConfigWatcher::new(&config_path)?;

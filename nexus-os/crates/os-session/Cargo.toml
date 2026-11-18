@@ -31,6 +31,7 @@ os-config = { path = "../os-config" }
 os-governor = { path = "../os-governor" }
 os-compositor = { path = "../os-compositor" }
 os-vfs = { path = "../os-vfs" }
+os-shield = { path = "../os-shield" }
 windows.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
