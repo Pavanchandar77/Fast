@@ -1,21 +1,26 @@
 //! nexus-compositor: Isolated window manager, spring physics, and shell surface micro-daemon.
 //! Runs at 120Hz with interruptible spring physics and hollowed shell taskbar suppression.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use parking_lot::RwLock;
-use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
-use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
-use os_config::watcher::ConfigWatcher;
 use os_compositor::hooks::WinEventListener;
 use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
 use os_compositor::manager::WindowManager;
-use os_compositor::{BorderOverlay, CommandBar, GpuContext, TopBar};
+use os_compositor::{
+    create_border_overlay_window, create_command_bar_window, create_top_bar_window, BorderOverlay,
+    CommandBar, GpuContext, TopBar,
+};
+use os_config::watcher::ConfigWatcher;
 use os_core::window::WindowHandle;
+use parking_lot::RwLock;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
+use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
 
 #[path = "../hollow_shell.rs"]
 mod hollow_shell;
@@ -33,7 +38,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     info!("Starting nexus-compositor micro-daemon...");
@@ -74,11 +81,18 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    let mut top_bar = gpu.as_ref().and_then(|g| TopBar::new(g.clone()).ok());
-    let mut command_bar = gpu.as_ref().and_then(|g| CommandBar::new(g.clone()).ok());
+    let mut top_bar = gpu.as_ref().and_then(|g| {
+        let hwnd = create_top_bar_window().ok()?;
+        TopBar::new(g.clone(), hwnd).ok()
+    });
+    let mut command_bar = gpu.as_ref().and_then(|g| {
+        let hwnd = create_command_bar_window().ok()?;
+        CommandBar::new(g.clone(), hwnd).ok()
+    });
     let mut border_overlay = gpu.as_ref().and_then(|g| {
+        let hwnd = create_border_overlay_window().ok()?;
         let spring_cfg = WindowManager::to_spring_config(&compositor_config.read().spring);
-        BorderOverlay::new(g.clone(), spring_cfg).ok()
+        BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
     });
 
     info!("✅ nexus-compositor active: 120Hz GPU shell & spring physics loop running.");
@@ -167,7 +181,10 @@ fn enumerate_existing_windows(wm: Arc<RwLock<WindowManager>>) {
     }
     let mut context = EnumContext { wm };
 
-    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> windows::Win32::Foundation::BOOL {
+    unsafe extern "system" fn enum_proc(
+        hwnd: HWND,
+        lparam: LPARAM,
+    ) -> windows::Win32::Foundation::BOOL {
         let ctx = &mut *(lparam.0 as *mut EnumContext);
         let handle = WindowHandle::new(hwnd);
         if handle.is_manageable() {
