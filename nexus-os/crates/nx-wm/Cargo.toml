@@ -1,0 +1,15 @@
+[package]
+name = "nx-wm"
+description = "Pure window manager core for Nexus-OS: tree, layouts, multi-monitor, workspaces, focus, transitions, and mutation plans"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.5"

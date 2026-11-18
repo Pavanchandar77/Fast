@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+nx-wm = { path = "../nx-wm" }
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
 windows.workspace = true
