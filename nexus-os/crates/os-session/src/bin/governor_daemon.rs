@@ -1,14 +1,16 @@
 //! nexus-governor: Isolated process and RAM governor micro-daemon.
 //! Runs independently of UI/compositor processes using documented Win32 Job Objects.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use parking_lot::RwLock;
-use tracing::info;
-use tracing_subscriber::EnvFilter;
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use os_config::watcher::ConfigWatcher;
 use os_governor::Governor;
+use parking_lot::RwLock;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tracing::info;
+use tracing_subscriber::EnvFilter;
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 
 fn main() -> anyhow::Result<()> {
     unsafe {
@@ -16,7 +18,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     info!("Starting nexus-governor micro-daemon...");

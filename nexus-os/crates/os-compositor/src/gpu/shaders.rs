@@ -26,9 +26,9 @@ impl Default for SquircleUniforms {
             corner_radius: 12.0,
             border_width: 2.0,
             _pad0: [0.0, 0.0],
-            border_color: [0.38, 0.65, 0.98, 0.95],   // Apple/Aqua accent blue
-            specular_color: [1.0, 1.0, 1.0, 0.85],   // 1px specular highlight
-            glow_color: [0.38, 0.65, 0.98, 0.25],       // Soft accent aura
+            border_color: [0.38, 0.65, 0.98, 0.95], // Apple/Aqua accent blue
+            specular_color: [1.0, 1.0, 1.0, 0.85],  // 1px specular highlight
+            glow_color: [0.38, 0.65, 0.98, 0.25],   // Soft accent aura
             viewport_size: [1920.0, 1080.0],
             specular_intensity: 1.0,
             _pad1: 0.0,

@@ -1,10 +1,10 @@
+use crate::schema::SystemConfig;
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use parking_lot::RwLock;
 use tracing::{error, info, warn};
-use crate::schema::SystemConfig;
 
 pub struct ConfigWatcher {
     config_path: PathBuf,
@@ -13,18 +13,26 @@ pub struct ConfigWatcher {
 }
 
 impl ConfigWatcher {
-    pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<(Self, crossbeam_channel::Receiver<SystemConfig>)> {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+    ) -> anyhow::Result<(Self, crossbeam_channel::Receiver<SystemConfig>)> {
         let path_buf = path.as_ref().to_path_buf();
         let initial_config = if path_buf.exists() {
             match SystemConfig::load_from_file(&path_buf) {
                 Ok(cfg) => cfg,
                 Err(err) => {
-                    warn!("Failed to parse config at {:?}: {}. Using default config.", path_buf, err);
+                    warn!(
+                        "Failed to parse config at {:?}: {}. Using default config.",
+                        path_buf, err
+                    );
                     SystemConfig::default()
                 }
             }
         } else {
-            info!("Config file not found at {:?}, generating default.", path_buf);
+            info!(
+                "Config file not found at {:?}, generating default.",
+                path_buf
+            );
             let default_cfg = SystemConfig::default();
             if let Some(parent) = path_buf.parent() {
                 let _ = std::fs::create_dir_all(parent);

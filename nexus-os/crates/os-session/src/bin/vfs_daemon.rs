@@ -1,11 +1,13 @@
 //! nexus-vfs: Isolated MFT search and QuickLook file service micro-daemon.
 
+use os_config::watcher::ConfigWatcher;
+use os_vfs::mft::MftIndexer;
 use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use os_config::watcher::ConfigWatcher;
-use os_vfs::mft::MftIndexer;
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 
 fn main() -> anyhow::Result<()> {
     unsafe {
@@ -13,7 +15,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     info!("Starting nexus-vfs micro-daemon...");

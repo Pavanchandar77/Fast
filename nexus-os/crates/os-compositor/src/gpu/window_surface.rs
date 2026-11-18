@@ -16,8 +16,7 @@ pub struct Win32WindowWrapper(pub HWND);
 
 impl HasWindowHandle for Win32WindowWrapper {
     fn window_handle(&self) -> Result<RwhHandle<'_>, HandleError> {
-        let non_zero = NonZeroIsize::new(self.0 .0 as isize)
-            .ok_or(HandleError::Unavailable)?;
+        let non_zero = NonZeroIsize::new(self.0 .0 as isize).ok_or(HandleError::Unavailable)?;
         let handle = Win32WindowHandle::new(non_zero);
         unsafe { Ok(RwhHandle::borrow_raw(RawWindowHandle::Win32(handle))) }
     }
@@ -61,7 +60,11 @@ impl ShellSurface {
 
         // Step 2: Create DirectComposition visual or fallback to Win32 HWND surface
         let (dcomp_device, dcomp_target, dcomp_visual, surface_target) = unsafe {
-            let dcomp_res: windows::core::Result<(IDCompositionDevice, IDCompositionTarget, IDCompositionVisual)> = (|| {
+            let dcomp_res: windows::core::Result<(
+                IDCompositionDevice,
+                IDCompositionTarget,
+                IDCompositionVisual,
+            )> = (|| {
                 let device: IDCompositionDevice = DCompositionCreateDevice(None)?;
                 let target: IDCompositionTarget = device.CreateTargetForHwnd(hwnd, true)?;
                 let visual: IDCompositionVisual = device.CreateVisual()?;
@@ -73,10 +76,18 @@ impl ShellSurface {
             match dcomp_res {
                 Ok((d, t, v)) => {
                     let raw_visual = windows::core::Interface::as_raw(&v);
-                    (Some(d), Some(t), Some(v), wgpu::SurfaceTargetUnsafe::CompositionVisual(raw_visual))
+                    (
+                        Some(d),
+                        Some(t),
+                        Some(v),
+                        wgpu::SurfaceTargetUnsafe::CompositionVisual(raw_visual),
+                    )
                 }
                 Err(e) => {
-                    tracing::warn!("DirectComposition init failed ({:?}), falling back to HWND surface", e);
+                    tracing::warn!(
+                        "DirectComposition init failed ({:?}), falling back to HWND surface",
+                        e
+                    );
                     let wrapper = Win32WindowWrapper(hwnd);
                     let target = wgpu::SurfaceTargetUnsafe::from_window(&wrapper)?;
                     (None, None, None, target)
@@ -101,9 +112,15 @@ impl ShellSurface {
             });
 
         // Prefer PreMultiplied alpha mode for glass/squircle anti-aliased transparency
-        let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+        let alpha_mode = if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        {
             wgpu::CompositeAlphaMode::PreMultiplied
-        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied) {
+        } else if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+        {
             wgpu::CompositeAlphaMode::PostMultiplied
         } else {
             caps.alpha_modes

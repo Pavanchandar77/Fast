@@ -13,7 +13,9 @@ impl PowerGovernor {
     pub fn apply_profile(profile: PowerProfile) -> anyhow::Result<()> {
         match profile {
             PowerProfile::EcoSilent => {
-                info!("Power: Applying Eco Silent profile (throttling package TDP, capping clocks)");
+                info!(
+                    "Power: Applying Eco Silent profile (throttling package TDP, capping clocks)"
+                );
             }
             PowerProfile::Balanced => {
                 info!("Power: Applying Balanced dynamic profile");

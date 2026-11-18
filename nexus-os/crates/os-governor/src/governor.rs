@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use parking_lot::RwLock;
-use tracing::{info, warn};
-use os_core::process::enable_debug_privilege;
-use os_core::window::WindowHandle;
-use os_config::schema::GovernorConfig;
 use crate::app_nap::AppNapManager;
 use crate::booster::ForegroundBooster;
 use crate::ram_purger::RamPurger;
+use os_config::schema::GovernorConfig;
+use os_core::process::enable_debug_privilege;
+use os_core::window::WindowHandle;
+use parking_lot::RwLock;
+use std::sync::Arc;
+use tracing::{info, warn};
 
 pub struct Governor {
     config: Arc<RwLock<GovernorConfig>>,

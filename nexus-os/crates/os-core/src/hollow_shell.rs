@@ -2,17 +2,17 @@
 //! Suppresses the native Windows taskbar across all monitors while preserving 100% of Windows COM interfaces,
 //! Shell_NotifyIcon tray events, Win+E file dialogs, and UWP authentication popups.
 
+use crate::error::CoreResult;
+use crate::window::WindowHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+use windows::Win32::System::Threading::OpenProcess;
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, PostMessageW, RegisterWindowMessageW, ShowWindow, SW_HIDE, SW_SHOW,
 };
-use windows::Win32::System::Threading::OpenProcess;
-use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
-use crate::error::CoreResult;
-use crate::window::WindowHandle;
 
 static TRAY_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 
@@ -27,7 +27,10 @@ impl HollowShellManager {
             if let Ok(tray_hwnd) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) {
                 if !tray_hwnd.is_invalid() && !tray_hwnd.0.is_null() {
                     let _ = ShowWindow(tray_hwnd, SW_HIDE);
-                    info!("Hollow Shell: Hidden primary Shell_TrayWnd ({:?})", tray_hwnd.0);
+                    info!(
+                        "Hollow Shell: Hidden primary Shell_TrayWnd ({:?})",
+                        tray_hwnd.0
+                    );
 
                     // Trim explorer.exe memory now that visible surfaces are unmapped
                     let handle = WindowHandle::new(tray_hwnd);
@@ -59,7 +62,10 @@ impl HollowShellManager {
                     break;
                 }
                 let _ = ShowWindow(sec_tray, SW_HIDE);
-                info!("Hollow Shell: Hidden Shell_SecondaryTrayWnd ({:?})", sec_tray.0);
+                info!(
+                    "Hollow Shell: Hidden Shell_SecondaryTrayWnd ({:?})",
+                    sec_tray.0
+                );
                 prev_hwnd = sec_tray;
             }
 
@@ -101,7 +107,10 @@ impl HollowShellManager {
                     break;
                 }
                 let _ = ShowWindow(sec_tray, SW_SHOW);
-                info!("Hollow Shell: Restored Shell_SecondaryTrayWnd ({:?})", sec_tray.0);
+                info!(
+                    "Hollow Shell: Restored Shell_SecondaryTrayWnd ({:?})",
+                    sec_tray.0
+                );
                 prev_hwnd = sec_tray;
             }
         }

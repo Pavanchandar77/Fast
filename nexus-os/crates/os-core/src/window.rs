@@ -1,3 +1,4 @@
+use crate::error::CoreResult;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use windows::Win32::Foundation::{BOOL, HWND, RECT};
@@ -6,12 +7,11 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_TRANSITIONS_FORCEDISABLED,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetWindowPos, GA_ROOTOWNER,
-    GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_LONG_PTR_INDEX, WS_CHILD,
-    WS_EX_TOOLWINDOW, WS_POPUP, WS_THICKFRAME,
+    GetAncestor, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetWindowPos,
+    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_LONG_PTR_INDEX,
+    WS_CHILD, WS_EX_TOOLWINDOW, WS_POPUP, WS_THICKFRAME,
 };
-use crate::error::CoreResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowHandle(pub HWND);
@@ -164,7 +164,8 @@ impl WindowHandle {
         }
 
         let style = unsafe { GetWindowLongW(self.0, WINDOW_LONG_PTR_INDEX(GWL_STYLE.0)) } as u32;
-        let ex_style = unsafe { GetWindowLongW(self.0, WINDOW_LONG_PTR_INDEX(GWL_EXSTYLE.0)) } as u32;
+        let ex_style =
+            unsafe { GetWindowLongW(self.0, WINDOW_LONG_PTR_INDEX(GWL_EXSTYLE.0)) } as u32;
 
         // 3. Skip child windows and tool windows
         if (style & WS_CHILD.0) != 0 {

@@ -37,8 +37,8 @@ impl GpuContext {
             &wgpu::DeviceDescriptor {
                 label: Some("nexus-os-gpu-device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits:
+                    wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
                 memory_hints: wgpu::MemoryHints::Performance,
             },
             None,

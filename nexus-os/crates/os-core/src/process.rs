@@ -1,3 +1,5 @@
+use crate::error::{CoreError, CoreResult};
+use crate::ntdll::{NtResumeProcess, NtSuspendProcess, NtTerminateProcess};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID, NTSTATUS};
 use windows::Win32::Security::{
@@ -7,13 +9,10 @@ use windows::Win32::Security::{
 use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, SetPriorityClass,
-    BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS,
-    NORMAL_PRIORITY_CLASS, PROCESS_CREATION_FLAGS,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
-    PROCESS_SUSPEND_RESUME,
+    BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+    PROCESS_CREATION_FLAGS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME,
 };
-use crate::error::{CoreError, CoreResult};
-use crate::ntdll::{NtResumeProcess, NtSuspendProcess, NtTerminateProcess};
 
 pub struct ProcessHandle {
     handle: HANDLE,
@@ -141,14 +140,7 @@ pub fn enable_debug_privilege() -> CoreResult<()> {
             }],
         };
 
-        AdjustTokenPrivileges(
-            token,
-            false,
-            Some(&tp),
-            0,
-            None,
-            None,
-        )?;
+        AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None)?;
 
         let _ = CloseHandle(token);
         Ok(())

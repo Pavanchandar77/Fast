@@ -1,12 +1,12 @@
+use crate::app_nap::get_process_name;
+use os_config::schema::GovernorConfig;
+use os_core::process::ProcessHandle;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tracing::{debug, info};
 use windows::Win32::System::Threading::GetCurrentProcessId;
-use os_core::process::ProcessHandle;
-use os_config::schema::GovernorConfig;
-use crate::app_nap::get_process_name;
 
 const CRITICAL_SYSTEM_PROCESSES: &[&str] = &[
     "csrss.exe",
@@ -85,7 +85,10 @@ impl RamPurger {
 
         if let Some(&last_active) = self.process_last_active.read().get(&pid) {
             if last_active.elapsed() < Duration::from_secs(cooldown_secs) {
-                debug!("Skipping working set trim for PID {} - active within cooldown (anti-thrash)", pid);
+                debug!(
+                    "Skipping working set trim for PID {} - active within cooldown (anti-thrash)",
+                    pid
+                );
                 return Ok(());
             }
         }
@@ -93,7 +96,10 @@ impl RamPurger {
         let handle = ProcessHandle::open_for_governance(pid)?;
         handle.empty_working_set()?;
         self.purged_processes.write().insert(pid, Instant::now());
-        info!("🧹 Flushed working set for PID {} via K32EmptyWorkingSet", pid);
+        info!(
+            "🧹 Flushed working set for PID {} via K32EmptyWorkingSet",
+            pid
+        );
         Ok(())
     }
 

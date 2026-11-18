@@ -2,6 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::thread::JoinHandle;
+use tracing::{error, info};
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
@@ -12,7 +13,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT,
     WM_SYSKEYDOWN,
 };
-use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotkeyAction {
@@ -119,7 +119,8 @@ impl GlobalKeyboardHook {
         w_param: WPARAM,
         l_param: LPARAM,
     ) -> LRESULT {
-        if n_code >= 0 && (w_param.0 == WM_KEYDOWN as usize || w_param.0 == WM_SYSKEYDOWN as usize) {
+        if n_code >= 0 && (w_param.0 == WM_KEYDOWN as usize || w_param.0 == WM_SYSKEYDOWN as usize)
+        {
             let kbd = &*(l_param.0 as *const KBDLLHOOKSTRUCT);
             let vk = kbd.vkCode;
 

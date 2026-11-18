@@ -170,7 +170,10 @@ mod tests {
 
         // Interrupt mid-flight with new target
         spring.set_target(200.0);
-        assert_eq!(spring.velocity, mid_velocity, "Velocity must be preserved across retargeting");
+        assert_eq!(
+            spring.velocity, mid_velocity,
+            "Velocity must be preserved across retargeting"
+        );
     }
 
     #[test]
