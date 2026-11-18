@@ -148,6 +148,9 @@ fn main() -> anyhow::Result<()> {
                 | os_compositor::hooks::WindowEvent::WindowUncloaked(hwnd) => {
                     governor.on_window_restored(*hwnd);
                 }
+                os_compositor::hooks::WindowEvent::WindowDestroyed(hwnd) => {
+                    governor.on_process_exit(hwnd.pid());
+                }
                 _ => {}
             }
             wm.write().handle_event(event);
