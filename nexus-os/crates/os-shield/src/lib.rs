@@ -4,6 +4,9 @@ pub mod appcontainer;
 pub mod etw;
 pub mod wfp;
 
+pub use nx_privacy as privacy;
+pub use nx_privacy::shield::{PrivacyShield, PrivacyShieldConfig};
+
 /// Attach the shield to a running session.
 ///
 /// This build does not install WFP filters. Calling the stub installer would

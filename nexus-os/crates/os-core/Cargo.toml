@@ -6,7 +6,10 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-nexus-journal = { path = "../nexus-journal" }
+nexus-journal.workspace = true
+nexus-model.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 windows.workspace = true
 tracing.workspace = true
-thiserror.workspace = true

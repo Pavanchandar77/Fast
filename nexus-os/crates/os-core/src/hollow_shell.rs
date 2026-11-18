@@ -2,22 +2,33 @@
 //! Suppresses the native Windows taskbar across all monitors while preserving 100% of Windows COM interfaces,
 //! Shell_NotifyIcon tray events, Win+E file dialogs, and UWP authentication popups.
 
+#[cfg(windows)]
 use crate::error::CoreResult;
+#[cfg(windows)]
 use crate::window::WindowHandle;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use tracing::info;
+#[cfg(windows)]
 use windows::core::{w, PCWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
 use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+#[cfg(windows)]
 use windows::Win32::System::Threading::OpenProcess;
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, PostMessageW, RegisterWindowMessageW, ShowWindow, SW_HIDE, SW_SHOW,
 };
 
+#[cfg(windows)]
 static TRAY_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 
 pub struct HollowShellManager;
 
+#[cfg(windows)]
 impl HollowShellManager {
     /// Hides the native taskbar. The mutation is journaled before the windows
     /// are hidden, so a crash puts the taskbar back.
@@ -95,6 +106,7 @@ impl HollowShellManager {
     }
 }
 
+#[cfg(windows)]
 pub(crate) fn show_taskbar_raw() {
     TRAY_SUPPRESSED.store(false, Ordering::SeqCst);
 
@@ -132,4 +144,12 @@ impl Drop for HollowShellManager {
     fn drop(&mut self) {
         Self::restore_taskbar();
     }
+}
+
+#[cfg(not(windows))]
+impl HollowShellManager {
+    pub fn suppress_taskbar() -> crate::error::CoreResult<()> {
+        Ok(())
+    }
+    pub fn restore_taskbar() {}
 }

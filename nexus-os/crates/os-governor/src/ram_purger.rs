@@ -1,4 +1,5 @@
 use crate::app_nap::get_process_name;
+use nexus_model::governor::CRITICAL_PROCESSES;
 use os_config::schema::GovernorConfig;
 use os_core::process::ProcessHandle;
 use parking_lot::RwLock;
@@ -6,36 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
-use windows::Win32::System::Threading::GetCurrentProcessId;
 
-const CRITICAL_SYSTEM_PROCESSES: &[&str] = &[
-    "csrss.exe",
-    "dwm.exe",
-    "lsass.exe",
-    "smss.exe",
-    "winlogon.exe",
-    "services.exe",
-    "svchost.exe",
-    "audiodg.exe",
-    "system",
-    "registry",
-    "fontdrvhost.exe",
-    "sihost.exe",
-    "ctfmon.exe",
-    "taskhostw.exe",
-    "conhost.exe",
-    "explorer.exe",
-    "searchhost.exe",
-    "shellexperiencehost.exe",
-    "startmenuexperiencehost.exe",
-    "nexus-os.exe",
-    "nexus-compositor.exe",
-    "nexus-governor.exe",
-    "nexus-vfs.exe",
-    "nexus-watchdog.exe",
-    "spoolsv.exe",
-    "securityhealthservice.exe",
-];
+const CRITICAL_SYSTEM_PROCESSES: &[&str] = CRITICAL_PROCESSES;
 
 pub struct RamPurger {
     config: Arc<RwLock<GovernorConfig>>,
@@ -46,7 +19,10 @@ pub struct RamPurger {
 
 impl RamPurger {
     pub fn new(config: Arc<RwLock<GovernorConfig>>) -> Self {
-        let own_pid = unsafe { GetCurrentProcessId() };
+        #[cfg(windows)]
+        let own_pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() };
+        #[cfg(not(windows))]
+        let own_pid = std::process::id();
         Self {
             config,
             process_last_active: Arc::new(RwLock::new(HashMap::new())),

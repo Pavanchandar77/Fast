@@ -1,6 +1,9 @@
 use crate::app_nap::AppNapManager;
 use crate::booster::ForegroundBooster;
 use crate::ram_purger::RamPurger;
+use nexus_model::governor::{
+    GovernorPolicy, GovernorPolicyConfig, MemoryDecision, ProcessSnapshot,
+};
 use os_config::schema::GovernorConfig;
 use os_core::process::enable_debug_privilege;
 use os_core::window::WindowHandle;
@@ -76,10 +79,34 @@ impl Governor {
             return;
         }
 
-        // Hiding a window must not suspend or cap the process. Tooltips and
-        // menus hide constantly; napping them bricks the app. The idle worker
-        // is the only nap path, and it is off unless app_nap_enabled is set.
-        if self.config.read().trim_on_minimize {
+        // The pure policy decides the trim. Minimize is not a nap: tooltips
+        // and menus hide constantly, and freezing them bricks the app. The
+        // idle worker is the only nap path, and it stays off unless
+        // `app_nap_enabled` is set.
+        let (trim_on_minimize, exclusions) = {
+            let cfg = self.config.read();
+            (cfg.trim_on_minimize, cfg.exclude_from_nap.clone())
+        };
+        let policy_cfg = GovernorPolicyConfig {
+            trim_on_minimize,
+            app_nap_enabled: false,
+            user_exclusions: exclusions,
+            dynamic_priority_boost: false,
+            ..GovernorPolicyConfig::default()
+        };
+        let Ok(name) = crate::app_nap::get_process_name(pid) else {
+            return;
+        };
+        let snap = ProcessSnapshot {
+            pid,
+            name: &name,
+            is_foreground: false,
+            is_minimized: true,
+            is_cloaked: hwnd.is_cloaked(),
+            idle_seconds: 0,
+        };
+        let decision = GovernorPolicy::evaluate_minimize(&snap, &policy_cfg);
+        if decision.memory == MemoryDecision::PurgeWorkingSet {
             let _ = self.ram_purger.purge_pid(pid);
         }
     }

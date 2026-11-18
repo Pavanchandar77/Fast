@@ -187,7 +187,11 @@ fn nt_suspend_process_is_not_reachable_by_default() {
         "suspend_if_allowed must return before NtSuspendProcess when the flag is false"
     );
 
-    let schema = fs::read_to_string(crates.join("os-config/src/schema.rs")).expect("schema");
+    let mut schema = fs::read_to_string(crates.join("os-config/src/schema.rs")).unwrap_or_default();
+    if let Ok(model) = fs::read_to_string(crates.join("nexus-model/src/config.rs")) {
+        schema.push('\n');
+        schema.push_str(&model);
+    }
     assert!(
         schema.contains("allow_nt_suspend: false"),
         "GovernorConfig::default must set allow_nt_suspend: false"

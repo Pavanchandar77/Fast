@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/nexus-journal",
+    "crates/nexus-model",
     "crates/os-core",
     "crates/os-config",
     "crates/os-governor",
@@ -10,6 +11,12 @@ members = [
     "crates/os-shield",
     "crates/os-hal",
     "crates/os-session",
+    "crates/nx-fs",
+    "crates/nx-explorer",
+    "crates/nx-privacy",
+    "crates/nx-ui",
+    "crates/nx-privacy-dash",
+    "crates/nx-power",
 ]
 
 [workspace.package]
@@ -19,6 +26,9 @@ authors = ["Nexus-OS Core Team"]
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+nexus-journal = { path = "crates/nexus-journal" }
+nexus-model = { path = "crates/nexus-model" }
+proptest = "1.4"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 notify = "6.1"

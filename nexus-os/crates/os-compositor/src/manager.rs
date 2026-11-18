@@ -1,6 +1,7 @@
 use crate::hooks::WindowEvent;
 use crate::hotkeys::HotkeyAction;
 use crate::spring::{SpringConfig, SpringRect};
+use nexus_model::layout::{LayoutEngine, LayoutKind, LayoutOptions, Rect, WindowId};
 use os_config::schema::{CompositorConfig, SpringConfigDto};
 use os_core::window::WindowHandle;
 use parking_lot::RwLock;
@@ -135,11 +136,6 @@ impl WindowManager {
             )
         };
 
-        let usable_x = outer_gap;
-        let usable_y = top_bar_height + outer_gap;
-        let usable_w = screen_w - (outer_gap * 2);
-        let usable_h = screen_h - top_bar_height - (outer_gap * 2);
-
         let workspace_windows: Vec<WindowHandle> = self
             .windows
             .iter()
@@ -152,62 +148,42 @@ impl WindowManager {
             .map(|(h, _)| *h)
             .collect();
 
-        let count = workspace_windows.len();
-        if count == 0 {
+        if workspace_windows.is_empty() {
             return;
         }
 
-        if layout == "floating" {
+        let layout_kind: LayoutKind = layout.parse().unwrap_or(LayoutKind::Dwindle);
+        if layout_kind == LayoutKind::Floating {
             return;
         }
 
-        if count == 1 {
-            let hwnd = workspace_windows[0];
-            if let Some(win) = self.windows.get_mut(&hwnd) {
-                win.target_rect = (usable_x, usable_y, usable_w, usable_h);
-                win.spring.set_target(
-                    usable_x as f32,
-                    usable_y as f32,
-                    usable_w as f32,
-                    usable_h as f32,
-                );
-            }
-            return;
-        }
+        let screen_rect = Rect::new(0, 0, screen_w, screen_h);
+        let layout_opts = LayoutOptions {
+            inner_gap,
+            outer_gap,
+            master_ratio,
+            top_bar_height,
+        };
 
-        // Master-Stack & Dwindle tiling calculation
-        let master_w = ((usable_w as f32 * master_ratio) - (inner_gap as f32 / 2.0)) as i32;
-        let stack_w = usable_w - master_w - inner_gap;
-        let stack_count = count - 1;
-        let stack_slot_h = (usable_h - (inner_gap * (stack_count as i32 - 1))) / stack_count as i32;
+        let window_ids: Vec<WindowId> = workspace_windows
+            .iter()
+            .map(|h| WindowId::new(h.0 .0 as u64))
+            .collect();
 
-        // Master pane (window index 0)
-        let master_hwnd = workspace_windows[0];
-        if let Some(win) = self.windows.get_mut(&master_hwnd) {
-            win.target_rect = (usable_x, usable_y, master_w, usable_h);
-            win.spring.set_target(
-                usable_x as f32,
-                usable_y as f32,
-                master_w as f32,
-                usable_h as f32,
-            );
-        }
+        let placements =
+            LayoutEngine::compute_layout(layout_kind, screen_rect, &window_ids, &layout_opts);
 
-        // Stack panes (window indices 1..count)
-        let stack_x = usable_x + master_w + inner_gap;
-        for (i, hwnd) in workspace_windows.iter().skip(1).enumerate() {
-            let stack_y = usable_y + (i as i32 * (stack_slot_h + inner_gap));
-            let h = if i == stack_count - 1 {
-                // Fill any rounding difference
-                usable_y + usable_h - stack_y
-            } else {
-                stack_slot_h
-            };
-
-            if let Some(win) = self.windows.get_mut(hwnd) {
-                win.target_rect = (stack_x, stack_y, stack_w, h);
-                win.spring
-                    .set_target(stack_x as f32, stack_y as f32, stack_w as f32, h as f32);
+        for (hwnd, win_id) in workspace_windows.iter().zip(window_ids) {
+            if let Some(rect) = placements.get(&win_id) {
+                if let Some(win) = self.windows.get_mut(hwnd) {
+                    win.target_rect = (rect.x, rect.y, rect.width, rect.height);
+                    win.spring.set_target(
+                        rect.x as f32,
+                        rect.y as f32,
+                        rect.width as f32,
+                        rect.height as f32,
+                    );
+                }
             }
         }
     }

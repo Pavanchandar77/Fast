@@ -1,0 +1,15 @@
+[package]
+name = "nx-privacy"
+description = "Nexus-OS reversible privacy shield: telemetry killer, WFP rule builder, tracker blocking, hardware kill switches"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.10"
