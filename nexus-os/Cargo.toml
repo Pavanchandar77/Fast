@@ -15,6 +15,7 @@ members = [
     "crates/nx-privacy",
     "crates/nx-ui",
     "crates/nx-privacy-dash",
+    "crates/nx-power",
 ]
 
 [workspace.package]
