@@ -33,7 +33,7 @@ Audit reference: `/workspace/Fast/AUDIT_chief.md` (L5 macOS shell & visual found
   - Retained scene graph (`Scene`) using an object pool that avoids heap allocations after warm-up, flattening into typed `DrawList` instances.
 
 - **Text, Icons, Images & Sprite Atlas (`text.rs`, `icon.rs`, `image.rs`, `atlas.rs`)**:
-  - Pure-Rust text stack integrating `cosmic-text`, `fontdb`, and `swash`, bundling the open font Inter (Regular, Medium, SemiBold, Bold).
+  - Pure-Rust text stack integrating `cosmic-text`, `fontdb`, and `swash`, bundling the open font Inter (Regular, Medium, SemiBold, Bold) with `CacheKey` glyph caching to eliminate redundant rasterization and atlas insertions.
   - Dynamic shelf-packing sprite and glyph atlas (`Atlas`) with generational cache invalidation.
   - SVG icon cache (`IconCache`) rasterizing system icons via `resvg` and `tiny-skia`.
   - Gradient and image texture staging (`RgbaImage`).
