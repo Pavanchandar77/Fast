@@ -11,12 +11,15 @@
 pub mod clipboard;
 pub mod consent_store;
 pub mod filetime;
+pub mod gpui_view;
 pub mod indicator;
 pub mod kill_switch;
 pub mod layout;
 pub mod network;
 pub mod permissions;
 pub mod view_model;
+
+pub use gpui_view::PrivacyDashboardView;
 
 pub use clipboard::{
     AlertSeverity, ClipboardClearCommand, ClipboardPrivacyStore, ClipboardReadAlert,

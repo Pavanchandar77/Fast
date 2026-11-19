@@ -4222,6 +4222,8 @@ dependencies = [
 name = "nx-privacy-dash"
 version = "0.1.0"
 dependencies = [
+ "gpui",
+ "nx-ui",
  "proptest",
  "regex",
  "serde",
