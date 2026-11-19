@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+nx-governor-policy.workspace = true
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
