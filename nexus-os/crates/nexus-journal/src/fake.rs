@@ -19,6 +19,7 @@ pub struct FakeSystem {
     pub positions: BTreeMap<u64, Rect>,
     /// `true` means EcoQoS is enabled for that pid.
     pub eco_qos: BTreeMap<u32, bool>,
+    pub settings: BTreeMap<String, String>,
 }
 
 impl FakeSystem {
@@ -49,6 +50,7 @@ impl FakeSystem {
             hidden: BTreeSet::new(),
             positions,
             eco_qos: BTreeMap::new(),
+            settings: BTreeMap::new(),
         }
     }
 
@@ -108,6 +110,9 @@ impl SystemMutator for FakeSystem {
             Mutation::EcoQos { pid, enabled, .. } => {
                 self.eco_qos.insert(*pid, *enabled);
             }
+            Mutation::Setting { key, new, .. } => {
+                self.settings.insert(key.clone(), new.clone());
+            }
         }
         Ok(())
     }
@@ -156,6 +161,9 @@ impl SystemMutator for FakeSystem {
                 ..
             } => {
                 self.eco_qos.insert(*pid, *previous_enabled);
+            }
+            Mutation::Setting { key, previous, .. } => {
+                self.settings.insert(key.clone(), previous.clone());
             }
         }
         Ok(())

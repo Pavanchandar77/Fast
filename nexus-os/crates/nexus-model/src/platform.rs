@@ -81,6 +81,52 @@ pub trait Platform: Send + Sync {
     fn register_hotkey(&self, id: u32, modifiers: Modifiers, key: Key)
         -> Result<(), PlatformError>;
     fn unregister_hotkey(&self, id: u32) -> Result<(), PlatformError>;
+
+    // System settings and resilience hooks (default implementations return Unsupported or Ok(None))
+    fn get_registry_dword(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _name: &str,
+    ) -> Result<Option<u32>, PlatformError> {
+        Ok(None)
+    }
+    fn set_registry_dword(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _name: &str,
+        _val: u32,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_registry_string(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _name: &str,
+    ) -> Result<Option<String>, PlatformError> {
+        Ok(None)
+    }
+    fn set_registry_string(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _name: &str,
+        _val: &str,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_service_status(&self, _service_name: &str) -> Result<Option<bool>, PlatformError> {
+        Ok(None)
+    }
+    fn set_service_status(
+        &self,
+        _service_name: &str,
+        _running: bool,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
 }
 
 /// Historical record of a mutation invoked on the platform
@@ -152,6 +198,35 @@ pub enum PlatformCall {
     UnregisterHotkey {
         id: u32,
     },
+    GetRegistryDword {
+        hive: String,
+        subkey: String,
+        name: String,
+    },
+    SetRegistryDword {
+        hive: String,
+        subkey: String,
+        name: String,
+        val: u32,
+    },
+    GetRegistryString {
+        hive: String,
+        subkey: String,
+        name: String,
+    },
+    SetRegistryString {
+        hive: String,
+        subkey: String,
+        name: String,
+        val: String,
+    },
+    GetServiceStatus {
+        service_name: String,
+    },
+    SetServiceStatus {
+        service_name: String,
+        running: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +255,9 @@ pub struct FakePlatform {
     pub timer_resolution: RwLock<Option<u32>>,
     pub hotkeys: RwLock<HashMap<u32, (Modifiers, Key)>>,
     pub foreground_window: RwLock<Option<WindowId>>,
+    pub registry_dwords: RwLock<HashMap<(String, String, String), u32>>,
+    pub registry_strings: RwLock<HashMap<(String, String, String), String>>,
+    pub service_status: RwLock<HashMap<String, bool>>,
     pub calls: RwLock<Vec<PlatformCall>>,
 }
 
@@ -193,6 +271,9 @@ impl FakePlatform {
             timer_resolution: RwLock::new(None),
             hotkeys: RwLock::new(HashMap::new()),
             foreground_window: RwLock::new(None),
+            registry_dwords: RwLock::new(HashMap::new()),
+            registry_strings: RwLock::new(HashMap::new()),
+            service_status: RwLock::new(HashMap::new()),
             calls: RwLock::new(Vec::new()),
         }
     }
@@ -488,6 +569,103 @@ impl Platform for FakePlatform {
         self.hotkeys.write().remove(&id);
         Ok(())
     }
+
+    fn get_registry_dword(
+        &self,
+        hive: &str,
+        subkey: &str,
+        name: &str,
+    ) -> Result<Option<u32>, PlatformError> {
+        self.calls.write().push(PlatformCall::GetRegistryDword {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            name: name.to_string(),
+        });
+        Ok(self
+            .registry_dwords
+            .read()
+            .get(&(hive.to_string(), subkey.to_string(), name.to_string()))
+            .copied())
+    }
+
+    fn set_registry_dword(
+        &self,
+        hive: &str,
+        subkey: &str,
+        name: &str,
+        val: u32,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::SetRegistryDword {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            name: name.to_string(),
+            val,
+        });
+        self.registry_dwords
+            .write()
+            .insert((hive.to_string(), subkey.to_string(), name.to_string()), val);
+        Ok(())
+    }
+
+    fn get_registry_string(
+        &self,
+        hive: &str,
+        subkey: &str,
+        name: &str,
+    ) -> Result<Option<String>, PlatformError> {
+        self.calls.write().push(PlatformCall::GetRegistryString {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            name: name.to_string(),
+        });
+        Ok(self
+            .registry_strings
+            .read()
+            .get(&(hive.to_string(), subkey.to_string(), name.to_string()))
+            .cloned())
+    }
+
+    fn set_registry_string(
+        &self,
+        hive: &str,
+        subkey: &str,
+        name: &str,
+        val: &str,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::SetRegistryString {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            name: name.to_string(),
+            val: val.to_string(),
+        });
+        self.registry_strings.write().insert(
+            (hive.to_string(), subkey.to_string(), name.to_string()),
+            val.to_string(),
+        );
+        Ok(())
+    }
+
+    fn get_service_status(&self, service_name: &str) -> Result<Option<bool>, PlatformError> {
+        self.calls.write().push(PlatformCall::GetServiceStatus {
+            service_name: service_name.to_string(),
+        });
+        Ok(self.service_status.read().get(service_name).copied())
+    }
+
+    fn set_service_status(
+        &self,
+        service_name: &str,
+        running: bool,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::SetServiceStatus {
+            service_name: service_name.to_string(),
+            running,
+        });
+        self.service_status
+            .write()
+            .insert(service_name.to_string(), running);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -632,5 +810,39 @@ mod tests {
 
         let err3 = PlatformError::Unsupported;
         assert_eq!(err3.to_string(), "Platform operation unsupported");
+    }
+
+    #[test]
+    fn test_fake_platform_settings_and_services() {
+        let platform = FakePlatform::new();
+        assert_eq!(
+            platform
+                .get_registry_dword("HKLM", r"SOFTWARE\Policies", "AllowTelemetry")
+                .unwrap(),
+            None
+        );
+        assert!(platform
+            .set_registry_dword("HKLM", r"SOFTWARE\Policies", "AllowTelemetry", 0)
+            .is_ok());
+        assert_eq!(
+            platform
+                .get_registry_dword("HKLM", r"SOFTWARE\Policies", "AllowTelemetry")
+                .unwrap(),
+            Some(0)
+        );
+
+        assert!(platform
+            .set_registry_string("HKCU", r"Software\App", "ProgId", "NexusApp")
+            .is_ok());
+        assert_eq!(
+            platform
+                .get_registry_string("HKCU", r"Software\App", "ProgId")
+                .unwrap(),
+            Some("NexusApp".to_string())
+        );
+
+        assert_eq!(platform.get_service_status("DiagTrack").unwrap(), None);
+        assert!(platform.set_service_status("DiagTrack", false).is_ok());
+        assert_eq!(platform.get_service_status("DiagTrack").unwrap(), Some(false));
     }
 }

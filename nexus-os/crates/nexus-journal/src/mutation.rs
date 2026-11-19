@@ -110,6 +110,12 @@ pub enum Mutation {
         previous_enabled: bool,
         enabled: bool,
     },
+    /// Windows system setting (registry, default app, or service) preserved across Windows updates.
+    Setting {
+        key: String,
+        previous: String,
+        new: String,
+    },
 }
 
 const KIND_PRIORITY: u8 = 1;
@@ -122,6 +128,7 @@ const KIND_CLOAK: u8 = 7;
 const KIND_HIDE: u8 = 8;
 const KIND_POSITION: u8 = 9;
 const KIND_ECOQOS: u8 = 10;
+const KIND_SETTING: u8 = 11;
 
 struct Writer {
     buf: Vec<u8>,
@@ -153,6 +160,12 @@ impl Writer {
         self.i32(r.y);
         self.i32(r.width);
         self.i32(r.height);
+    }
+
+    fn string(&mut self, s: &str) {
+        let bytes = s.as_bytes();
+        self.u32(bytes.len() as u32);
+        self.buf.extend_from_slice(bytes);
     }
 }
 
@@ -208,6 +221,12 @@ impl<'a> Reader<'a> {
             width: self.i32()?,
             height: self.i32()?,
         })
+    }
+
+    fn string(&mut self) -> Option<String> {
+        let len = self.u32()? as usize;
+        let b = self.bytes(len)?;
+        String::from_utf8(b.to_vec()).ok()
     }
 }
 
@@ -288,6 +307,12 @@ pub fn encode_payload(mutation: &Mutation) -> Vec<u8> {
             w.u8(u8::from(*previous_enabled));
             w.u8(u8::from(*enabled));
         }
+        Mutation::Setting { key, previous, new } => {
+            w.u8(KIND_SETTING);
+            w.string(key);
+            w.string(previous);
+            w.string(new);
+        }
     }
     w.buf
 }
@@ -335,6 +360,11 @@ pub fn decode_payload(bytes: &[u8]) -> Option<Mutation> {
             pid: r.u32()?,
             previous_enabled: r.u8()? == 1,
             enabled: r.u8()? == 1,
+        },
+        KIND_SETTING => Mutation::Setting {
+            key: r.string()?,
+            previous: r.string()?,
+            new: r.string()?,
         },
         _ => return None,
     };
@@ -402,6 +432,11 @@ mod tests {
                 pid: 11,
                 previous_enabled: false,
                 enabled: true,
+            },
+            Mutation::Setting {
+                key: "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection\\AllowTelemetry".into(),
+                previous: "3".into(),
+                new: "0".into(),
             },
         ]
     }

@@ -41,6 +41,7 @@ impl SystemMutator for Win32Mutator {
             Mutation::WindowHide { hwnd } => set_hidden(*hwnd, true),
             Mutation::WindowPosition { hwnd, new, .. } => place(*hwnd, *new),
             Mutation::EcoQos { pid, enabled, .. } => set_eco_qos(*pid, *enabled),
+            Mutation::Setting { .. } => Ok(()),
         }
     }
 
@@ -83,6 +84,7 @@ impl SystemMutator for Win32Mutator {
                 previous_enabled,
                 ..
             } => set_eco_qos(*pid, *previous_enabled),
+            Mutation::Setting { .. } => Ok(()),
         }
     }
 }
