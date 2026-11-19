@@ -141,6 +141,11 @@ mod imp {
             BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
         });
 
+        // 8b. Bring up shell, explorer, privacy dashboard, and power features.
+        // A single failure logs and continues; the session stays up.
+        let _session_surfaces = os_session::startup::start_session();
+        info!("session surfaces: {}", _session_surfaces.summary());
+
         // 9. Main Orchestration & Event Dispatch Loop (120Hz Animation Solver & Windows Message Pump)
         info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
         let mut last_frame = Instant::now();
