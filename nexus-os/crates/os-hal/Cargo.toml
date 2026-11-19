@@ -8,3 +8,5 @@ license.workspace = true
 [dependencies]
 tracing.workspace = true
 anyhow.workspace = true
+os-core = { path = "../os-core" }
+nexus-model.workspace = true

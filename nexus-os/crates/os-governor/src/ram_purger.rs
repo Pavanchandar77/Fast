@@ -1,7 +1,7 @@
 use crate::app_nap::get_process_name;
 use nexus_model::governor::CRITICAL_PROCESSES;
+use nexus_model::platform::Platform;
 use os_config::schema::GovernorConfig;
-use os_core::process::ProcessHandle;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,10 +15,11 @@ pub struct RamPurger {
     process_last_active: Arc<RwLock<HashMap<u32, Instant>>>,
     purged_processes: Arc<RwLock<HashMap<u32, Instant>>>,
     own_pid: u32,
+    platform: Arc<dyn Platform>,
 }
 
 impl RamPurger {
-    pub fn new(config: Arc<RwLock<GovernorConfig>>) -> Self {
+    pub fn new(config: Arc<RwLock<GovernorConfig>>, platform: Arc<dyn Platform>) -> Self {
         #[cfg(windows)]
         let own_pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() };
         #[cfg(not(windows))]
@@ -28,6 +29,7 @@ impl RamPurger {
             process_last_active: Arc::new(RwLock::new(HashMap::new())),
             purged_processes: Arc::new(RwLock::new(HashMap::new())),
             own_pid,
+            platform,
         }
     }
 
@@ -69,13 +71,11 @@ impl RamPurger {
             }
         }
 
-        let handle = ProcessHandle::open_for_governance(pid)?;
-        handle.empty_working_set()?;
+        self.platform
+            .empty_process_working_set(pid)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         self.purged_processes.write().insert(pid, Instant::now());
-        info!(
-            "🧹 Flushed working set for PID {} via K32EmptyWorkingSet",
-            pid
-        );
+        info!("🧹 Flushed working set for PID {} via Platform trait", pid);
         Ok(())
     }
 
@@ -84,6 +84,7 @@ impl RamPurger {
         let last_active = self.process_last_active.clone();
         let purged = self.purged_processes.clone();
         let own_pid = self.own_pid;
+        let platform = self.platform.clone();
 
         std::thread::spawn(move || {
             loop {
@@ -126,11 +127,9 @@ impl RamPurger {
                         }
                     }
 
-                    if let Ok(handle) = ProcessHandle::open_for_governance(pid) {
-                        if handle.empty_working_set().is_ok() {
-                            purged.write().insert(pid, now);
-                            info!("🧹 Active background RAM purge completed for PID {}", pid);
-                        }
+                    if platform.empty_process_working_set(pid).is_ok() {
+                        purged.write().insert(pid, now);
+                        info!("🧹 Active background RAM purge completed for PID {}", pid);
                     }
                 }
             }

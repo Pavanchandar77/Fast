@@ -4,7 +4,10 @@
 
 use nexus_model::hotkeys::{Key, Modifiers};
 use nexus_model::layout::{Rect, WindowId};
-use nexus_model::platform::{AppBarEdge, Platform, PlatformError, ProcessPriority};
+use nexus_model::platform::{
+    AppBarEdge, Platform, PlatformError, PowerProfile, PrivacyToggle, ProcessPriority,
+    RegistryValueData, ServiceRunState,
+};
 
 #[cfg(windows)]
 use crate::hollow_shell::HollowShellManager;
@@ -414,6 +417,372 @@ impl Platform for Win32Platform {
             })
         }
     }
+
+    fn set_always_on_top(&self, id: WindowId, topmost: bool) -> Result<(), PlatformError> {
+        let previous = self.is_always_on_top(id);
+        let mutation = nexus_journal::Mutation::AlwaysOnTop {
+            hwnd: id.0,
+            previous,
+            new: topmost,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn is_always_on_top(&self, id: WindowId) -> bool {
+        let hwnd = HWND(id.0 as *mut _);
+        let ex_style = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+                hwnd,
+                windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
+            )
+        };
+        ex_style as u32 & windows::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST.0 != 0
+    }
+
+    fn set_process_affinity(&self, pid: u32, affinity_mask: u64) -> Result<(), PlatformError> {
+        let handle = ProcessHandle::open_for_governance(pid)
+            .map_err(|_| PlatformError::ProcessNotFound(pid))?;
+        let prev = handle.affinity().unwrap_or(affinity_mask);
+        let mutation = nexus_journal::Mutation::ProcessAffinity {
+            pid,
+            previous_mask: prev,
+            new_mask: affinity_mask,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_process_affinity(&self, pid: u32) -> Result<u64, PlatformError> {
+        let handle = ProcessHandle::open_for_governance(pid)
+            .map_err(|_| PlatformError::ProcessNotFound(pid))?;
+        handle
+            .affinity()
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn set_power_profile(&self, profile: PowerProfile) -> Result<(), PlatformError> {
+        let code = match profile {
+            PowerProfile::EcoSilent => 0,
+            PowerProfile::Balanced => 1,
+            PowerProfile::MaxCompute => 2,
+        };
+        let mutation = nexus_journal::Mutation::PowerPlan {
+            previous_profile: 1,
+            new_profile: code,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_power_profile(&self) -> Result<PowerProfile, PlatformError> {
+        Ok(PowerProfile::Balanced)
+    }
+
+    fn set_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+        value: RegistryValueData,
+    ) -> Result<(), PlatformError> {
+        let previous = self
+            .get_registry_value(hive, subkey, value_name)
+            .ok()
+            .flatten()
+            .map(|prev| crate::effects::encode_registry_value(&prev));
+        let mutation = nexus_journal::Mutation::RegistryValue {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            value_name: value_name.to_string(),
+            previous,
+            new: Some(crate::effects::encode_registry_value(&value)),
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<Option<RegistryValueData>, PlatformError> {
+        let key = format!("{hive}\\{subkey}");
+        let (ok, output) =
+            crate::effects::run_hidden("reg.exe", &["query", &key, "/v", value_name])
+                .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+        if !ok {
+            return Ok(None);
+        }
+        Ok(parse_reg_query(&output, value_name))
+    }
+
+    fn delete_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<(), PlatformError> {
+        let previous = self
+            .get_registry_value(hive, subkey, value_name)
+            .ok()
+            .flatten()
+            .map(|prev| crate::effects::encode_registry_value(&prev));
+        let mutation = nexus_journal::Mutation::RegistryValue {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            value_name: value_name.to_string(),
+            previous,
+            new: None,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn set_service_state(
+        &self,
+        service_name: &str,
+        state: ServiceRunState,
+    ) -> Result<(), PlatformError> {
+        let code = match state {
+            ServiceRunState::Running => 1,
+            ServiceRunState::Stopped => 2,
+            ServiceRunState::Disabled => 3,
+        };
+        let mutation = nexus_journal::Mutation::ServiceState {
+            service_name: service_name.to_string(),
+            previous_state: 1,
+            new_state: code,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_service_state(
+        &self,
+        service_name: &str,
+    ) -> Result<Option<ServiceRunState>, PlatformError> {
+        if let Some(task_path) = service_name.strip_prefix("task:") {
+            let (ok, output) =
+                crate::effects::run_hidden("schtasks.exe", &["/query", "/tn", task_path])
+                    .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+            if !ok {
+                return Ok(None);
+            }
+            if output.contains("Disabled") {
+                return Ok(Some(ServiceRunState::Disabled));
+            }
+            return Ok(Some(ServiceRunState::Running));
+        }
+        let (ok, output) = crate::effects::run_hidden("sc.exe", &["query", service_name])
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+        if !ok {
+            return Ok(None);
+        }
+        if output.contains("RUNNING") {
+            Ok(Some(ServiceRunState::Running))
+        } else {
+            Ok(Some(ServiceRunState::Stopped))
+        }
+    }
+
+    fn set_privacy_toggle(
+        &self,
+        toggle: PrivacyToggle,
+        enabled: bool,
+    ) -> Result<(), PlatformError> {
+        let id = match toggle {
+            PrivacyToggle::Telemetry => 1,
+            PrivacyToggle::Location => 2,
+            PrivacyToggle::Camera => 3,
+            PrivacyToggle::Microphone => 4,
+            PrivacyToggle::AdvertisingId => 5,
+            PrivacyToggle::ActivityHistory => 6,
+            PrivacyToggle::Copilot => 7,
+            PrivacyToggle::Recall => 8,
+        };
+        let mutation = nexus_journal::Mutation::PrivacyToggle {
+            toggle_id: id,
+            previous_enabled: !enabled,
+            enabled,
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_privacy_toggle(&self, _toggle: PrivacyToggle) -> Result<bool, PlatformError> {
+        Ok(false)
+    }
+
+    fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError> {
+        let previous_content = std::fs::read(path).ok();
+        let mutation = nexus_journal::Mutation::SystemFile {
+            path: path.to_string(),
+            previous_content,
+            new_content: Some(content.to_vec()),
+        };
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError> {
+        std::fs::read(path).map_err(|e| PlatformError::OperationFailed(e.to_string()))
+    }
+
+    fn get_system_snapshot(&self) -> Result<nx_governor_policy::SystemSnapshot, PlatformError> {
+        let fg_hwnd = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        let mut fg_pid = None;
+        let mut fullscreen_pid = None;
+
+        if !fg_hwnd.0.is_null() {
+            let mut pid = 0;
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                    fg_hwnd,
+                    Some(&mut pid),
+                );
+            }
+            if pid != 0 {
+                fg_pid = Some(pid);
+                let mut rect = windows::Win32::Foundation::RECT::default();
+                unsafe {
+                    let _ =
+                        windows::Win32::UI::WindowsAndMessaging::GetWindowRect(fg_hwnd, &mut rect);
+                    let screen_w = windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+                        windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN,
+                    );
+                    let screen_h = windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+                        windows::Win32::UI::WindowsAndMessaging::SM_CYSCREEN,
+                    );
+                    if rect.left <= 0
+                        && rect.top <= 0
+                        && rect.right >= screen_w
+                        && rect.bottom >= screen_h
+                    {
+                        fullscreen_pid = Some(pid);
+                    }
+                }
+            }
+        }
+
+        let mut samples = Vec::new();
+        let mut is_game_active = false;
+        unsafe {
+            if let Ok(snap) =
+                windows::Win32::System::Diagnostics::ToolHelp::CreateToolhelp32Snapshot(
+                    windows::Win32::System::Diagnostics::ToolHelp::TH32CS_SNAPPROCESS,
+                    0,
+                )
+            {
+                let mut entry = windows::Win32::System::Diagnostics::ToolHelp::PROCESSENTRY32W {
+                    dwSize: std::mem::size_of::<
+                        windows::Win32::System::Diagnostics::ToolHelp::PROCESSENTRY32W,
+                    >() as u32,
+                    ..Default::default()
+                };
+
+                if windows::Win32::System::Diagnostics::ToolHelp::Process32FirstW(snap, &mut entry)
+                    .is_ok()
+                {
+                    loop {
+                        let pid = entry.th32ProcessID;
+                        let len = entry
+                            .szExeFile
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(entry.szExeFile.len());
+                        let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+                        let is_fg = fg_pid == Some(pid);
+                        let is_fs = fullscreen_pid == Some(pid);
+
+                        if (is_fg || is_fs)
+                            && nx_governor_policy::KNOWN_GAME_EXECUTABLES
+                                .iter()
+                                .any(|g| name.eq_ignore_ascii_case(g))
+                        {
+                            is_game_active = true;
+                        }
+
+                        let sample = nx_governor_policy::ProcessSample::new(
+                            nx_governor_policy::Pid(pid),
+                            name,
+                            0.0,
+                        )
+                        .with_foreground(is_fg)
+                        .with_fullscreen(is_fs);
+                        samples.push(sample);
+
+                        if windows::Win32::System::Diagnostics::ToolHelp::Process32NextW(
+                            snap, &mut entry,
+                        )
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+                let _ = windows::Win32::Foundation::CloseHandle(snap);
+            }
+        }
+
+        let mut snapshot = nx_governor_policy::SystemSnapshot::new(
+            15.0,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+        snapshot.foreground_pid = fg_pid.map(nx_governor_policy::Pid);
+        snapshot.fullscreen_pid = fullscreen_pid.map(nx_governor_policy::Pid);
+        snapshot.is_game_active = is_game_active;
+        snapshot.processes = samples;
+        Ok(snapshot)
+    }
+}
+
+#[cfg(windows)]
+fn parse_reg_query(output: &str, value_name: &str) -> Option<RegistryValueData> {
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[0].eq_ignore_ascii_case(value_name) {
+            let reg_type = parts[1];
+            let val_str = parts[2..].join(" ");
+            return Some(match reg_type {
+                "REG_DWORD" => {
+                    let parsed = if let Some(hex) = val_str
+                        .strip_prefix("0x")
+                        .or_else(|| val_str.strip_prefix("0X"))
+                    {
+                        u32::from_str_radix(hex, 16).unwrap_or(0)
+                    } else {
+                        val_str.parse::<u32>().unwrap_or(0)
+                    };
+                    RegistryValueData::Dword(parsed)
+                }
+                "REG_QWORD" => {
+                    let parsed = if let Some(hex) = val_str
+                        .strip_prefix("0x")
+                        .or_else(|| val_str.strip_prefix("0X"))
+                    {
+                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                    } else {
+                        val_str.parse::<u64>().unwrap_or(0)
+                    };
+                    RegistryValueData::Qword(parsed)
+                }
+                "REG_BINARY" => {
+                    let bytes = (0..val_str.len())
+                        .step_by(2)
+                        .filter_map(|i| u8::from_str_radix(val_str.get(i..i + 2)?, 16).ok())
+                        .collect();
+                    RegistryValueData::Binary(bytes)
+                }
+                _ => RegistryValueData::Sz(val_str),
+            });
+        }
+    }
+    None
 }
 
 #[cfg(not(windows))]
@@ -448,11 +817,23 @@ impl Platform for Win32Platform {
     fn is_window_cloaked(&self, _id: WindowId) -> bool {
         false
     }
+    fn set_always_on_top(&self, _id: WindowId, _topmost: bool) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn is_always_on_top(&self, _id: WindowId) -> bool {
+        false
+    }
     fn set_process_priority(
         &self,
         _pid: u32,
         _priority: ProcessPriority,
     ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_process_affinity(&self, _pid: u32, _affinity_mask: u64) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_process_affinity(&self, _pid: u32) -> Result<u64, PlatformError> {
         Err(PlatformError::Unsupported)
     }
     fn set_job_cpu_rate_cap(&self, _pid: u32, _rate_percent: u32) -> Result<(), PlatformError> {
@@ -468,6 +849,66 @@ impl Platform for Win32Platform {
         Err(PlatformError::Unsupported)
     }
     fn empty_process_working_set(&self, _pid: u32) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_power_profile(&self, _profile: PowerProfile) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_power_profile(&self) -> Result<PowerProfile, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_registry_value(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _value_name: &str,
+        _value: RegistryValueData,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_registry_value(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _value_name: &str,
+    ) -> Result<Option<RegistryValueData>, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn delete_registry_value(
+        &self,
+        _hive: &str,
+        _subkey: &str,
+        _value_name: &str,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_service_state(
+        &self,
+        _service_name: &str,
+        _state: ServiceRunState,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_service_state(
+        &self,
+        _service_name: &str,
+    ) -> Result<Option<ServiceRunState>, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn set_privacy_toggle(
+        &self,
+        _toggle: PrivacyToggle,
+        _enabled: bool,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_privacy_toggle(&self, _toggle: PrivacyToggle) -> Result<bool, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn write_system_file(&self, _path: &str, _content: &[u8]) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn read_system_file(&self, _path: &str) -> Result<Vec<u8>, PlatformError> {
         Err(PlatformError::Unsupported)
     }
     fn set_taskbar_visible(&self, _visible: bool) -> Result<(), PlatformError> {
@@ -496,6 +937,9 @@ impl Platform for Win32Platform {
         Err(PlatformError::Unsupported)
     }
     fn unregister_hotkey(&self, _id: u32) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+    fn get_system_snapshot(&self) -> Result<nx_governor_policy::SystemSnapshot, PlatformError> {
         Err(PlatformError::Unsupported)
     }
 }

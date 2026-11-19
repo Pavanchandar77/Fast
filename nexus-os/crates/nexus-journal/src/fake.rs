@@ -19,7 +19,13 @@ pub struct FakeSystem {
     pub positions: BTreeMap<u64, Rect>,
     /// `true` means EcoQoS is enabled for that pid.
     pub eco_qos: BTreeMap<u32, bool>,
-    pub settings: BTreeMap<String, String>,
+    pub affinities: BTreeMap<u32, u64>,
+    pub always_on_top: BTreeSet<u64>,
+    pub power_profile: u8,
+    pub registry: BTreeMap<(String, String, String), Option<Vec<u8>>>,
+    pub services: BTreeMap<String, u8>,
+    pub privacy_toggles: BTreeMap<u8, bool>,
+    pub system_files: BTreeMap<String, Option<Vec<u8>>>,
 }
 
 impl FakeSystem {
@@ -50,7 +56,13 @@ impl FakeSystem {
             hidden: BTreeSet::new(),
             positions,
             eco_qos: BTreeMap::new(),
-            settings: BTreeMap::new(),
+            affinities: BTreeMap::new(),
+            always_on_top: BTreeSet::new(),
+            power_profile: 1, // Balanced
+            registry: BTreeMap::new(),
+            services: BTreeMap::new(),
+            privacy_toggles: BTreeMap::new(),
+            system_files: BTreeMap::new(),
         }
     }
 
@@ -110,8 +122,47 @@ impl SystemMutator for FakeSystem {
             Mutation::EcoQos { pid, enabled, .. } => {
                 self.eco_qos.insert(*pid, *enabled);
             }
-            Mutation::Setting { key, new, .. } => {
-                self.settings.insert(key.clone(), new.clone());
+            Mutation::ProcessAffinity { pid, new_mask, .. } => {
+                self.affinities.insert(*pid, *new_mask);
+            }
+            Mutation::AlwaysOnTop { hwnd, new, .. } => {
+                if *new {
+                    self.always_on_top.insert(*hwnd);
+                } else {
+                    self.always_on_top.remove(hwnd);
+                }
+            }
+            Mutation::PowerPlan { new_profile, .. } => {
+                self.power_profile = *new_profile;
+            }
+            Mutation::RegistryValue {
+                hive,
+                subkey,
+                value_name,
+                new,
+                ..
+            } => {
+                self.registry.insert(
+                    (hive.clone(), subkey.clone(), value_name.clone()),
+                    new.clone(),
+                );
+            }
+            Mutation::ServiceState {
+                service_name,
+                new_state,
+                ..
+            } => {
+                self.services.insert(service_name.clone(), *new_state);
+            }
+            Mutation::PrivacyToggle {
+                toggle_id, enabled, ..
+            } => {
+                self.privacy_toggles.insert(*toggle_id, *enabled);
+            }
+            Mutation::SystemFile {
+                path, new_content, ..
+            } => {
+                self.system_files.insert(path.clone(), new_content.clone());
             }
         }
         Ok(())
@@ -162,8 +213,56 @@ impl SystemMutator for FakeSystem {
             } => {
                 self.eco_qos.insert(*pid, *previous_enabled);
             }
-            Mutation::Setting { key, previous, .. } => {
-                self.settings.insert(key.clone(), previous.clone());
+            Mutation::ProcessAffinity {
+                pid, previous_mask, ..
+            } => {
+                self.affinities.insert(*pid, *previous_mask);
+            }
+            Mutation::AlwaysOnTop { hwnd, previous, .. } => {
+                if *previous {
+                    self.always_on_top.insert(*hwnd);
+                } else {
+                    self.always_on_top.remove(hwnd);
+                }
+            }
+            Mutation::PowerPlan {
+                previous_profile, ..
+            } => {
+                self.power_profile = *previous_profile;
+            }
+            Mutation::RegistryValue {
+                hive,
+                subkey,
+                value_name,
+                previous,
+                ..
+            } => {
+                self.registry.insert(
+                    (hive.clone(), subkey.clone(), value_name.clone()),
+                    previous.clone(),
+                );
+            }
+            Mutation::ServiceState {
+                service_name,
+                previous_state,
+                ..
+            } => {
+                self.services.insert(service_name.clone(), *previous_state);
+            }
+            Mutation::PrivacyToggle {
+                toggle_id,
+                previous_enabled,
+                ..
+            } => {
+                self.privacy_toggles.insert(*toggle_id, *previous_enabled);
+            }
+            Mutation::SystemFile {
+                path,
+                previous_content,
+                ..
+            } => {
+                self.system_files
+                    .insert(path.clone(), previous_content.clone());
             }
         }
         Ok(())

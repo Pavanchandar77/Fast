@@ -104,6 +104,28 @@ impl ProcessHandle {
         self.set_priority(IDLE_PRIORITY_CLASS)
     }
 
+    pub fn affinity(&self) -> CoreResult<u64> {
+        let mut proc_mask: usize = 0;
+        let mut sys_mask: usize = 0;
+        unsafe {
+            windows::Win32::System::Threading::GetProcessAffinityMask(
+                self.handle,
+                &mut proc_mask,
+                &mut sys_mask,
+            )
+            .map_err(|e| CoreError::Generic(format!("GetProcessAffinityMask failed: {e}")))?;
+        }
+        Ok(proc_mask as u64)
+    }
+
+    pub fn set_affinity(&self, mask: u64) -> CoreResult<()> {
+        unsafe {
+            windows::Win32::System::Threading::SetProcessAffinityMask(self.handle, mask as usize)
+                .map_err(|e| CoreError::Generic(format!("SetProcessAffinityMask failed: {e}")))?;
+        }
+        Ok(())
+    }
+
     /// Low-level priority write. Callers must journal the previous class
     /// and run it through [`crate::clamp_priority`] before raising a process.
     pub(crate) fn set_priority_class(&self, class: PriorityClass) -> CoreResult<()> {

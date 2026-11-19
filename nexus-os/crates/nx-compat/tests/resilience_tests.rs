@@ -9,7 +9,10 @@
 //! - Mid-session explorer.exe (`TaskbarCreated`) and DWM restarts without user action.
 
 use nexus_journal::Journal;
-use nexus_model::platform::{FakePlatform, Platform, PlatformError};
+use nexus_model::platform::{
+    FakePlatform, Platform, PlatformError, PowerProfile, PrivacyToggle, RegistryValueData,
+    ServiceRunState,
+};
 use nx_compat::build::WindowsBuildInfo;
 use nx_compat::notice::NoticeQueue;
 use nx_compat::probe::{Capability, MockProbeProvider, ProbeManager};
@@ -138,15 +141,17 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
 
     // Simulate initial state where settings were Nexus-configured
     platform
-        .set_registry_dword(
+        .set_registry_value(
             "HKLM",
             r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
             "AllowTelemetry",
-            0,
+            RegistryValueData::Dword(0),
         )
         .unwrap();
     platform.set_taskbar_visible(false).unwrap();
-    platform.set_service_status("DiagTrack", false).unwrap();
+    platform
+        .set_service_state("DiagTrack", ServiceRunState::Disabled)
+        .unwrap();
 
     let build1 = WindowsBuildInfo::new(10, 0, 22631, 4000, "23H2", "Windows 11 Pro");
     let _ = engine
@@ -159,21 +164,23 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
     // - DiagTrack service reset to running (true)
     // - Activity feed re-enabled (1)
     platform
-        .set_registry_dword(
+        .set_registry_value(
             "HKLM",
             r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
             "AllowTelemetry",
-            3,
+            RegistryValueData::Dword(3),
         )
         .unwrap();
     platform.set_taskbar_visible(true).unwrap();
-    platform.set_service_status("DiagTrack", true).unwrap();
     platform
-        .set_registry_dword(
+        .set_service_state("DiagTrack", ServiceRunState::Running)
+        .unwrap();
+    platform
+        .set_registry_value(
             "HKLM",
             r"SOFTWARE\Policies\Microsoft\Windows\System",
             "EnableActivityFeed",
-            1,
+            RegistryValueData::Dword(1),
         )
         .unwrap();
 
@@ -201,28 +208,28 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
     // Verify live state on platform is healed back to Nexus desired values
     assert_eq!(
         platform
-            .get_registry_dword(
+            .get_registry_value(
                 "HKLM",
                 r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
                 "AllowTelemetry"
             )
             .unwrap(),
-        Some(0)
+        Some(RegistryValueData::Dword(0))
     );
     assert!(!platform.is_taskbar_visible());
     assert_eq!(
-        platform.get_service_status("DiagTrack").unwrap(),
-        Some(false)
+        platform.get_service_state("DiagTrack").unwrap(),
+        Some(ServiceRunState::Disabled)
     );
     assert_eq!(
         platform
-            .get_registry_dword(
+            .get_registry_value(
                 "HKLM",
                 r"SOFTWARE\Policies\Microsoft\Windows\System",
                 "EnableActivityFeed"
             )
             .unwrap(),
-        Some(0)
+        Some(RegistryValueData::Dword(0))
     );
 
     // Verify journal consistency: mutations recorded, non-empty, and can be read back
@@ -358,51 +365,91 @@ impl Platform for FailingPlatform {
     fn unregister_hotkey(&self, id: u32) -> Result<(), PlatformError> {
         self.inner.unregister_hotkey(id)
     }
-    fn get_registry_dword(
+    fn set_always_on_top(
         &self,
-        hive: &str,
-        subkey: &str,
-        name: &str,
-    ) -> Result<Option<u32>, PlatformError> {
-        self.inner.get_registry_dword(hive, subkey, name)
-    }
-    fn set_registry_dword(
-        &self,
-        hive: &str,
-        subkey: &str,
-        name: &str,
-        val: u32,
+        id: nexus_model::layout::WindowId,
+        topmost: bool,
     ) -> Result<(), PlatformError> {
-        let key = format!(r"{hive}\{subkey}\{name}");
+        self.inner.set_always_on_top(id, topmost)
+    }
+    fn is_always_on_top(&self, id: nexus_model::layout::WindowId) -> bool {
+        self.inner.is_always_on_top(id)
+    }
+    fn set_process_affinity(&self, pid: u32, affinity_mask: u64) -> Result<(), PlatformError> {
+        self.inner.set_process_affinity(pid, affinity_mask)
+    }
+    fn get_process_affinity(&self, pid: u32) -> Result<u64, PlatformError> {
+        self.inner.get_process_affinity(pid)
+    }
+    fn set_power_profile(&self, profile: PowerProfile) -> Result<(), PlatformError> {
+        self.inner.set_power_profile(profile)
+    }
+    fn get_power_profile(&self) -> Result<PowerProfile, PlatformError> {
+        self.inner.get_power_profile()
+    }
+    fn set_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+        value: RegistryValueData,
+    ) -> Result<(), PlatformError> {
+        let key = format!(r"{hive}\{subkey}\{value_name}");
         if key.contains(&self.fail_on_key) {
             return Err(PlatformError::PermissionDenied(format!(
                 "Access Denied to {key}"
             )));
         }
-        self.inner.set_registry_dword(hive, subkey, name, val)
+        self.inner
+            .set_registry_value(hive, subkey, value_name, value)
     }
-    fn get_registry_string(
+    fn get_registry_value(
         &self,
         hive: &str,
         subkey: &str,
-        name: &str,
-    ) -> Result<Option<String>, PlatformError> {
-        self.inner.get_registry_string(hive, subkey, name)
+        value_name: &str,
+    ) -> Result<Option<RegistryValueData>, PlatformError> {
+        self.inner.get_registry_value(hive, subkey, value_name)
     }
-    fn set_registry_string(
+    fn delete_registry_value(
         &self,
         hive: &str,
         subkey: &str,
-        name: &str,
-        val: &str,
+        value_name: &str,
     ) -> Result<(), PlatformError> {
-        self.inner.set_registry_string(hive, subkey, name, val)
+        self.inner.delete_registry_value(hive, subkey, value_name)
     }
-    fn get_service_status(&self, service_name: &str) -> Result<Option<bool>, PlatformError> {
-        self.inner.get_service_status(service_name)
+    fn set_service_state(
+        &self,
+        service_name: &str,
+        state: ServiceRunState,
+    ) -> Result<(), PlatformError> {
+        self.inner.set_service_state(service_name, state)
     }
-    fn set_service_status(&self, service_name: &str, running: bool) -> Result<(), PlatformError> {
-        self.inner.set_service_status(service_name, running)
+    fn get_service_state(
+        &self,
+        service_name: &str,
+    ) -> Result<Option<ServiceRunState>, PlatformError> {
+        self.inner.get_service_state(service_name)
+    }
+    fn set_privacy_toggle(
+        &self,
+        toggle: PrivacyToggle,
+        enabled: bool,
+    ) -> Result<(), PlatformError> {
+        self.inner.set_privacy_toggle(toggle, enabled)
+    }
+    fn get_privacy_toggle(&self, toggle: PrivacyToggle) -> Result<bool, PlatformError> {
+        self.inner.get_privacy_toggle(toggle)
+    }
+    fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError> {
+        self.inner.write_system_file(path, content)
+    }
+    fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError> {
+        self.inner.read_system_file(path)
+    }
+    fn get_system_snapshot(&self) -> Result<nx_governor_policy::SystemSnapshot, PlatformError> {
+        self.inner.get_system_snapshot()
     }
 }
 
@@ -420,11 +467,11 @@ fn test_reapply_failure_rolls_back_journal_never_brick() {
     let platform = FailingPlatform::new("AllowTelemetry");
     platform
         .inner
-        .set_registry_dword(
+        .set_registry_value(
             "HKLM",
             r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
             "AllowTelemetry",
-            3,
+            RegistryValueData::Dword(3),
         )
         .unwrap();
 
@@ -444,7 +491,7 @@ fn test_reapply_failure_rolls_back_journal_never_brick() {
 
     // 2. Journal entry was rolled back immediately (not left broken in journal)
     let has_dangling_telemetry = journal.entries().iter().any(|m| match m {
-        nexus_journal::Mutation::Setting { key, .. } => key.contains("AllowTelemetry"),
+        nexus_journal::Mutation::RegistryValue { value_name, .. } => value_name == "AllowTelemetry",
         _ => false,
     });
     assert!(

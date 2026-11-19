@@ -5,7 +5,7 @@
 //! and safely re-applies reset settings through the never-brick journal and Platform trait.
 
 use nexus_journal::{Journal, Mutation};
-use nexus_model::platform::Platform;
+use nexus_model::platform::{Platform, RegistryValueData, ServiceRunState};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -376,11 +376,11 @@ impl SelfHealingEngine {
                 value_name,
                 target_value,
                 ..
-            } => match platform.get_registry_dword(hive, subkey, value_name) {
-                Ok(Some(current)) => current != *target_value,
+            } => match platform.get_registry_value(hive, subkey, value_name) {
+                Ok(Some(RegistryValueData::Dword(current))) => current != *target_value,
                 // Missing value counts as reset if target is set
                 Ok(None) => true,
-                Err(_) => false,
+                _ => false,
             },
             ResilienceSetting::RegistryString {
                 hive,
@@ -388,17 +388,20 @@ impl SelfHealingEngine {
                 value_name,
                 target_value,
                 ..
-            } => match platform.get_registry_string(hive, subkey, value_name) {
-                Ok(Some(current)) => current != *target_value,
+            } => match platform.get_registry_value(hive, subkey, value_name) {
+                Ok(Some(RegistryValueData::Sz(ref current))) => current != target_value,
                 Ok(None) => true,
-                Err(_) => false,
+                _ => false,
             },
             ResilienceSetting::Service {
                 service_name,
                 target_running,
                 ..
-            } => match platform.get_service_status(service_name) {
-                Ok(Some(current)) => current != *target_running,
+            } => match platform.get_service_state(service_name) {
+                Ok(Some(current)) => {
+                    let is_running = current == ServiceRunState::Running;
+                    is_running != *target_running
+                }
                 Ok(None) => false,
                 Err(_) => false,
             },
@@ -430,15 +433,17 @@ impl SelfHealingEngine {
                 target_value,
                 ..
             } => {
-                let prev = platform
-                    .get_registry_dword(hive, subkey, value_name)
+                let prev_bytes = platform
+                    .get_registry_value(hive, subkey, value_name)
                     .ok()
                     .flatten()
-                    .unwrap_or(0);
-                Mutation::Setting {
-                    key: format!(r"{hive}\{subkey}\{value_name}"),
-                    previous: prev.to_string(),
-                    new: target_value.to_string(),
+                    .map(|v| v.encode());
+                Mutation::RegistryValue {
+                    hive: hive.to_string(),
+                    subkey: subkey.to_string(),
+                    value_name: value_name.to_string(),
+                    previous: prev_bytes,
+                    new: Some(RegistryValueData::Dword(*target_value).encode()),
                 }
             }
             ResilienceSetting::RegistryString {
@@ -448,15 +453,17 @@ impl SelfHealingEngine {
                 target_value,
                 ..
             } => {
-                let prev = platform
-                    .get_registry_string(hive, subkey, value_name)
+                let prev_bytes = platform
+                    .get_registry_value(hive, subkey, value_name)
                     .ok()
                     .flatten()
-                    .unwrap_or_default();
-                Mutation::Setting {
-                    key: format!(r"{hive}\{subkey}\{value_name}"),
-                    previous: prev,
-                    new: target_value.to_string(),
+                    .map(|v| v.encode());
+                Mutation::RegistryValue {
+                    hive: hive.to_string(),
+                    subkey: subkey.to_string(),
+                    value_name: value_name.to_string(),
+                    previous: prev_bytes,
+                    new: Some(RegistryValueData::Sz(target_value.to_string()).encode()),
                 }
             }
             ResilienceSetting::Service {
@@ -464,15 +471,24 @@ impl SelfHealingEngine {
                 target_running,
                 ..
             } => {
-                let prev = platform
-                    .get_service_status(service_name)
+                let prev_state = platform
+                    .get_service_state(service_name)
                     .ok()
                     .flatten()
-                    .unwrap_or(!target_running);
-                Mutation::Setting {
-                    key: format!("SERVICE:{service_name}"),
-                    previous: prev.to_string(),
-                    new: target_running.to_string(),
+                    .unwrap_or(if *target_running {
+                        ServiceRunState::Disabled
+                    } else {
+                        ServiceRunState::Running
+                    });
+                let target_state = if *target_running {
+                    ServiceRunState::Running
+                } else {
+                    ServiceRunState::Disabled
+                };
+                Mutation::ServiceState {
+                    service_name: service_name.to_string(),
+                    previous_state: prev_state.to_code(),
+                    new_state: target_state.to_code(),
                 }
             }
             ResilienceSetting::TaskbarSuppressed {
@@ -500,7 +516,12 @@ impl SelfHealingEngine {
                 target_value,
                 ..
             } => platform
-                .set_registry_dword(hive, subkey, value_name, *target_value)
+                .set_registry_value(
+                    hive,
+                    subkey,
+                    value_name,
+                    RegistryValueData::Dword(*target_value),
+                )
                 .map_err(|e| CompatError::Platform(e.to_string())),
             ResilienceSetting::RegistryString {
                 hive,
@@ -509,15 +530,27 @@ impl SelfHealingEngine {
                 target_value,
                 ..
             } => platform
-                .set_registry_string(hive, subkey, value_name, target_value)
+                .set_registry_value(
+                    hive,
+                    subkey,
+                    value_name,
+                    RegistryValueData::Sz(target_value.to_string()),
+                )
                 .map_err(|e| CompatError::Platform(e.to_string())),
             ResilienceSetting::Service {
                 service_name,
                 target_running,
                 ..
-            } => platform
-                .set_service_status(service_name, *target_running)
-                .map_err(|e| CompatError::Platform(e.to_string())),
+            } => {
+                let target_state = if *target_running {
+                    ServiceRunState::Running
+                } else {
+                    ServiceRunState::Disabled
+                };
+                platform
+                    .set_service_state(service_name, target_state)
+                    .map_err(|e| CompatError::Platform(e.to_string()))
+            }
             ResilienceSetting::TaskbarSuppressed {
                 should_suppress, ..
             } => platform
@@ -614,11 +647,11 @@ mod tests {
 
         // Simulate Windows update resetting Telemetry to enabled (3) and taskbar to visible
         platform
-            .set_registry_dword(
+            .set_registry_value(
                 "HKLM",
                 r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
                 "AllowTelemetry",
-                3,
+                RegistryValueData::Dword(3),
             )
             .unwrap();
         platform.set_taskbar_visible(true).unwrap();
@@ -634,13 +667,13 @@ mod tests {
         // Verify telemetry policy was re-applied to 0
         assert_eq!(
             platform
-                .get_registry_dword(
+                .get_registry_value(
                     "HKLM",
                     r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
                     "AllowTelemetry"
                 )
                 .unwrap(),
-            Some(0)
+            Some(RegistryValueData::Dword(0))
         );
 
         // Verify taskbar was re-suppressed
