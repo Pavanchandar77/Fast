@@ -423,10 +423,12 @@ mod tests {
     use nx_governor_policy::PolicyMutation;
 
     fn test_governor(platform: Arc<dyn Platform>) -> Governor {
-        let mut cfg = GovernorConfig::default();
-        cfg.pro_balance_enabled = true;
-        cfg.game_mode_auto_detect = true;
-        cfg.dry_run = true;
+        let cfg = GovernorConfig {
+            pro_balance_enabled: true,
+            game_mode_auto_detect: true,
+            dry_run: true,
+            ..GovernorConfig::default()
+        };
         Governor::with_platform(Arc::new(RwLock::new(cfg)), platform)
     }
 
