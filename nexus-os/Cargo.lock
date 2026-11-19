@@ -1566,6 +1566,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-shell"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "nx-fs",
+ "nx-governor-policy",
+ "nx-power",
+ "nx-privacy-dash",
+ "nx-ui",
+ "nx-wm",
+ "proptest",
+ "thiserror 1.0.69",
+ "windows",
+]
+
+[[package]]
 name = "nx-ui"
 version = "0.1.0"
 dependencies = [

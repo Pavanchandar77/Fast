@@ -1,0 +1,28 @@
+[package]
+name = "nx-shell"
+description = "Nexus-OS macOS-grade shell: menu bar, dock, Mission Control, Spotlight, vsync frame scheduler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nx-ui = { path = "../nx-ui" }
+nx-wm = { path = "../nx-wm" }
+nx-privacy-dash = { path = "../nx-privacy-dash" }
+nx-power = { path = "../nx-power" }
+nx-governor-policy = { path = "../nx-governor-policy" }
+nx-fs = { path = "../nx-fs" }
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.5"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "spotlight"
+harness = false

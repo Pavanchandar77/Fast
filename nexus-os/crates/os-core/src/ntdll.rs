@@ -39,7 +39,7 @@ extern "system" {
 pub struct NTSTATUS(pub i32);
 
 #[cfg(not(windows))]
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe fn NtSetTimerResolution(
     _desired_resolution: u32,
     _set_resolution: u8,
