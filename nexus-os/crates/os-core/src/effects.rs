@@ -107,18 +107,14 @@ impl SystemMutator for Win32Mutator {
                 ..
             } => set_eco_qos(*pid, *previous_enabled),
             Mutation::ProcessAffinity {
-                pid,
-                previous_mask,
-                ..
+                pid, previous_mask, ..
             } => {
                 let Ok(handle) = ProcessHandle::open_for_governance(*pid) else {
                     return Ok(());
                 };
                 handle.set_affinity(*previous_mask).map_err(apply_err)
             }
-            Mutation::AlwaysOnTop { hwnd, previous, .. } => {
-                set_always_on_top_raw(*hwnd, *previous)
-            }
+            Mutation::AlwaysOnTop { hwnd, previous, .. } => set_always_on_top_raw(*hwnd, *previous),
             Mutation::PowerPlan {
                 previous_profile, ..
             } => set_power_plan_raw(*previous_profile),

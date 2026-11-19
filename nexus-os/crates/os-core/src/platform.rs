@@ -572,7 +572,11 @@ impl Platform for Win32Platform {
         Ok(Some(ServiceRunState::Running))
     }
 
-    fn set_privacy_toggle(&self, toggle: PrivacyToggle, enabled: bool) -> Result<(), PlatformError> {
+    fn set_privacy_toggle(
+        &self,
+        toggle: PrivacyToggle,
+        enabled: bool,
+    ) -> Result<(), PlatformError> {
         let id = match toggle {
             PrivacyToggle::Telemetry => 1,
             PrivacyToggle::Location => 2,
@@ -628,10 +632,8 @@ impl Platform for Win32Platform {
                 fg_pid = Some(pid);
                 let mut rect = windows::Win32::Foundation::RECT::default();
                 unsafe {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
-                        fg_hwnd,
-                        &mut rect,
-                    );
+                    let _ =
+                        windows::Win32::UI::WindowsAndMessaging::GetWindowRect(fg_hwnd, &mut rect);
                     let screen_w = windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
                         windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN,
                     );
@@ -665,11 +667,8 @@ impl Platform for Win32Platform {
                     ..Default::default()
                 };
 
-                if windows::Win32::System::Diagnostics::ToolHelp::Process32FirstW(
-                    snap,
-                    &mut entry,
-                )
-                .is_ok()
+                if windows::Win32::System::Diagnostics::ToolHelp::Process32FirstW(snap, &mut entry)
+                    .is_ok()
                 {
                     loop {
                         let pid = entry.th32ProcessID;
@@ -700,8 +699,7 @@ impl Platform for Win32Platform {
                         samples.push(sample);
 
                         if windows::Win32::System::Diagnostics::ToolHelp::Process32NextW(
-                            snap,
-                            &mut entry,
+                            snap, &mut entry,
                         )
                         .is_err()
                         {
@@ -838,7 +836,11 @@ impl Platform for Win32Platform {
     ) -> Result<Option<ServiceRunState>, PlatformError> {
         Err(PlatformError::Unsupported)
     }
-    fn set_privacy_toggle(&self, _toggle: PrivacyToggle, _enabled: bool) -> Result<(), PlatformError> {
+    fn set_privacy_toggle(
+        &self,
+        _toggle: PrivacyToggle,
+        _enabled: bool,
+    ) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported)
     }
     fn get_privacy_toggle(&self, _toggle: PrivacyToggle) -> Result<bool, PlatformError> {

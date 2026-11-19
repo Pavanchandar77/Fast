@@ -631,7 +631,9 @@ mod tests {
             Mutation::SystemFile {
                 path: r"C:\Windows\System32\drivers\etc\hosts".into(),
                 previous_content: Some(b"127.0.0.1 localhost\n".to_vec()),
-                new_content: Some(b"127.0.0.1 localhost\n0.0.0.0 telemetry.microsoft.com\n".to_vec()),
+                new_content: Some(
+                    b"127.0.0.1 localhost\n0.0.0.0 telemetry.microsoft.com\n".to_vec(),
+                ),
             },
         ]
     }

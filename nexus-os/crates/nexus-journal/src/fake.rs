@@ -122,9 +122,7 @@ impl SystemMutator for FakeSystem {
             Mutation::EcoQos { pid, enabled, .. } => {
                 self.eco_qos.insert(*pid, *enabled);
             }
-            Mutation::ProcessAffinity {
-                pid, new_mask, ..
-            } => {
+            Mutation::ProcessAffinity { pid, new_mask, .. } => {
                 self.affinities.insert(*pid, *new_mask);
             }
             Mutation::AlwaysOnTop { hwnd, new, .. } => {
@@ -216,9 +214,7 @@ impl SystemMutator for FakeSystem {
                 self.eco_qos.insert(*pid, *previous_enabled);
             }
             Mutation::ProcessAffinity {
-                pid,
-                previous_mask,
-                ..
+                pid, previous_mask, ..
             } => {
                 self.affinities.insert(*pid, *previous_mask);
             }
@@ -229,7 +225,9 @@ impl SystemMutator for FakeSystem {
                     self.always_on_top.remove(hwnd);
                 }
             }
-            Mutation::PowerPlan { previous_profile, .. } => {
+            Mutation::PowerPlan {
+                previous_profile, ..
+            } => {
                 self.power_profile = *previous_profile;
             }
             Mutation::RegistryValue {
@@ -263,7 +261,8 @@ impl SystemMutator for FakeSystem {
                 previous_content,
                 ..
             } => {
-                self.system_files.insert(path.clone(), previous_content.clone());
+                self.system_files
+                    .insert(path.clone(), previous_content.clone());
             }
         }
         Ok(())

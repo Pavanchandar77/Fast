@@ -135,7 +135,8 @@ pub trait Platform: Send + Sync {
         &self,
         service_name: &str,
     ) -> Result<Option<ServiceRunState>, PlatformError>;
-    fn set_privacy_toggle(&self, toggle: PrivacyToggle, enabled: bool) -> Result<(), PlatformError>;
+    fn set_privacy_toggle(&self, toggle: PrivacyToggle, enabled: bool)
+        -> Result<(), PlatformError>;
     fn get_privacy_toggle(&self, toggle: PrivacyToggle) -> Result<bool, PlatformError>;
     fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError>;
     fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError>;
@@ -775,9 +776,11 @@ impl Platform for FakePlatform {
             subkey: subkey.to_string(),
             value_name: value_name.to_string(),
         });
-        self.registry
-            .write()
-            .remove(&(hive.to_string(), subkey.to_string(), value_name.to_string()));
+        self.registry.write().remove(&(
+            hive.to_string(),
+            subkey.to_string(),
+            value_name.to_string(),
+        ));
         Ok(())
     }
 
@@ -803,7 +806,11 @@ impl Platform for FakePlatform {
         Ok(self.services.read().get(service_name).copied())
     }
 
-    fn set_privacy_toggle(&self, toggle: PrivacyToggle, enabled: bool) -> Result<(), PlatformError> {
+    fn set_privacy_toggle(
+        &self,
+        toggle: PrivacyToggle,
+        enabled: bool,
+    ) -> Result<(), PlatformError> {
         self.calls
             .write()
             .push(PlatformCall::SetPrivacyToggle { toggle, enabled });
@@ -1050,7 +1057,10 @@ mod tests {
         }));
 
         // Power Profile
-        assert_eq!(platform.get_power_profile().unwrap(), PowerProfile::Balanced);
+        assert_eq!(
+            platform.get_power_profile().unwrap(),
+            PowerProfile::Balanced
+        );
         assert!(platform.set_power_profile(PowerProfile::MaxCompute).is_ok());
         assert_eq!(
             platform.get_power_profile().unwrap(),
@@ -1107,11 +1117,15 @@ mod tests {
         );
 
         // Privacy toggles
-        assert!(!platform.get_privacy_toggle(PrivacyToggle::Location).unwrap());
+        assert!(!platform
+            .get_privacy_toggle(PrivacyToggle::Location)
+            .unwrap());
         assert!(platform
             .set_privacy_toggle(PrivacyToggle::Location, true)
             .is_ok());
-        assert!(platform.get_privacy_toggle(PrivacyToggle::Location).unwrap());
+        assert!(platform
+            .get_privacy_toggle(PrivacyToggle::Location)
+            .unwrap());
 
         // System files
         assert!(platform
