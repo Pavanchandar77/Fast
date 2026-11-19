@@ -21,6 +21,7 @@ members = [
     "crates/nx-power",
     "crates/nx-explorer-ui",
     "crates/nx-shell",
+    "crates/nx-compat",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ authors = ["Nexus-OS Core Team"]
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+nx-compat = { path = "crates/nx-compat" }
 nexus-journal = { path = "crates/nexus-journal" }
 nexus-model = { path = "crates/nexus-model" }
 nx-governor-policy = { path = "crates/nx-governor-policy" }

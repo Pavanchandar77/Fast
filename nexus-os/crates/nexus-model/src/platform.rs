@@ -41,11 +41,80 @@ pub enum RegistryValueData {
     Binary(Vec<u8>),
 }
 
+impl RegistryValueData {
+    pub fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::Dword(v) => {
+                let mut out = Vec::with_capacity(5);
+                out.push(1);
+                out.extend_from_slice(&v.to_le_bytes());
+                out
+            }
+            Self::Qword(v) => {
+                let mut out = Vec::with_capacity(9);
+                out.push(2);
+                out.extend_from_slice(&v.to_le_bytes());
+                out
+            }
+            Self::Sz(s) => {
+                let mut out = Vec::with_capacity(1 + s.len());
+                out.push(3);
+                out.extend_from_slice(s.as_bytes());
+                out
+            }
+            Self::Binary(b) => {
+                let mut out = Vec::with_capacity(1 + b.len());
+                out.push(4);
+                out.extend_from_slice(b);
+                out
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (tag, rest) = bytes.split_first()?;
+        match *tag {
+            1 if rest.len() == 4 => {
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(rest);
+                Some(Self::Dword(u32::from_le_bytes(buf)))
+            }
+            2 if rest.len() == 8 => {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(rest);
+                Some(Self::Qword(u64::from_le_bytes(buf)))
+            }
+            3 => Some(Self::Sz(String::from_utf8_lossy(rest).into_owned())),
+            4 => Some(Self::Binary(rest.to_vec())),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceRunState {
     Running,
     Stopped,
     Disabled,
+}
+
+impl ServiceRunState {
+    pub fn to_code(self) -> u8 {
+        match self {
+            ServiceRunState::Running => 1,
+            ServiceRunState::Stopped => 2,
+            ServiceRunState::Disabled => 3,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(ServiceRunState::Running),
+            2 => Some(ServiceRunState::Stopped),
+            3 => Some(ServiceRunState::Disabled),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -143,6 +212,9 @@ pub trait Platform: Send + Sync {
 
     // Taskbar and AppBar mutations
     fn set_taskbar_visible(&self, visible: bool) -> Result<(), PlatformError>;
+    fn is_taskbar_visible(&self) -> bool {
+        true
+    }
     fn register_appbar(
         &self,
         id: WindowId,
@@ -617,6 +689,10 @@ impl Platform for FakePlatform {
             .push(PlatformCall::SetTaskbarVisible { visible });
         *self.taskbar_visible.write() = visible;
         Ok(())
+    }
+
+    fn is_taskbar_visible(&self) -> bool {
+        *self.taskbar_visible.read()
     }
 
     fn register_appbar(

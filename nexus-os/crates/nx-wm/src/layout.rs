@@ -102,6 +102,10 @@ fn compute_dwindle(
             break;
         }
 
+        // Windows still to place (this one included). Only spend pixels on the
+        // inner gap when enough room remains for every remaining window, so
+        // deep splits never run out of space and spill outside the work area.
+        let remaining = (windows.len() - i) as u32;
         let split_ratio = if i == 0 { ratio } else { 0.5 };
         let split_horizontal = if current_rect.width >= current_rect.height {
             current_rect.width >= 2 || current_rect.height < 2
@@ -110,7 +114,7 @@ fn compute_dwindle(
         };
 
         if split_horizontal {
-            let inner_gap = if current_rect.width >= params.inner_gap + 2 {
+            let inner_gap = if current_rect.width >= params.inner_gap + 2 * remaining {
                 params.inner_gap
             } else {
                 0
@@ -133,7 +137,7 @@ fn compute_dwindle(
                 current_rect.height,
             );
         } else {
-            let inner_gap = if current_rect.height >= params.inner_gap + 2 {
+            let inner_gap = if current_rect.height >= params.inner_gap + 2 * remaining {
                 params.inner_gap
             } else {
                 0

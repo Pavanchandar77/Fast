@@ -1,11 +1,59 @@
-//! Direct Import Address Table (IAT) static linkage to ntdll.
-//! Eliminates runtime GetProcAddress heuristics that trigger Windows Defender false positives.
+//! Direct and probed linkage to ntdll routed through `nx-compat`.
+//! Eliminates fragile static linkage while preserving capability probing and graceful fallbacks.
+
+#![allow(clippy::missing_safety_doc)]
 
 #[cfg(windows)]
 use windows::Win32::Foundation::{HANDLE, NTSTATUS};
 
 #[cfg(windows)]
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS(0);
+
+#[cfg(windows)]
+#[allow(non_snake_case)]
+pub unsafe fn NtSuspendProcess(process_handle: HANDLE) -> NTSTATUS {
+    match nx_compat::dispatch::safe_nt_suspend_process(process_handle.0 as isize) {
+        Ok(()) => STATUS_SUCCESS,
+        Err(_) => NTSTATUS(-1),
+    }
+}
+
+#[cfg(windows)]
+#[allow(non_snake_case)]
+pub unsafe fn NtResumeProcess(process_handle: HANDLE) -> NTSTATUS {
+    match nx_compat::dispatch::safe_nt_resume_process(process_handle.0 as isize) {
+        Ok(()) => STATUS_SUCCESS,
+        Err(_) => NTSTATUS(-1),
+    }
+}
+
+#[cfg(windows)]
+#[allow(non_snake_case)]
+pub unsafe fn NtSetTimerResolution(
+    desired_resolution: u32,
+    set_resolution: u8,
+    current_resolution: *mut u32,
+) -> NTSTATUS {
+    match nx_compat::dispatch::safe_nt_set_timer_resolution(desired_resolution, set_resolution != 0)
+    {
+        Ok(curr) => {
+            if !current_resolution.is_null() {
+                *current_resolution = curr;
+            }
+            STATUS_SUCCESS
+        }
+        Err(_) => NTSTATUS(-1),
+    }
+}
+
+#[cfg(windows)]
+#[allow(non_snake_case)]
+pub unsafe fn NtTerminateProcess(process_handle: HANDLE, exit_status: NTSTATUS) -> NTSTATUS {
+    match nx_compat::dispatch::safe_nt_terminate_process(process_handle.0 as isize, exit_status.0) {
+        Ok(()) => STATUS_SUCCESS,
+        Err(_) => NTSTATUS(-1),
+    }
+}
 
 #[cfg(windows)]
 #[repr(C)]
@@ -18,20 +66,6 @@ pub struct OSVERSIONINFOW {
     pub dwBuildNumber: u32,
     pub dwPlatformId: u32,
     pub szCSDVersion: [u16; 128],
-}
-
-#[cfg(windows)]
-#[link(name = "ntdll")]
-extern "system" {
-    pub fn NtSuspendProcess(process_handle: HANDLE) -> NTSTATUS;
-    pub fn NtResumeProcess(process_handle: HANDLE) -> NTSTATUS;
-    pub fn NtSetTimerResolution(
-        desired_resolution: u32,
-        set_resolution: u8,
-        current_resolution: *mut u32,
-    ) -> NTSTATUS;
-    pub fn NtTerminateProcess(process_handle: HANDLE, exit_status: NTSTATUS) -> NTSTATUS;
-    pub fn RtlGetVersion(lp_version_information: *mut OSVERSIONINFOW) -> NTSTATUS;
 }
 
 #[cfg(not(windows))]
@@ -57,36 +91,20 @@ pub struct WindowsVersion {
 
 #[cfg(windows)]
 pub fn get_windows_version() -> WindowsVersion {
-    let mut info = OSVERSIONINFOW {
-        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
-        dwMajorVersion: 0,
-        dwMinorVersion: 0,
-        dwBuildNumber: 0,
-        dwPlatformId: 0,
-        szCSDVersion: [0; 128],
-    };
-
-    let status = unsafe { RtlGetVersion(&mut info) };
-    if status.0 >= 0 {
-        WindowsVersion {
-            major: info.dwMajorVersion,
-            minor: info.dwMinorVersion,
-            build: info.dwBuildNumber,
-        }
-    } else {
-        WindowsVersion {
-            major: 10,
-            minor: 0,
-            build: 22000,
-        }
+    let build_info = nx_compat::detect_build();
+    WindowsVersion {
+        major: build_info.major,
+        minor: build_info.minor,
+        build: build_info.build,
     }
 }
 
 #[cfg(not(windows))]
 pub fn get_windows_version() -> WindowsVersion {
+    let build_info = nx_compat::detect_build();
     WindowsVersion {
-        major: 10,
-        minor: 0,
-        build: 22631,
+        major: build_info.major,
+        minor: build_info.minor,
+        build: build_info.build,
     }
 }
