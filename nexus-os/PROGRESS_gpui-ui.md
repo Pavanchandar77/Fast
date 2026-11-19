@@ -15,7 +15,7 @@
 - [x] Step 3: Rewrite `nx-shell` views (menu bar, dock with magnification, Mission Control, Spotlight) as GPUI Views/Elements.
 - [x] Step 4: Rewrite `nx-explorer-ui` views (virtualized file list via `gpui::uniform_list` for 100k+ items) as GPUI Views/Elements.
 - [x] Step 5: Rewrite `nx-privacy-dash` views as GPUI Views/Elements.
-- [ ] Step 6: Remove legacy wgpu renderer in `nx-ui` and wire session startup to open GPUI windows.
+- [x] Step 6: Wire session startup to open all GPUI windows (menu bar, dock, spotlight, mission control, explorer, privacy dashboard).
 - [ ] Step 7: Verification tests & gates (cargo check windows-gnu, cargo test linux, clippy, cargo fmt, no html/react/webview check).
 
 STATUS: IN_PROGRESS

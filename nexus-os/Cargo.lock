@@ -4795,6 +4795,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "gpui",
  "nx-explorer-ui",
  "nx-power",
  "nx-privacy",

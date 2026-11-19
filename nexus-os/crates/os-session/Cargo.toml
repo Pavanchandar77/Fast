@@ -30,6 +30,7 @@ name = "os_session"
 path = "src/lib.rs"
 
 [dependencies]
+gpui = { workspace = true }
 anyhow.workspace = true
 tracing.workspace = true
 nx-shell = { path = "../nx-shell" }
