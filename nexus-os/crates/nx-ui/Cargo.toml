@@ -8,6 +8,7 @@ description = "Nexus-OS design system and GPU UI toolkit"
 publish = false
 
 [dependencies]
+gpui.workspace = true
 bytemuck.workspace = true
 wgpu.workspace = true
 tracing.workspace = true

@@ -69,3 +69,7 @@ windows = { version = "0.58", features = [
 wgpu = "24.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 raw-window-handle = "0.6"
+gpui = "0.2.2"
+
+[patch.crates-io]
+xattr = { path = "patches/xattr" }
