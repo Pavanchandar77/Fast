@@ -4147,6 +4147,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "crossbeam-channel",
+ "gpui",
  "notify",
  "nx-explorer",
  "nx-fs",
@@ -4234,6 +4235,7 @@ name = "nx-shell"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "gpui",
  "nx-fs",
  "nx-governor-policy",
  "nx-power",

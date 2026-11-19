@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+gpui = { workspace = true }
 nx-explorer = { path = "../nx-explorer" }
 nx-fs = { path = "../nx-fs" }
 nx-ui = { path = "../nx-ui" }
