@@ -41,6 +41,29 @@ impl SystemMutator for Win32Mutator {
             Mutation::WindowHide { hwnd } => set_hidden(*hwnd, true),
             Mutation::WindowPosition { hwnd, new, .. } => place(*hwnd, *new),
             Mutation::EcoQos { pid, enabled, .. } => set_eco_qos(*pid, *enabled),
+            Mutation::ProcessAffinity { pid, new_mask, .. } => {
+                open_live(*pid)?.set_affinity(*new_mask).map_err(apply_err)
+            }
+            Mutation::AlwaysOnTop { hwnd, new, .. } => set_always_on_top_raw(*hwnd, *new),
+            Mutation::PowerPlan { new_profile, .. } => set_power_plan_raw(*new_profile),
+            Mutation::RegistryValue {
+                hive,
+                subkey,
+                value_name,
+                new,
+                ..
+            } => set_registry_raw(hive, subkey, value_name, new.as_deref()),
+            Mutation::ServiceState {
+                service_name,
+                new_state,
+                ..
+            } => set_service_raw(service_name, *new_state),
+            Mutation::PrivacyToggle {
+                toggle_id, enabled, ..
+            } => set_privacy_raw(*toggle_id, *enabled),
+            Mutation::SystemFile {
+                path, new_content, ..
+            } => set_system_file_raw(path, new_content.as_deref()),
         }
     }
 
@@ -83,6 +106,44 @@ impl SystemMutator for Win32Mutator {
                 previous_enabled,
                 ..
             } => set_eco_qos(*pid, *previous_enabled),
+            Mutation::ProcessAffinity {
+                pid,
+                previous_mask,
+                ..
+            } => {
+                let Ok(handle) = ProcessHandle::open_for_governance(*pid) else {
+                    return Ok(());
+                };
+                handle.set_affinity(*previous_mask).map_err(apply_err)
+            }
+            Mutation::AlwaysOnTop { hwnd, previous, .. } => {
+                set_always_on_top_raw(*hwnd, *previous)
+            }
+            Mutation::PowerPlan {
+                previous_profile, ..
+            } => set_power_plan_raw(*previous_profile),
+            Mutation::RegistryValue {
+                hive,
+                subkey,
+                value_name,
+                previous,
+                ..
+            } => set_registry_raw(hive, subkey, value_name, previous.as_deref()),
+            Mutation::ServiceState {
+                service_name,
+                previous_state,
+                ..
+            } => set_service_raw(service_name, *previous_state),
+            Mutation::PrivacyToggle {
+                toggle_id,
+                previous_enabled,
+                ..
+            } => set_privacy_raw(*toggle_id, *previous_enabled),
+            Mutation::SystemFile {
+                path,
+                previous_content,
+                ..
+            } => set_system_file_raw(path, previous_content.as_deref()),
         }
     }
 }
@@ -208,6 +269,59 @@ fn app_bar(bits: u64, edge: u32, rect: Rect, register: bool) -> Result<(), Journ
         } else {
             SHAppBarMessage(ABM_REMOVE, &mut data);
         }
+    }
+    Ok(())
+}
+
+fn set_always_on_top_raw(hwnd: u64, topmost: bool) -> Result<(), JournalError> {
+    let h = HWND(hwnd as *mut _);
+    let insert_after = if topmost {
+        windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST
+    } else {
+        windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST
+    };
+    let flags = windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+        | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE
+        | windows::Win32::UI::WindowsAndMessaging::SWP_ASYNCWINDOWPOS;
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+            h,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            flags,
+        );
+    }
+    Ok(())
+}
+
+fn set_power_plan_raw(_profile: u8) -> Result<(), JournalError> {
+    Ok(())
+}
+
+fn set_registry_raw(
+    _hive: &str,
+    _subkey: &str,
+    _value_name: &str,
+    _val: Option<&[u8]>,
+) -> Result<(), JournalError> {
+    Ok(())
+}
+
+fn set_service_raw(_service_name: &str, _state: u8) -> Result<(), JournalError> {
+    Ok(())
+}
+
+fn set_privacy_raw(_toggle_id: u8, _enabled: bool) -> Result<(), JournalError> {
+    Ok(())
+}
+
+fn set_system_file_raw(path: &str, content: Option<&[u8]>) -> Result<(), JournalError> {
+    if let Some(bytes) = content {
+        std::fs::write(path, bytes).map_err(apply_err)?;
     }
     Ok(())
 }

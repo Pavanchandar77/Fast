@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 nexus-journal.workspace = true
 nexus-model.workspace = true
+nx-governor-policy.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
