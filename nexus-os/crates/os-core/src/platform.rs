@@ -45,8 +45,8 @@ use windows::Win32::UI::Shell::{
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindowVisible, PostMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, SWP_NOACTIVATE,
-    SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_CLOSE,
+    IsWindowVisible, PostMessageW, SetForegroundWindow, SetWindowPos, ShowWindow,
+    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_CLOSE,
 };
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -70,7 +70,7 @@ impl Platform for Win32Platform {
                 rect.y,
                 rect.width,
                 rect.height,
-                SWP_NOACTIVATE | SWP_NOZORDER,
+                SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOZORDER,
             )
             .map_err(|e| PlatformError::OperationFailed(format!("SetWindowPos failed: {}", e)))
         }
@@ -222,7 +222,9 @@ impl Platform for Win32Platform {
     fn suspend_process(&self, pid: u32) -> Result<(), PlatformError> {
         let proc = ProcessHandle::open_for_governance(pid)
             .map_err(|_| PlatformError::ProcessNotFound(pid))?;
-        proc.suspend()
+        // Explicit Platform call. The shell records a suspend only when
+        // `allow_nt_suspend` is set; this path is not on the default governor.
+        proc.suspend_if_allowed(true)
             .map_err(|e| PlatformError::OperationFailed(e.to_string()))
     }
 

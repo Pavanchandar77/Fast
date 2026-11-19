@@ -1425,6 +1425,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-journal"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "nexus-model"
 version = "0.1.0"
 dependencies = [
@@ -1898,6 +1905,7 @@ dependencies = [
 name = "os-core"
 version = "0.1.0"
 dependencies = [
+ "nexus-journal",
  "nexus-model",
  "thiserror 1.0.69",
  "tracing",
@@ -1937,6 +1945,7 @@ dependencies = [
  "os-config",
  "os-core",
  "os-governor",
+ "os-shield",
  "os-vfs",
  "parking_lot",
  "tracing",

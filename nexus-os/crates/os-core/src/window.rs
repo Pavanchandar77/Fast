@@ -15,8 +15,8 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetWindowLongW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetWindowPos,
-    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_LONG_PTR_INDEX,
-    WS_CHILD, WS_EX_TOOLWINDOW, WS_POPUP, WS_THICKFRAME,
+    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOZORDER,
+    WINDOW_LONG_PTR_INDEX, WS_CHILD, WS_EX_TOOLWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 
 #[cfg(windows)]
@@ -124,6 +124,21 @@ impl WindowHandle {
     }
 
     pub fn set_rect(&self, rect: RECT) -> CoreResult<()> {
+        let previous = match self.rect() {
+            Ok(current) => crate::Rect {
+                x: current.left,
+                y: current.top,
+                width: current.right.saturating_sub(current.left),
+                height: current.bottom.saturating_sub(current.top),
+            },
+            Err(_) => rect_to_journal(rect),
+        };
+        crate::recovery::place_foreign_window(hwnd_bits(self.0), previous, rect_to_journal(rect))
+    }
+
+    /// Move a foreign window without waiting for it to process `WM_WINDOWPOSCHANGING`.
+    /// A hung target must not stall the shell thread.
+    pub(crate) fn place_async(&self, rect: RECT) -> CoreResult<()> {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         unsafe {
@@ -134,7 +149,7 @@ impl WindowHandle {
                 rect.top,
                 width,
                 height,
-                SWP_NOACTIVATE | SWP_NOZORDER,
+                SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOZORDER,
             )?;
         }
         Ok(())
@@ -221,6 +236,26 @@ impl WindowHandle {
         }
 
         true
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn hwnd_bits(hwnd: HWND) -> u64 {
+    hwnd.0 as usize as u64
+}
+
+#[cfg(windows)]
+pub(crate) fn hwnd_from_bits(bits: u64) -> HWND {
+    HWND(bits as usize as *mut std::ffi::c_void)
+}
+
+#[cfg(windows)]
+fn rect_to_journal(rect: RECT) -> crate::Rect {
+    crate::Rect {
+        x: rect.left,
+        y: rect.top,
+        width: rect.right.saturating_sub(rect.left),
+        height: rect.bottom.saturating_sub(rect.top),
     }
 }
 

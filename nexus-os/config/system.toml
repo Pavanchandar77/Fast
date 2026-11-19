@@ -66,10 +66,12 @@ ram_purge_delay_secs = 10
 trim_on_minimize = true
 trim_on_unfocused = true
 
-# macOS "App Nap" Process Freezing
-app_nap_enabled = true
+# macOS "App Nap" is off unless the operator opts in. A cap is journaled
+# and removed on exit. NtSuspendProcess stays unreachable at the default.
+app_nap_enabled = false
 app_nap_idle_secs = 30
 cpu_throttle_percent = 1
+allow_nt_suspend = false
 exclude_from_nap = [
     "spotify.exe",
     "discord.exe",
@@ -81,10 +83,21 @@ exclude_from_nap = [
     "cl.exe"
 ]
 
-# Dynamic Foreground Boosting
-dynamic_priority_boost = true
-foreground_priority = "High"        # "High", "AboveNormal", "Realtime"
-background_priority = "BelowNormal" # "BelowNormal", "Idle"
+# Foreground boosting is off by default. When enabled, Nexus never applies
+# BELOW_NORMAL, and HIGH/REALTIME only for names in priority_whitelist.
+dynamic_priority_boost = false
+foreground_priority = "AboveNormal" # "High", "AboveNormal", "Normal"
+background_priority = "Normal"      # BELOW_NORMAL is ignored by the policy
+priority_whitelist = []
+# Smart governor. EcoQoS and ProBalance are on and journaled.
+# One-class foreground boost stays off until dynamic_priority_boost is set.
+# HIGH still needs priority_whitelist or whitelist_high_priority.
+# NtSuspendProcess stays off on both flags.
+dry_run = false
+eco_qos_enabled = true
+pro_balance_enabled = true
+allow_suspend = false
+whitelist_high_priority = []
 boost_gpu_scheduling = true
 
 # Fast Perceived Window Close

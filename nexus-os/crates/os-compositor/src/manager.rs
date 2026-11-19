@@ -7,11 +7,8 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
-use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SetWindowPos, SM_CXSCREEN, SM_CYSCREEN, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
-    SWP_NOZORDER,
-};
+use windows::Win32::Foundation::RECT;
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 #[derive(Debug, Clone)]
 pub struct ManagedWindow {
@@ -87,8 +84,7 @@ impl WindowManager {
                 nx_wm::WindowMutation::SetPosition {
                     window_id, rect, ..
                 } => {
-                    let hwnd =
-                        WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _));
+                    let hwnd = hwnd_from_id(window_id);
                     if let Some(win) = self.windows.get_mut(&hwnd) {
                         win.target_rect = (rect.x, rect.y, rect.width as i32, rect.height as i32);
                         win.spring.set_target(
@@ -100,50 +96,27 @@ impl WindowManager {
                     }
                 }
                 nx_wm::WindowMutation::SetCloak { window_id, cloaked } => {
-                    let hwnd =
-                        WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _));
+                    let hwnd = hwnd_from_id(window_id);
                     if let Some(win) = self.windows.get_mut(&hwnd) {
                         win.is_minimized = cloaked;
                     }
-                    unsafe {
-                        let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                            windows::Win32::Foundation::HWND(window_id.0 as *mut _),
-                            if cloaked {
-                                windows::Win32::UI::WindowsAndMessaging::SW_HIDE
-                            } else {
-                                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE
-                            },
-                        );
-                    }
+                    journal_cloak(window_id.0, cloaked);
                 }
                 nx_wm::WindowMutation::SetVisibility { window_id, visible } => {
-                    let hwnd =
-                        WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _));
+                    let hwnd = hwnd_from_id(window_id);
                     if let Some(win) = self.windows.get_mut(&hwnd) {
                         win.is_minimized = !visible;
                     }
-                    unsafe {
-                        let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                            windows::Win32::Foundation::HWND(window_id.0 as *mut _),
-                            if visible {
-                                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE
-                            } else {
-                                windows::Win32::UI::WindowsAndMessaging::SW_HIDE
-                            },
-                        );
-                    }
+                    journal_visibility(window_id.0, visible);
                 }
                 nx_wm::WindowMutation::SetFocus { window_id } => {
-                    let hwnd =
-                        WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _));
-                    self.active_window = Some(hwnd);
+                    self.active_window = Some(hwnd_from_id(window_id));
                 }
                 nx_wm::WindowMutation::SetFloating {
                     window_id,
                     floating,
                 } => {
-                    let hwnd =
-                        WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _));
+                    let hwnd = hwnd_from_id(window_id);
                     if let Some(win) = self.windows.get_mut(&hwnd) {
                         win.is_floating = floating;
                     }
@@ -305,17 +278,14 @@ impl WindowManager {
             if !win.spring.is_at_rest() {
                 win.spring.step(dt);
                 let (x, y, w, h) = win.spring.current_rect();
-                unsafe {
-                    let _ = SetWindowPos(
-                        win.handle.0,
-                        HWND::default(),
-                        x,
-                        y,
-                        w,
-                        h,
-                        SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
-                    );
-                }
+                // `set_rect` journals the original rectangle once and moves
+                // with `SWP_ASYNCWINDOWPOS`, so a hung window cannot stall the loop.
+                let _ = win.handle.set_rect(RECT {
+                    left: x,
+                    top: y,
+                    right: x.saturating_add(w),
+                    bottom: y.saturating_add(h),
+                });
             }
         }
     }
@@ -441,6 +411,16 @@ impl WindowManager {
                     self.apply_plan(plan);
                 }
             }
+            HotkeyAction::FocusDirection(dir) => {
+                let nx_dir = match dir {
+                    nexus_model::hotkeys::Direction::Left => nx_wm::Direction::Left,
+                    nexus_model::hotkeys::Direction::Right => nx_wm::Direction::Right,
+                    nexus_model::hotkeys::Direction::Up => nx_wm::Direction::Up,
+                    nexus_model::hotkeys::Direction::Down => nx_wm::Direction::Down,
+                };
+                let (plan, _) = self.model.focus_direction(nx_dir);
+                self.apply_plan(plan);
+            }
             HotkeyAction::ToggleFullscreen => {
                 if let Some(active) = self.active_window {
                     let (plan, _) = self
@@ -495,5 +475,46 @@ impl WindowManager {
 
     pub fn active_window_title(&self) -> String {
         self.active_window.map(|h| h.title()).unwrap_or_default()
+    }
+}
+
+fn hwnd_from_id(window_id: nx_wm::WindowId) -> WindowHandle {
+    WindowHandle(windows::Win32::Foundation::HWND(window_id.0 as *mut _))
+}
+
+/// Cloak is a system mutation. Record it before DWM applies it, and undo the
+/// same entry when the workspace comes back.
+fn journal_cloak(hwnd: u64, cloaked: bool) {
+    if os_core::recovery::is_dry_run() {
+        info!("dry-run: cloak hwnd {hwnd:#x} -> {cloaked}");
+        return;
+    }
+    if cloaked {
+        let mutation = os_core::Mutation::WindowCloak { hwnd };
+        if let Err(err) = os_core::recovery::commit(&mutation) {
+            debug!("cloak journal failed for hwnd {hwnd:#x}: {err}");
+        }
+    } else {
+        let _ = os_core::recovery::undo_last(
+            |mutation| matches!(mutation, os_core::Mutation::WindowCloak { hwnd: found } if *found == hwnd),
+        );
+    }
+}
+
+/// Hide and show go through the journal so a crash cannot leave a window invisible.
+fn journal_visibility(hwnd: u64, visible: bool) {
+    if os_core::recovery::is_dry_run() {
+        info!("dry-run: visible hwnd {hwnd:#x} -> {visible}");
+        return;
+    }
+    if visible {
+        let _ = os_core::recovery::undo_last(
+            |mutation| matches!(mutation, os_core::Mutation::WindowHide { hwnd: found } if *found == hwnd),
+        );
+    } else {
+        let mutation = os_core::Mutation::WindowHide { hwnd };
+        if let Err(err) = os_core::recovery::commit(&mutation) {
+            debug!("hide journal failed for hwnd {hwnd:#x}: {err}");
+        }
     }
 }

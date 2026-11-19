@@ -4,14 +4,13 @@
 #[cfg(windows)]
 mod imp {
     use os_compositor::hooks::WinEventListener;
-    use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
+    use os_compositor::hotkeys::{pump_messages, GlobalKeyboardHook, HotkeyAction};
     use os_compositor::manager::WindowManager;
     use os_compositor::{
         create_border_overlay_window, create_command_bar_window, create_top_bar_window,
         BorderOverlay, CommandBar, GpuContext, TopBar,
     };
     use os_config::watcher::ConfigWatcher;
-    use os_core::hollow_shell::HollowShellManager;
     use os_core::window::WindowHandle;
     use parking_lot::RwLock;
     use std::path::PathBuf;
@@ -25,12 +24,10 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
 
+    use os_core::hollow_shell::HollowShellManager;
+
     pub fn run() -> anyhow::Result<()> {
-        // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
-        std::panic::set_hook(Box::new(|info| {
-            eprintln!("NEXUS-COMPOSITOR PANIC: {}", info);
-            HollowShellManager::restore_taskbar();
-        }));
+        os_core::recovery::install_panic_hook();
 
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -44,16 +41,31 @@ mod imp {
 
         info!("Starting nexus-compositor micro-daemon...");
 
+        let dry_run = std::env::args().any(|arg| arg == "--dry-run");
+        os_core::recovery::bootstrap(dry_run)?;
+        let _restore = os_core::recovery::RestoreOnDrop::new();
+        os_shield::attach(true, os_core::recovery::is_dry_run());
+
         let config_path = find_config_path();
         let (watcher, config_rx) = ConfigWatcher::new(&config_path)?;
         let initial_config = watcher.get();
         let compositor_config = Arc::new(RwLock::new(initial_config.compositor));
+        let fail_safe = os_config::parse_or_default(&initial_config.general.fail_safe_hotkey);
+
+        let (_keyboard, hotkey_rx) =
+            match GlobalKeyboardHook::start_with_config(fail_safe, &initial_config.keybindings) {
+                Ok(hook) => hook,
+                Err(err) => {
+                    tracing::error!(
+                        "keyboard hook failed ({err}); restoring the session and aborting startup"
+                    );
+                    return Ok(());
+                }
+            };
 
         let wm = Arc::new(RwLock::new(WindowManager::new(compositor_config.clone())));
 
-        // 1. Attach hooks
         let (_listener, win_event_rx) = WinEventListener::start()?;
-        let (_keyboard, hotkey_rx) = GlobalKeyboardHook::start()?;
 
         // 2. Ingest existing windows
         enumerate_existing_windows(wm.clone());
@@ -104,6 +116,12 @@ mod imp {
             let dt = (frame_start - last_frame).as_secs_f32().min(0.05);
             last_frame = frame_start;
 
+            if pump_messages() {
+                warn!("Emergency fail-safe triggered!");
+                wm.write().restore_all_on_exit();
+                return Ok(());
+            }
+
             while let Ok(event) = win_event_rx.try_recv() {
                 wm.write().handle_event(event);
             }
@@ -112,7 +130,7 @@ mod imp {
                 match action {
                     HotkeyAction::PanicFailSafe => {
                         warn!("Emergency fail-safe triggered!");
-                        HollowShellManager::restore_taskbar();
+                        wm.write().restore_all_on_exit();
                         return Ok(());
                     }
                     HotkeyAction::CommandBar => {
@@ -126,7 +144,11 @@ mod imp {
 
             while let Ok(new_cfg) = config_rx.try_recv() {
                 *compositor_config.write() = new_cfg.compositor;
-                wm.write().retile_workspace(1);
+                os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
+                    &new_cfg.keybindings,
+                );
+                let active_ws = wm.read().active_workspace();
+                wm.write().retile_workspace(active_ws);
             }
 
             wm.write().update_animations(dt);
@@ -208,6 +230,6 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
-    eprintln!("nexus-compositor is supported on Windows NT only.");
+    eprintln!("nexus-compositor requires Windows NT");
     Ok(())
 }

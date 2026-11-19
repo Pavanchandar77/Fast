@@ -6,3 +6,15 @@ pub mod wfp;
 
 pub use nx_privacy as privacy;
 pub use nx_privacy::shield::{PrivacyShield, PrivacyShieldConfig};
+
+/// Attach the shield to a running session.
+///
+/// This build does not install WFP filters. Calling the stub installer would
+/// report success without a real filter, which is worse than doing nothing.
+pub fn attach(journal_ready: bool, dry_run: bool) {
+    tracing::info!(
+        journal_ready,
+        dry_run,
+        "os-shield attached; telemetry filters are not installed by this build"
+    );
+}

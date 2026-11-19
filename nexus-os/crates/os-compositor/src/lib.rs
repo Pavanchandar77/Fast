@@ -18,7 +18,7 @@ pub use gpu::{
 #[cfg(windows)]
 pub use hooks::WinEventListener;
 #[cfg(windows)]
-pub use hotkeys::GlobalKeyboardHook;
+pub use hotkeys::{pump_messages, GlobalKeyboardHook};
 #[cfg(windows)]
 pub use manager::WindowManager;
 pub use spring::{SpringConfig, SpringSolver};

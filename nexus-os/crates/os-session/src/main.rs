@@ -1,9 +1,7 @@
-//! nexus-os: Monolithic shell entrypoint.
-
 #[cfg(windows)]
 mod imp {
     use os_compositor::hooks::WinEventListener;
-    use os_compositor::hotkeys::{GlobalKeyboardHook, HotkeyAction};
+    use os_compositor::hotkeys::{pump_messages, GlobalKeyboardHook, HotkeyAction};
     use os_compositor::manager::WindowManager;
     use os_compositor::{
         create_border_overlay_window, create_command_bar_window, create_top_bar_window,
@@ -26,11 +24,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
 
     pub fn run() -> anyhow::Result<()> {
-        // 0a. Install panic hook FIRST — restores taskbar + explorer before anything else
-        std::panic::set_hook(Box::new(|info| {
-            eprintln!("NEXUS-OS PANIC: {}", info);
-            HollowShellManager::restore_taskbar();
-        }));
+        // Restore journaled mutations on panic before anything else runs.
+        os_core::recovery::install_panic_hook();
 
         // 0b. Enforce Per-Monitor DPI V2 scaling
         unsafe {
@@ -56,6 +51,13 @@ mod imp {
 
         info!("Initializing Nexus-OS Subsystem Engine...");
 
+        let dry_run = std::env::args().any(|arg| arg == "--dry-run");
+        os_core::recovery::bootstrap(dry_run)?;
+        // The binding must stay live for the whole process. `let _ =` drops it now.
+        let _restore = os_core::recovery::RestoreOnDrop::new();
+        os_core::heartbeat::start()?;
+        os_shield::attach(true, os_core::recovery::is_dry_run());
+
         // 1. Locate and watch declarative configuration
         let config_path = find_config_path();
         info!("Loading system configuration from: {:?}", config_path);
@@ -63,6 +65,23 @@ mod imp {
         let (watcher, config_rx) = ConfigWatcher::new(&config_path)?;
         let initial_config = watcher.get();
         let config_arc = Arc::new(RwLock::new(initial_config));
+        let fail_safe = os_config::parse_or_default(&config_arc.read().general.fail_safe_hotkey);
+
+        // The keyboard hook is installed before any system mutation. If it cannot
+        // be installed, startup stops and the drop guard restores the journal.
+        info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
+        let (_keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start_with_config(
+            fail_safe,
+            &config_arc.read().keybindings,
+        ) {
+            Ok(hook) => hook,
+            Err(err) => {
+                tracing::error!(
+                    "keyboard hook failed ({err}); restoring the session and aborting startup"
+                );
+                return Ok(());
+            }
+        };
 
         // 2. Initialize OS-Governor (Process Priority, RAM Purge, App Nap, Timer Res)
         let governor_config = Arc::new(RwLock::new(config_arc.read().governor.clone()));
@@ -76,10 +95,6 @@ mod imp {
         // 4. Start WinEvent Hooks (Window lifecycle & foreground transitions)
         info!("Attaching NT WinEvent Hook subsystem...");
         let (_win_event_listener, win_event_rx) = WinEventListener::start()?;
-
-        // 5. Start Low-Level Keyboard Hook (Global hotkeys + Panic Fail-Safe)
-        info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
-        let (_keyboard_hook, hotkey_rx) = GlobalKeyboardHook::start()?;
 
         // 6. Enumerate and ingest all existing desktop windows into the compositor
         info!("Scanning initial desktop surface hierarchy...");
@@ -137,6 +152,14 @@ mod imp {
             last_frame = now;
             let frame_start = Instant::now();
 
+            os_core::heartbeat::pulse();
+            if pump_messages() {
+                warn!("Emergency fail-safe triggered");
+                info!("Restoring the journaled session and exiting");
+                wm.write().restore_all_on_exit();
+                return Ok(());
+            }
+
             // Drain incoming WinEvents (Window creation, destruction, focus changes)
             while let Ok(event) = win_event_rx.try_recv() {
                 match &event {
@@ -163,9 +186,9 @@ mod imp {
             while let Ok(action) = hotkey_rx.try_recv() {
                 match action {
                     HotkeyAction::PanicFailSafe => {
-                        warn!("🚨 EMERGENCY PANIC FAIL-SAFE TRIGGERED (Ctrl+Alt+Shift+Esc)");
-                        info!("Restoring standard desktop environment and exiting gracefully...");
-                        HollowShellManager::restore_taskbar();
+                        warn!("Emergency fail-safe triggered");
+                        info!("Restoring the journaled session and exiting");
+                        wm.write().restore_all_on_exit();
                         return Ok(());
                     }
                     HotkeyAction::Terminal => {
@@ -189,8 +212,12 @@ mod imp {
                 info!("Applying hot-reloaded configuration to Compositor and Governor...");
                 *compositor_config.write() = new_cfg.compositor.clone();
                 *governor_config.write() = new_cfg.governor.clone();
+                os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
+                    &new_cfg.keybindings,
+                );
+                let active_ws = wm.read().active_workspace();
                 *config_arc.write() = new_cfg;
-                wm.write().retile_workspace(1);
+                wm.write().retile_workspace(active_ws);
             }
 
             // Step Spring Physics solver and reposition windows at 120Hz

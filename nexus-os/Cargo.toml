@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/nexus-journal",
     "crates/nexus-model",
     "crates/os-core",
     "crates/os-config",
@@ -28,6 +29,7 @@ authors = ["Nexus-OS Core Team"]
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+nexus-journal = { path = "crates/nexus-journal" }
 nexus-model = { path = "crates/nexus-model" }
 nx-governor-policy = { path = "crates/nx-governor-policy" }
 proptest = "1.4"

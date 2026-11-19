@@ -30,9 +30,16 @@ pub struct HollowShellManager;
 
 #[cfg(windows)]
 impl HollowShellManager {
-    /// Hides the native Windows taskbar across all primary and secondary displays
-    /// and flushes explorer.exe working set down to ~8MB idle RAM.
+    /// Hides the native taskbar. The mutation is journaled before the windows
+    /// are hidden, so a crash puts the taskbar back.
     pub fn suppress_taskbar() -> CoreResult<()> {
+        if TRAY_SUPPRESSED.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        crate::recovery::commit(&crate::Mutation::TaskbarHide)
+    }
+
+    pub(crate) fn hide_taskbar_raw() -> CoreResult<()> {
         unsafe {
             // 1. Primary taskbar
             if let Ok(tray_hwnd) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) {
@@ -93,37 +100,42 @@ impl HollowShellManager {
         Ok(())
     }
 
-    /// Restores standard Windows taskbar visibility across all monitors unconditionally
+    /// Restores standard Windows taskbar visibility across all monitors unconditionally.
     pub fn restore_taskbar() {
-        TRAY_SUPPRESSED.store(false, Ordering::SeqCst);
+        show_taskbar_raw();
+    }
+}
 
-        unsafe {
-            // Restore primary
-            if let Ok(tray_hwnd) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) {
-                if !tray_hwnd.is_invalid() && !tray_hwnd.0.is_null() {
-                    let _ = ShowWindow(tray_hwnd, SW_SHOW);
-                    info!("Hollow Shell: Restored Shell_TrayWnd visibility");
-                }
-            }
+#[cfg(windows)]
+pub(crate) fn show_taskbar_raw() {
+    TRAY_SUPPRESSED.store(false, Ordering::SeqCst);
 
-            // Restore all secondaries
-            let mut prev_hwnd = HWND::default();
-            while let Ok(sec_tray) = FindWindowExW(
-                HWND::default(),
-                prev_hwnd,
-                w!("Shell_SecondaryTrayWnd"),
-                PCWSTR::null(),
-            ) {
-                if sec_tray.is_invalid() || sec_tray.0.is_null() {
-                    break;
-                }
-                let _ = ShowWindow(sec_tray, SW_SHOW);
-                info!(
-                    "Hollow Shell: Restored Shell_SecondaryTrayWnd ({:?})",
-                    sec_tray.0
-                );
-                prev_hwnd = sec_tray;
+    unsafe {
+        // Restore primary
+        if let Ok(tray_hwnd) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) {
+            if !tray_hwnd.is_invalid() && !tray_hwnd.0.is_null() {
+                let _ = ShowWindow(tray_hwnd, SW_SHOW);
+                info!("Hollow Shell: Restored Shell_TrayWnd visibility");
             }
+        }
+
+        // Restore all secondaries
+        let mut prev_hwnd = HWND::default();
+        while let Ok(sec_tray) = FindWindowExW(
+            HWND::default(),
+            prev_hwnd,
+            w!("Shell_SecondaryTrayWnd"),
+            PCWSTR::null(),
+        ) {
+            if sec_tray.is_invalid() || sec_tray.0.is_null() {
+                break;
+            }
+            let _ = ShowWindow(sec_tray, SW_SHOW);
+            info!(
+                "Hollow Shell: Restored Shell_SecondaryTrayWnd ({:?})",
+                sec_tray.0
+            );
+            prev_hwnd = sec_tray;
         }
     }
 }
