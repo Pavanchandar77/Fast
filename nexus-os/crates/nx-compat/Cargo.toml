@@ -1,0 +1,22 @@
+[package]
+name = "nx-compat"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Windows build detection, runtime capability probing, and update resilience for Nexus-OS"
+
+[dependencies]
+nexus-model = { workspace = true }
+nexus-journal = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_Registry"] }
+
+[dev-dependencies]
+tempfile = "3.27"
