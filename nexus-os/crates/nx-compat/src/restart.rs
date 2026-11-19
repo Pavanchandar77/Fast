@@ -143,7 +143,8 @@ impl RestartHandler {
         let thumb_res = probe_provider.probe(Capability::DwmThumbnails);
 
         let report = DwmRestartReport {
-            dwm_operational: mica_res.status.is_operational() || acrylic_res.status.is_operational(),
+            dwm_operational: mica_res.status.is_operational()
+                || acrylic_res.status.is_operational(),
             mica_supported: mica_res.status.is_available(),
             acrylic_supported: acrylic_res.status.is_operational(),
             thumbnails_supported: thumb_res.status.is_operational(),

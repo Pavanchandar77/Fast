@@ -65,7 +65,10 @@ fn test_simulated_build_upgrade_workflow() {
         _ => panic!("Expected BuildChanged status"),
     }
     assert!(notices.count() >= 1);
-    assert!(notices.all().iter().any(|n| n.title.contains("Windows Update Detected")));
+    assert!(notices
+        .all()
+        .iter()
+        .any(|n| n.title.contains("Windows Update Detected")));
 }
 
 #[test]
@@ -97,11 +100,15 @@ fn test_missing_exports_and_failing_probes_graceful_fallbacks() {
     // Verify probe results and fallbacks
     assert!(!pm.is_supported(Capability::NtSetTimerResolution));
     assert!(pm.is_operational(Capability::NtSetTimerResolution));
-    assert!(pm.fallback_for(Capability::NtSetTimerResolution).contains("winmm"));
+    assert!(pm
+        .fallback_for(Capability::NtSetTimerResolution)
+        .contains("winmm"));
 
     assert!(!pm.is_supported(Capability::NtSuspendProcess));
     assert!(!pm.is_operational(Capability::NtSuspendProcess));
-    assert!(pm.fallback_for(Capability::NtSuspendProcess).contains("Skip process suspension"));
+    assert!(pm
+        .fallback_for(Capability::NtSuspendProcess)
+        .contains("Skip process suspension"));
 
     assert!(!pm.is_supported(Capability::DwmMica));
     assert!(pm.is_operational(Capability::DwmMica));
@@ -178,10 +185,18 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
 
     // Verify detection and healing
     assert!(report.settings_healed.len() >= 4);
-    assert!(report.settings_healed.contains(&"Disable Telemetry Policy".to_string()));
-    assert!(report.settings_healed.contains(&"Native Taskbar Hidden".to_string()));
-    assert!(report.settings_healed.contains(&"Disable DiagTrack Service".to_string()));
-    assert!(report.settings_healed.contains(&"Disable Activity Feed".to_string()));
+    assert!(report
+        .settings_healed
+        .contains(&"Disable Telemetry Policy".to_string()));
+    assert!(report
+        .settings_healed
+        .contains(&"Native Taskbar Hidden".to_string()));
+    assert!(report
+        .settings_healed
+        .contains(&"Disable DiagTrack Service".to_string()));
+    assert!(report
+        .settings_healed
+        .contains(&"Disable Activity Feed".to_string()));
 
     // Verify live state on platform is healed back to Nexus desired values
     assert_eq!(
@@ -195,7 +210,10 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
         Some(0)
     );
     assert!(!platform.is_taskbar_visible());
-    assert_eq!(platform.get_service_status("DiagTrack").unwrap(), Some(false));
+    assert_eq!(
+        platform.get_service_status("DiagTrack").unwrap(),
+        Some(false)
+    );
     assert_eq!(
         platform
             .get_registry_dword(
@@ -212,7 +230,10 @@ fn test_reset_settings_verified_and_healed_with_journal_consistency() {
     assert!(journal.entries().len() >= 4);
 
     // Non-blocking notices were posted
-    assert!(notices.all().iter().any(|n| n.title == "Setting Re-applied"));
+    assert!(notices
+        .all()
+        .iter()
+        .any(|n| n.title == "Setting Re-applied"));
 }
 
 /// A mock platform that fails on specific setting mutations to test rollback.
@@ -251,7 +272,10 @@ impl Platform for FailingPlatform {
     ) -> Result<(), PlatformError> {
         self.inner.set_window_cloaked(id, cloaked)
     }
-    fn set_foreground_window(&self, id: nexus_model::layout::WindowId) -> Result<(), PlatformError> {
+    fn set_foreground_window(
+        &self,
+        id: nexus_model::layout::WindowId,
+    ) -> Result<(), PlatformError> {
         self.inner.set_foreground_window(id)
     }
     fn close_window(&self, id: nexus_model::layout::WindowId) -> Result<(), PlatformError> {
@@ -300,7 +324,9 @@ impl Platform for FailingPlatform {
     }
     fn set_taskbar_visible(&self, visible: bool) -> Result<(), PlatformError> {
         if self.fail_on_key == "Taskbar" {
-            return Err(PlatformError::OperationFailed("Access denied to Shell_TrayWnd".into()));
+            return Err(PlatformError::OperationFailed(
+                "Access denied to Shell_TrayWnd".into(),
+            ));
         }
         self.inner.set_taskbar_visible(visible)
     }
@@ -349,7 +375,9 @@ impl Platform for FailingPlatform {
     ) -> Result<(), PlatformError> {
         let key = format!(r"{hive}\{subkey}\{name}");
         if key.contains(&self.fail_on_key) {
-            return Err(PlatformError::PermissionDenied(format!("Access Denied to {key}")));
+            return Err(PlatformError::PermissionDenied(format!(
+                "Access Denied to {key}"
+            )));
         }
         self.inner.set_registry_dword(hive, subkey, name, val)
     }
@@ -409,17 +437,26 @@ fn test_reapply_failure_rolls_back_journal_never_brick() {
 
     // Verify the failure was handled gracefully:
     // 1. Reported as failed
-    assert!(report.settings_failed.iter().any(|(s, _)| s.contains("Telemetry")));
+    assert!(report
+        .settings_failed
+        .iter()
+        .any(|(s, _)| s.contains("Telemetry")));
 
     // 2. Journal entry was rolled back immediately (not left broken in journal)
     let has_dangling_telemetry = journal.entries().iter().any(|m| match m {
         nexus_journal::Mutation::Setting { key, .. } => key.contains("AllowTelemetry"),
         _ => false,
     });
-    assert!(!has_dangling_telemetry, "Dangling entry must be rolled back on failure");
+    assert!(
+        !has_dangling_telemetry,
+        "Dangling entry must be rolled back on failure"
+    );
 
     // 3. Notice was posted alerting the operator non-blockingly
-    assert!(notices.all().iter().any(|n| n.title.contains("Re-apply Failed & Reverted")));
+    assert!(notices
+        .all()
+        .iter()
+        .any(|n| n.title.contains("Re-apply Failed & Reverted")));
 
     // 4. Daemon did NOT panic and continues operating
     assert!(!report.is_clean());
@@ -445,7 +482,10 @@ fn test_mid_session_explorer_and_dwm_restarts() {
 
     // Taskbar is re-suppressed without user action!
     assert!(!platform.is_taskbar_visible());
-    assert!(notices.all().iter().any(|n| n.title.contains("Explorer Restarted")));
+    assert!(notices
+        .all()
+        .iter()
+        .any(|n| n.title.contains("Explorer Restarted")));
 
     // 2. DWM restarts -> WM_DWMCOMPOSITIONCHANGED received
     let probes = MockProbeProvider::new();
@@ -457,5 +497,8 @@ fn test_mid_session_explorer_and_dwm_restarts() {
     assert!(report.mica_supported);
     assert!(report.thumbnails_supported);
 
-    assert!(notices.all().iter().any(|n| n.title.contains("DWM Composition Re-attached")));
+    assert!(notices
+        .all()
+        .iter()
+        .any(|n| n.title.contains("DWM Composition Re-attached")));
 }

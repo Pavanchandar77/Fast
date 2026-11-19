@@ -29,10 +29,7 @@ pub enum CompatError {
     Platform(String),
 
     #[error("Re-apply setting failed: {setting}, rolled back: {rolled_back}")]
-    ReapplyFailed {
-        setting: String,
-        rolled_back: bool,
-    },
+    ReapplyFailed { setting: String, rolled_back: bool },
 }
 
 pub type CompatResult<T> = Result<T, CompatError>;

@@ -48,6 +48,12 @@ impl BackdropChoice {
     }
 }
 
+/// Pick Mica, Acrylic, or custom blur using runtime capability probing via `nx-compat`.
+pub fn choose_probed(theme: &Theme, prefer: SystemBackdrop) -> BackdropChoice {
+    let dwm_supported = nx_compat::is_capability_supported(nx_compat::Capability::DwmMica);
+    choose(theme, prefer, dwm_supported)
+}
+
 /// Pick Mica, Acrylic, or the custom blur.
 ///
 /// `dwm_supported` is true on Windows 11 22H2+ where

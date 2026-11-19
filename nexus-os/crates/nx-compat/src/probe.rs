@@ -216,14 +216,17 @@ pub struct LiveProbeProvider;
 impl ProbeProvider for LiveProbeProvider {
     #[cfg(windows)]
     fn probe(&self, capability: Capability) -> ProbeResult {
+        use windows::core::{w, PCSTR};
         use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-        use windows::core::{PCSTR, w};
 
         match capability {
             Capability::DwmMica => {
                 let build = crate::build::detect_build().build;
                 if build >= 22621 {
-                    ProbeResult::available(capability, "DWMWA_SYSTEMBACKDROP_TYPE supported (Win11 22H2+)")
+                    ProbeResult::available(
+                        capability,
+                        "DWMWA_SYSTEMBACKDROP_TYPE supported (Win11 22H2+)",
+                    )
                 } else if build >= 22000 {
                     ProbeResult::degraded(
                         capability,
@@ -241,7 +244,10 @@ impl ProbeProvider for LiveProbeProvider {
             Capability::DwmAcrylic => {
                 let build = crate::build::detect_build().build;
                 if build >= 22000 {
-                    ProbeResult::available(capability, "Acrylic supported via DWM backdrop or SetWindowCompositionAttribute")
+                    ProbeResult::available(
+                        capability,
+                        "Acrylic supported via DWM backdrop or SetWindowCompositionAttribute",
+                    )
                 } else {
                     ProbeResult::degraded(
                         capability,
@@ -265,45 +271,75 @@ impl ProbeProvider for LiveProbeProvider {
             Capability::DwmImmersiveDarkMode => {
                 unsafe {
                     if let Ok(dwm) = GetModuleHandleW(w!("dwmapi.dll")) {
-                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "DwmSetWindowAttribute dark mode supported");
+                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "DwmSetWindowAttribute dark mode supported",
+                            );
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "dwmapi.dll missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "dwmapi.dll missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::DwmCloak => {
                 unsafe {
                     if let Ok(dwm) = GetModuleHandleW(w!("dwmapi.dll")) {
-                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some() {
+                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some()
+                        {
                             return ProbeResult::available(capability, "DWMWA_CLOAK supported");
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "dwmapi.dll missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "dwmapi.dll missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::DwmTransitions => {
                 unsafe {
                     if let Ok(dwm) = GetModuleHandleW(w!("dwmapi.dll")) {
-                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "DWMWA_TRANSITIONS_FORCEDISABLED supported");
+                        if GetProcAddress(dwm, PCSTR(b"DwmSetWindowAttribute\0".as_ptr())).is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "DWMWA_TRANSITIONS_FORCEDISABLED supported",
+                            );
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "dwmapi.dll missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "dwmapi.dll missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::DwmThumbnails => {
                 unsafe {
                     if let Ok(dwm) = GetModuleHandleW(w!("dwmapi.dll")) {
                         let reg = GetProcAddress(dwm, PCSTR(b"DwmRegisterThumbnail\0".as_ptr()));
-                        let upd = GetProcAddress(dwm, PCSTR(b"DwmUpdateThumbnailProperties\0".as_ptr()));
-                        let unreg = GetProcAddress(dwm, PCSTR(b"DwmUnregisterThumbnail\0".as_ptr()));
+                        let upd =
+                            GetProcAddress(dwm, PCSTR(b"DwmUpdateThumbnailProperties\0".as_ptr()));
+                        let unreg =
+                            GetProcAddress(dwm, PCSTR(b"DwmUnregisterThumbnail\0".as_ptr()));
                         if reg.is_some() && upd.is_some() && unreg.is_some() {
-                            return ProbeResult::available(capability, "DWM thumbnail APIs exported and functional");
+                            return ProbeResult::available(
+                                capability,
+                                "DWM thumbnail APIs exported and functional",
+                            );
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "DWM thumbnail APIs missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "DWM thumbnail APIs missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::DwmFlush => {
                 unsafe {
@@ -313,77 +349,140 @@ impl ProbeProvider for LiveProbeProvider {
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "DwmFlush missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "DwmFlush missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::SetWindowCompositionAttribute => {
                 unsafe {
                     if let Ok(user32) = GetModuleHandleW(w!("user32.dll")) {
-                        if GetProcAddress(user32, PCSTR(b"SetWindowCompositionAttribute\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "user32!SetWindowCompositionAttribute exported");
+                        if GetProcAddress(
+                            user32,
+                            PCSTR(b"SetWindowCompositionAttribute\0".as_ptr()),
+                        )
+                        .is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "user32!SetWindowCompositionAttribute exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::degraded(capability, "DwmSetWindowAttribute fallback", "SetWindowCompositionAttribute export missing")
+                ProbeResult::degraded(
+                    capability,
+                    "DwmSetWindowAttribute fallback",
+                    "SetWindowCompositionAttribute export missing",
+                )
             }
             Capability::NtSuspendProcess => {
                 unsafe {
                     if let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) {
                         if GetProcAddress(ntdll, PCSTR(b"NtSuspendProcess\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "ntdll!NtSuspendProcess exported");
+                            return ProbeResult::available(
+                                capability,
+                                "ntdll!NtSuspendProcess exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "NtSuspendProcess missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "NtSuspendProcess missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::NtResumeProcess => {
                 unsafe {
                     if let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) {
                         if GetProcAddress(ntdll, PCSTR(b"NtResumeProcess\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "ntdll!NtResumeProcess exported");
+                            return ProbeResult::available(
+                                capability,
+                                "ntdll!NtResumeProcess exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::unavailable(capability, "NtResumeProcess missing", capability.documented_fallback())
+                ProbeResult::unavailable(
+                    capability,
+                    "NtResumeProcess missing",
+                    capability.documented_fallback(),
+                )
             }
             Capability::NtSetTimerResolution => {
                 unsafe {
                     if let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) {
-                        if GetProcAddress(ntdll, PCSTR(b"NtSetTimerResolution\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "ntdll!NtSetTimerResolution exported");
+                        if GetProcAddress(ntdll, PCSTR(b"NtSetTimerResolution\0".as_ptr()))
+                            .is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "ntdll!NtSetTimerResolution exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::degraded(capability, "winmm timeBeginPeriod fallback", "NtSetTimerResolution missing")
+                ProbeResult::degraded(
+                    capability,
+                    "winmm timeBeginPeriod fallback",
+                    "NtSetTimerResolution missing",
+                )
             }
             Capability::NtTerminateProcess => {
                 unsafe {
                     if let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) {
-                        if GetProcAddress(ntdll, PCSTR(b"NtTerminateProcess\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "ntdll!NtTerminateProcess exported");
+                        if GetProcAddress(ntdll, PCSTR(b"NtTerminateProcess\0".as_ptr())).is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "ntdll!NtTerminateProcess exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::degraded(capability, "Win32 TerminateProcess fallback", "NtTerminateProcess missing")
+                ProbeResult::degraded(
+                    capability,
+                    "Win32 TerminateProcess fallback",
+                    "NtTerminateProcess missing",
+                )
             }
             Capability::RtlGetVersion => {
                 unsafe {
                     if let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) {
                         if GetProcAddress(ntdll, PCSTR(b"RtlGetVersion\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "ntdll!RtlGetVersion exported");
+                            return ProbeResult::available(
+                                capability,
+                                "ntdll!RtlGetVersion exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::degraded(capability, "Registry CurrentVersion fallback", "RtlGetVersion missing")
+                ProbeResult::degraded(
+                    capability,
+                    "Registry CurrentVersion fallback",
+                    "RtlGetVersion missing",
+                )
             }
             Capability::ShellHooks => {
                 unsafe {
                     if let Ok(user32) = GetModuleHandleW(w!("user32.dll")) {
-                        if GetProcAddress(user32, PCSTR(b"RegisterShellHookWindow\0".as_ptr())).is_some() {
-                            return ProbeResult::available(capability, "user32!RegisterShellHookWindow exported");
+                        if GetProcAddress(user32, PCSTR(b"RegisterShellHookWindow\0".as_ptr()))
+                            .is_some()
+                        {
+                            return ProbeResult::available(
+                                capability,
+                                "user32!RegisterShellHookWindow exported",
+                            );
                         }
                     }
                 }
-                ProbeResult::degraded(capability, "SetWinEventHook fallback", "RegisterShellHookWindow missing")
+                ProbeResult::degraded(
+                    capability,
+                    "SetWinEventHook fallback",
+                    "RegisterShellHookWindow missing",
+                )
             }
             Capability::TaskbarSuppression => {
                 ProbeResult::available(capability, "Shell_TrayWnd window lookup operational")
@@ -409,7 +508,10 @@ impl ProbeProvider for LiveProbeProvider {
     #[cfg(not(windows))]
     fn probe(&self, capability: Capability) -> ProbeResult {
         // Standard baseline for Linux simulated execution
-        ProbeResult::available(capability, "Simulated capability active on non-Windows target")
+        ProbeResult::available(
+            capability,
+            "Simulated capability active on non-Windows target",
+        )
     }
 }
 

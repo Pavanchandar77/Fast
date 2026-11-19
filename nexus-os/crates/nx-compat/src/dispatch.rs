@@ -20,7 +20,9 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 /// rather than crashing.
 pub fn safe_nt_suspend_process(process_handle: isize) -> CompatResult<()> {
     if process_handle == 0 || process_handle == -1 {
-        return Err(CompatError::ProbeFailed("Invalid process handle".to_string()));
+        return Err(CompatError::ProbeFailed(
+            "Invalid process handle".to_string(),
+        ));
     }
 
     #[cfg(windows)]
@@ -54,7 +56,9 @@ pub fn safe_nt_suspend_process(process_handle: isize) -> CompatResult<()> {
 /// If `ntdll!NtResumeProcess` is unavailable, logs info and skips.
 pub fn safe_nt_resume_process(process_handle: isize) -> CompatResult<()> {
     if process_handle == 0 || process_handle == -1 {
-        return Err(CompatError::ProbeFailed("Invalid process handle".to_string()));
+        return Err(CompatError::ProbeFailed(
+            "Invalid process handle".to_string(),
+        ));
     }
 
     #[cfg(windows)]
@@ -92,8 +96,7 @@ pub fn safe_nt_set_timer_resolution(
 ) -> CompatResult<u32> {
     #[cfg(windows)]
     unsafe {
-        type NtSetTimerResFn =
-            unsafe extern "system" fn(u32, u8, *mut u32) -> NTSTATUS;
+        type NtSetTimerResFn = unsafe extern "system" fn(u32, u8, *mut u32) -> NTSTATUS;
 
         if let Ok(ntdll) = GetModuleHandleW(windows::core::w!("ntdll.dll")) {
             if let Some(proc) = GetProcAddress(ntdll, PCSTR(b"NtSetTimerResolution\0".as_ptr())) {
@@ -135,10 +138,7 @@ pub fn safe_nt_terminate_process(process_handle: isize, exit_status: i32) -> Com
         if let Ok(ntdll) = GetModuleHandleW(windows::core::w!("ntdll.dll")) {
             if let Some(proc) = GetProcAddress(ntdll, PCSTR(b"NtTerminateProcess\0".as_ptr())) {
                 let nt_term: NtTermFn = std::mem::transmute(proc);
-                let status = nt_term(
-                    HANDLE(process_handle as *mut _),
-                    NTSTATUS(exit_status),
-                );
+                let status = nt_term(HANDLE(process_handle as *mut _), NTSTATUS(exit_status));
                 if status.0 >= 0 {
                     return Ok(());
                 }
@@ -176,9 +176,8 @@ pub fn safe_apply_dwm_attributes(
         use std::ffi::c_void;
         use windows::Win32::Foundation::BOOL;
         use windows::Win32::Graphics::Dwm::{
-            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
-            DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-            DWMWA_WINDOW_CORNER_PREFERENCE, DWM_SYSTEMBACKDROP_TYPE,
+            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE,
+            DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWM_SYSTEMBACKDROP_TYPE,
             DWM_WINDOW_CORNER_PREFERENCE,
         };
         use windows::Win32::UI::Controls::MARGINS;
@@ -219,7 +218,12 @@ pub fn safe_apply_dwm_attributes(
         );
 
         // 3. Rounded Corners
-        if round_corners && probe.probe(Capability::DwmRoundedCorners).status.is_available() {
+        if round_corners
+            && probe
+                .probe(Capability::DwmRoundedCorners)
+                .status
+                .is_available()
+        {
             let corners = DWM_WINDOW_CORNER_PREFERENCE(2); // DWMWCP_ROUND
             let _ = DwmSetWindowAttribute(
                 hwnd_obj,
@@ -245,7 +249,13 @@ pub fn safe_apply_dwm_attributes(
 
     #[cfg(not(windows))]
     {
-        let _ = (hwnd, system_backdrop, dark_mode, round_corners, extend_frame);
+        let _ = (
+            hwnd,
+            system_backdrop,
+            dark_mode,
+            round_corners,
+            extend_frame,
+        );
         Ok(())
     }
 }
@@ -406,8 +416,7 @@ pub fn safe_register_shell_hook(hwnd: isize) -> CompatResult<bool> {
         type RegShellHookFn = unsafe extern "system" fn(HWND) -> BOOL;
 
         if let Ok(user32) = GetModuleHandleW(windows::core::w!("user32.dll")) {
-            if let Some(proc) =
-                GetProcAddress(user32, PCSTR(b"RegisterShellHookWindow\0".as_ptr()))
+            if let Some(proc) = GetProcAddress(user32, PCSTR(b"RegisterShellHookWindow\0".as_ptr()))
             {
                 let reg_hook: RegShellHookFn = std::mem::transmute(proc);
                 let res = reg_hook(HWND(hwnd as *mut c_void));

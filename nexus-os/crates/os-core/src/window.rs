@@ -1,15 +1,14 @@
 #[cfg(windows)]
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
 use std::hash::{Hash, Hasher};
 #[cfg(windows)]
-use windows::Win32::Foundation::{BOOL, HWND, RECT};
+use windows::Win32::Foundation::{HWND, RECT};
 #[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
-    DWMWA_TRANSITIONS_FORCEDISABLED,
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -156,15 +155,8 @@ impl WindowHandle {
     }
 
     pub fn disable_dwm_transitions(&self) -> CoreResult<()> {
-        let value: BOOL = BOOL(1);
-        unsafe {
-            DwmSetWindowAttribute(
-                self.0,
-                DWMWA_TRANSITIONS_FORCEDISABLED,
-                &value as *const _ as *const c_void,
-                std::mem::size_of::<BOOL>() as u32,
-            )?;
-        }
+        nx_compat::dispatch::safe_set_dwm_transitions(self.0 .0 as isize, false)
+            .map_err(|e| CoreError::Generic(e.to_string()))?;
         Ok(())
     }
 

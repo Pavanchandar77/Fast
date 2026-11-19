@@ -20,6 +20,7 @@ png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+nx-compat.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"

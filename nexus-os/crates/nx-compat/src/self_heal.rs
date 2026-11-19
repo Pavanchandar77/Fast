@@ -298,7 +298,12 @@ impl SelfHealingEngine {
                 CapabilityStatus::Degraded { ref fallback } => {
                     let fb = fallback.clone();
                     report.regressions.push((cap, fb.clone()));
-                    states_guard.insert(cap, FeatureState::Degraded { fallback: fb.clone() });
+                    states_guard.insert(
+                        cap,
+                        FeatureState::Degraded {
+                            fallback: fb.clone(),
+                        },
+                    );
                     self.notices.push_warning(
                         Some(cap),
                         "Feature Degraded",
@@ -311,7 +316,9 @@ impl SelfHealingEngine {
                 } => {
                     let r = reason.clone();
                     let fb = fallback.clone();
-                    report.regressions.push((cap, format!("{r} (fallback: {fb})")));
+                    report
+                        .regressions
+                        .push((cap, format!("{r} (fallback: {fb})")));
                     states_guard.insert(cap, FeatureState::Disabled { reason: r.clone() });
                     self.notices.push_warning(
                         Some(cap),
@@ -337,10 +344,7 @@ impl SelfHealingEngine {
                             self.notices.push_info(
                                 None,
                                 "Setting Re-applied",
-                                format!(
-                                    "Restored {} after Windows update.",
-                                    setting_name
-                                ),
+                                format!("Restored {} after Windows update.", setting_name),
                             );
                             report.settings_healed.push(setting_name);
                         }
@@ -353,9 +357,7 @@ impl SelfHealingEngine {
                                     setting_name, err
                                 ),
                             );
-                            report
-                                .settings_failed
-                                .push((setting_name, err.to_string()));
+                            report.settings_failed.push((setting_name, err.to_string()));
                         }
                     }
                 }
@@ -366,11 +368,7 @@ impl SelfHealingEngine {
     }
 
     /// Checks if a given setting has been reset by Windows.
-    fn verify_setting_reset(
-        &self,
-        setting: &ResilienceSetting,
-        platform: &dyn Platform,
-    ) -> bool {
+    fn verify_setting_reset(&self, setting: &ResilienceSetting, platform: &dyn Platform) -> bool {
         match setting {
             ResilienceSetting::RegistryDword {
                 hive,

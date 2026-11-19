@@ -10,6 +10,8 @@
 //!    features on later builds, and safely re-applies reset settings through the never-brick journal.
 //! 4. Mid-session restart resilience for `explorer.exe` (`TaskbarCreated`) and `dwm.exe` (`WM_DWMCOMPOSITIONCHANGED`).
 
+#![allow(clippy::manual_c_str_literals)]
+
 pub mod build;
 pub mod dispatch;
 pub mod error;
@@ -21,13 +23,15 @@ pub mod store;
 
 use std::sync::OnceLock;
 
-pub use build::{detect_build, detect_build_from_source, BuildSource, MockBuildSource, WindowsBuildInfo};
+pub use build::{
+    detect_build, detect_build_from_source, BuildSource, MockBuildSource, WindowsBuildInfo,
+};
 pub use dispatch::*;
 pub use error::{CompatError, CompatResult};
 pub use notice::{NoticeQueue, NoticeSeverity, ResilienceNotice};
 pub use probe::{
-    Capability, CapabilityStatus, LiveProbeProvider, MockProbeProvider, ProbeManager, ProbeProvider,
-    ProbeResult,
+    Capability, CapabilityStatus, LiveProbeProvider, MockProbeProvider, ProbeManager,
+    ProbeProvider, ProbeResult,
 };
 pub use restart::{
     DwmRestartReport, RestartConfig, RestartHandler, WM_DWMCOLORIZATIONCOLORCHANGED,

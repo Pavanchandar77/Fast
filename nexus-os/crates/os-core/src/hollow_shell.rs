@@ -33,6 +33,10 @@ impl HollowShellManager {
     /// Hides the native taskbar. The mutation is journaled before the windows
     /// are hidden, so a crash puts the taskbar back.
     pub fn suppress_taskbar() -> CoreResult<()> {
+        if !nx_compat::is_capability_operational(nx_compat::Capability::TaskbarSuppression) {
+            info!("Hollow Shell: Taskbar suppression capability probe degraded/unavailable; keeping native taskbar visible as fallback");
+            return Ok(());
+        }
         if TRAY_SUPPRESSED.load(Ordering::SeqCst) {
             return Ok(());
         }

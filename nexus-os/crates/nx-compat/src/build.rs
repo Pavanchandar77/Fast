@@ -101,8 +101,8 @@ pub struct LiveBuildSource;
 impl BuildSource for LiveBuildSource {
     #[cfg(windows)]
     fn detect_rtl_version(&self) -> Option<(u32, u32, u32)> {
-        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
         use windows::core::PCSTR;
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
         #[repr(C)]
         #[allow(non_snake_case)]
@@ -146,11 +146,11 @@ impl BuildSource for LiveBuildSource {
 
     #[cfg(windows)]
     fn detect_registry_fields(&self) -> RegistryBuildFields {
+        use windows::core::w;
         use windows::Win32::System::Registry::{
             RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
             REG_DWORD, REG_SZ,
         };
-        use windows::core::w;
 
         let mut fields = RegistryBuildFields::default();
         let mut hkey = HKEY::default();
@@ -203,8 +203,7 @@ impl BuildSource for LiveBuildSource {
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(u16_len);
-                fields.display_version =
-                    Some(String::from_utf16_lossy(&disp_buf[..trimmed_len]));
+                fields.display_version = Some(String::from_utf16_lossy(&disp_buf[..trimmed_len]));
             }
 
             // 3. CurrentBuild (SZ)
@@ -251,8 +250,7 @@ impl BuildSource for LiveBuildSource {
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(u16_len);
-                fields.product_name =
-                    Some(String::from_utf16_lossy(&prod_buf[..trimmed_len]));
+                fields.product_name = Some(String::from_utf16_lossy(&prod_buf[..trimmed_len]));
             }
 
             let _ = RegCloseKey(hkey);
@@ -324,9 +322,7 @@ pub fn detect_build_from_source(source: &dyn BuildSource) -> WindowsBuildInfo {
         }
     });
 
-    let edition = reg
-        .product_name
-        .unwrap_or_else(|| "Windows 11".to_string());
+    let edition = reg.product_name.unwrap_or_else(|| "Windows 11".to_string());
 
     WindowsBuildInfo {
         major,

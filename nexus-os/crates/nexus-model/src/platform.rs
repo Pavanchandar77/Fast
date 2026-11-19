@@ -68,6 +68,9 @@ pub trait Platform: Send + Sync {
 
     // Taskbar and AppBar mutations
     fn set_taskbar_visible(&self, visible: bool) -> Result<(), PlatformError>;
+    fn is_taskbar_visible(&self) -> bool {
+        true
+    }
     fn register_appbar(
         &self,
         id: WindowId,
@@ -120,11 +123,7 @@ pub trait Platform: Send + Sync {
     fn get_service_status(&self, _service_name: &str) -> Result<Option<bool>, PlatformError> {
         Ok(None)
     }
-    fn set_service_status(
-        &self,
-        _service_name: &str,
-        _running: bool,
-    ) -> Result<(), PlatformError> {
+    fn set_service_status(&self, _service_name: &str, _running: bool) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported)
     }
 }
@@ -520,6 +519,10 @@ impl Platform for FakePlatform {
         Ok(())
     }
 
+    fn is_taskbar_visible(&self) -> bool {
+        *self.taskbar_visible.read()
+    }
+
     fn register_appbar(
         &self,
         id: WindowId,
@@ -601,9 +604,10 @@ impl Platform for FakePlatform {
             name: name.to_string(),
             val,
         });
-        self.registry_dwords
-            .write()
-            .insert((hive.to_string(), subkey.to_string(), name.to_string()), val);
+        self.registry_dwords.write().insert(
+            (hive.to_string(), subkey.to_string(), name.to_string()),
+            val,
+        );
         Ok(())
     }
 
@@ -652,11 +656,7 @@ impl Platform for FakePlatform {
         Ok(self.service_status.read().get(service_name).copied())
     }
 
-    fn set_service_status(
-        &self,
-        service_name: &str,
-        running: bool,
-    ) -> Result<(), PlatformError> {
+    fn set_service_status(&self, service_name: &str, running: bool) -> Result<(), PlatformError> {
         self.calls.write().push(PlatformCall::SetServiceStatus {
             service_name: service_name.to_string(),
             running,
@@ -843,6 +843,9 @@ mod tests {
 
         assert_eq!(platform.get_service_status("DiagTrack").unwrap(), None);
         assert!(platform.set_service_status("DiagTrack", false).is_ok());
-        assert_eq!(platform.get_service_status("DiagTrack").unwrap(), Some(false));
+        assert_eq!(
+            platform.get_service_status("DiagTrack").unwrap(),
+            Some(false)
+        );
     }
 }

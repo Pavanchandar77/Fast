@@ -434,7 +434,8 @@ mod tests {
                 enabled: true,
             },
             Mutation::Setting {
-                key: "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection\\AllowTelemetry".into(),
+                key: "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection\\AllowTelemetry"
+                    .into(),
                 previous: "3".into(),
                 new: "0".into(),
             },

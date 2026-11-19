@@ -49,6 +49,13 @@ static MAIN_TID: AtomicU32 = AtomicU32::new(0);
 static KEYBINDINGS: parking_lot::RwLock<Option<nx_wm::KeybindingMap>> =
     parking_lot::RwLock::new(None);
 
+pub type MessageCallback = Box<dyn Fn(u32) + Send + Sync>;
+static MSG_CALLBACK: parking_lot::RwLock<Option<MessageCallback>> = parking_lot::RwLock::new(None);
+
+pub fn set_message_callback(cb: impl Fn(u32) + Send + Sync + 'static) {
+    *MSG_CALLBACK.write() = Some(Box::new(cb));
+}
+
 pub struct GlobalKeyboardHook {
     thread_handle: Option<JoinHandle<()>>,
     thread_id: u32,
@@ -71,6 +78,8 @@ pub fn pump_messages() -> bool {
         while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
             if msg.message == FAIL_SAFE_MSG {
                 saw = true;
+            } else if let Some(ref cb) = *MSG_CALLBACK.read() {
+                cb(msg.message);
             }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);

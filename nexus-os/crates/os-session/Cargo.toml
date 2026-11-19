@@ -29,6 +29,8 @@ path = "src/bin/vfs_daemon.rs"
 anyhow.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+nexus-journal = { path = "../nexus-journal" }
+nx-compat = { path = "../nx-compat" }
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
 os-governor = { path = "../os-governor" }
