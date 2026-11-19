@@ -1436,6 +1436,7 @@ name = "nexus-model"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nx-governor-policy",
  "parking_lot",
  "proptest",
  "serde",
@@ -1923,6 +1924,7 @@ version = "0.1.0"
 dependencies = [
  "nexus-journal",
  "nexus-model",
+ "nx-governor-policy",
  "thiserror 1.0.69",
  "tracing",
  "windows",
