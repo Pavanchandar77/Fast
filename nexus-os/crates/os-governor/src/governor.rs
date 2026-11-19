@@ -12,6 +12,7 @@ use crate::ram_purger::RamPurger;
 use nexus_model::governor::{
     GovernorPolicy, GovernorPolicyConfig, MemoryDecision, ProcessSnapshot,
 };
+use nexus_model::platform::Platform;
 use nx_governor_policy::{
     EcoQosState, GovernorEngine, GovernorPolicyConfig as SmartConfig, MutationPlan, Pid,
     PolicyMutation, PriorityClass as SmartPriority,
@@ -32,6 +33,7 @@ pub struct Governor {
     ram_purger: Arc<RamPurger>,
     app_nap: Arc<AppNapManager>,
     job_throttler: Arc<JobThrottleManager>,
+    platform: Arc<dyn Platform>,
     running: Arc<AtomicBool>,
 }
 
@@ -178,12 +180,20 @@ fn apply_plan(plan: &MutationPlan, cfg: &GovernorConfig, jobs: &JobThrottleManag
 
 impl Governor {
     pub fn new(config: Arc<RwLock<GovernorConfig>>) -> Self {
+        #[cfg(windows)]
+        let platform: Arc<dyn Platform> = Arc::new(os_core::platform::Win32Platform::new());
+        #[cfg(not(windows))]
+        let platform: Arc<dyn Platform> = Arc::new(nexus_model::platform::FakePlatform::new());
+        Self::with_platform(config, platform)
+    }
+
+    pub fn with_platform(config: Arc<RwLock<GovernorConfig>>, platform: Arc<dyn Platform>) -> Self {
         let policy_config = {
             let cfg = config.read();
             to_policy_config(&cfg)
         };
         let engine = Arc::new(RwLock::new(GovernorEngine::new(policy_config)));
-        let ram_purger = Arc::new(RamPurger::new(config.clone()));
+        let ram_purger = Arc::new(RamPurger::new(config.clone(), platform.clone()));
         let app_nap = Arc::new(AppNapManager::new(config.clone()));
         let job_throttler = Arc::new(JobThrottleManager::new());
         let running = Arc::new(AtomicBool::new(false));
@@ -194,6 +204,7 @@ impl Governor {
             ram_purger,
             app_nap,
             job_throttler,
+            platform,
             running,
         }
     }
@@ -318,11 +329,50 @@ impl Governor {
         self.job_throttler.on_process_exit(pid);
     }
 
+    /// True when the policy engine has entered Game Mode from a live snapshot.
+    pub fn is_game_mode_active(&self) -> bool {
+        self.engine.read().is_game_mode_active()
+    }
+
+    /// True when ProBalance currently holds a one-class demotion for `pid`.
+    pub fn is_process_demoted(&self, pid: u32) -> bool {
+        self.engine
+            .read()
+            .get_tracked_process(Pid(pid))
+            .map(|proc| proc.is_demoted)
+            .unwrap_or(false)
+    }
+
+    pub fn step_policy_tick(&self) -> MutationPlan {
+        let policy = {
+            let cfg = self.config.read();
+            to_policy_config(&cfg)
+        };
+        let plan = {
+            let mut engine = self.engine.write();
+            engine.update_config(policy);
+            let mut snapshot = match self.platform.get_system_snapshot() {
+                Ok(s) => s,
+                Err(_) => {
+                    let fg = engine.current_foreground_pid();
+                    nx_governor_policy::SystemSnapshot::new(0.0, now_ms()).with_foreground(fg)
+                }
+            };
+            if snapshot.foreground_pid.is_none() {
+                snapshot.foreground_pid = engine.current_foreground_pid();
+            }
+            engine.evaluate_tick(&snapshot)
+        };
+        self.execute_plan(&plan);
+        plan
+    }
+
     fn start_policy_worker(&self) {
-        let engine = self.engine.clone();
         let running = self.running.clone();
+        let engine = self.engine.clone();
         let config = self.config.clone();
         let job_throttler = self.job_throttler.clone();
+        let platform = self.platform.clone();
 
         std::thread::spawn(move || {
             while running.load(Ordering::Relaxed) {
@@ -335,12 +385,17 @@ impl Governor {
                 let plan = {
                     let mut engine = engine.write();
                     engine.update_config(policy);
-                    // Keep the foreground the event path already recorded.
-                    // An empty snapshot would otherwise look like focus loss
-                    // and undo the boost on every tick.
-                    let fg = engine.current_foreground_pid();
-                    let snapshot =
-                        nx_governor_policy::SystemSnapshot::new(15.0, now_ms()).with_foreground(fg);
+                    let mut snapshot = match platform.get_system_snapshot() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let fg = engine.current_foreground_pid();
+                            nx_governor_policy::SystemSnapshot::new(0.0, now_ms())
+                                .with_foreground(fg)
+                        }
+                    };
+                    if snapshot.foreground_pid.is_none() {
+                        snapshot.foreground_pid = engine.current_foreground_pid();
+                    }
                     engine.evaluate_tick(&snapshot)
                 };
 
@@ -357,5 +412,100 @@ impl Drop for Governor {
         self.refresh_engine();
         let plan = self.engine.write().reset_all(now_ms());
         self.execute_plan(&plan);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexus_model::layout::WindowId;
+    use nexus_model::platform::FakePlatform;
+    use nx_governor_policy::PolicyMutation;
+
+    fn test_governor(platform: Arc<dyn Platform>) -> Governor {
+        let cfg = GovernorConfig {
+            pro_balance_enabled: true,
+            game_mode_auto_detect: true,
+            dry_run: true,
+            ..GovernorConfig::default()
+        };
+        Governor::with_platform(Arc::new(RwLock::new(cfg)), platform)
+    }
+
+    #[test]
+    fn fake_platform_probalance_throttles_cpu_hog() {
+        let platform = Arc::new(FakePlatform::new());
+        platform.insert_process_detailed(500, "ffmpeg.exe", 75.0, false);
+        let governor = test_governor(platform);
+
+        let plan1 = governor.step_policy_tick();
+        assert!(
+            plan1.is_empty(),
+            "ProBalance needs two sustained high-CPU ticks before demoting"
+        );
+        assert!(!governor.is_process_demoted(500));
+
+        let plan2 = governor.step_policy_tick();
+        let demoted = plan2.mutations.iter().any(|mutation| {
+            matches!(
+                mutation,
+                PolicyMutation::SetPriorityClass {
+                    pid,
+                    previous: SmartPriority::Normal,
+                    new: SmartPriority::BelowNormal,
+                } if pid.as_u32() == 500
+            )
+        });
+        assert!(
+            demoted,
+            "expected ProBalance demotion of ffmpeg.exe, got {plan2:?}"
+        );
+        assert!(governor.is_process_demoted(500));
+    }
+
+    #[test]
+    fn fake_platform_fullscreen_foreground_triggers_game_mode() {
+        let platform = Arc::new(FakePlatform::new());
+        platform.insert_process_detailed(100, "eldenring.exe", 40.0, true);
+        platform
+            .set_foreground_window(WindowId::new(100))
+            .expect("set foreground");
+        let governor = test_governor(platform);
+
+        let _plan = governor.step_policy_tick();
+        assert!(
+            governor.is_game_mode_active(),
+            "fullscreen foreground game window must enter Game Mode"
+        );
+    }
+
+    #[test]
+    fn fake_platform_game_mode_pauses_probalance() {
+        let platform = Arc::new(FakePlatform::new());
+        platform.insert_process_detailed(100, "eldenring.exe", 55.0, true);
+        platform.insert_process_detailed(500, "ffmpeg.exe", 90.0, false);
+        platform
+            .set_foreground_window(WindowId::new(100))
+            .expect("set foreground");
+        let governor = test_governor(platform);
+
+        let _ = governor.step_policy_tick();
+        let plan = governor.step_policy_tick();
+        assert!(governor.is_game_mode_active());
+        let hog_demoted = plan.mutations.iter().any(|mutation| {
+            matches!(
+                mutation,
+                PolicyMutation::SetPriorityClass {
+                    pid,
+                    new: SmartPriority::BelowNormal,
+                    ..
+                } if pid.as_u32() == 500
+            )
+        });
+        assert!(
+            !hog_demoted,
+            "Game Mode must pause ProBalance demotions, got {plan:?}"
+        );
+        assert!(!governor.is_process_demoted(500));
     }
 }

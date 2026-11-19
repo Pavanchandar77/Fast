@@ -26,6 +26,40 @@ pub enum AppBarEdge {
     Right,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PowerProfile {
+    EcoSilent,
+    Balanced,
+    MaxCompute,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RegistryValueData {
+    Dword(u32),
+    Qword(u64),
+    Sz(String),
+    Binary(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServiceRunState {
+    Running,
+    Stopped,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PrivacyToggle {
+    Telemetry,
+    Location,
+    Camera,
+    Microphone,
+    AdvertisingId,
+    ActivityHistory,
+    Copilot,
+    Recall,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlatformError {
     #[error("Window not found: {0:?}")]
@@ -53,6 +87,8 @@ pub trait Platform: Send + Sync {
     fn get_window_rect(&self, id: WindowId) -> Result<Rect, PlatformError>;
     fn is_window_visible(&self, id: WindowId) -> bool;
     fn is_window_cloaked(&self, id: WindowId) -> bool;
+    fn set_always_on_top(&self, id: WindowId, topmost: bool) -> Result<(), PlatformError>;
+    fn is_always_on_top(&self, id: WindowId) -> bool;
 
     // Process and governor mutations
     fn set_process_priority(
@@ -60,11 +96,50 @@ pub trait Platform: Send + Sync {
         pid: u32,
         priority: ProcessPriority,
     ) -> Result<(), PlatformError>;
+    fn set_process_affinity(&self, pid: u32, affinity_mask: u64) -> Result<(), PlatformError>;
+    fn get_process_affinity(&self, pid: u32) -> Result<u64, PlatformError>;
     fn set_job_cpu_rate_cap(&self, pid: u32, rate_percent: u32) -> Result<(), PlatformError>;
     fn remove_job_cpu_rate_cap(&self, pid: u32) -> Result<(), PlatformError>;
     fn suspend_process(&self, pid: u32) -> Result<(), PlatformError>;
     fn resume_process(&self, pid: u32) -> Result<(), PlatformError>;
     fn empty_process_working_set(&self, pid: u32) -> Result<(), PlatformError>;
+
+    // Power, registry, service, privacy, and file system mutations
+    fn set_power_profile(&self, profile: PowerProfile) -> Result<(), PlatformError>;
+    fn get_power_profile(&self) -> Result<PowerProfile, PlatformError>;
+    fn set_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+        value: RegistryValueData,
+    ) -> Result<(), PlatformError>;
+    fn get_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<Option<RegistryValueData>, PlatformError>;
+    fn delete_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<(), PlatformError>;
+    fn set_service_state(
+        &self,
+        service_name: &str,
+        state: ServiceRunState,
+    ) -> Result<(), PlatformError>;
+    fn get_service_state(
+        &self,
+        service_name: &str,
+    ) -> Result<Option<ServiceRunState>, PlatformError>;
+    fn set_privacy_toggle(&self, toggle: PrivacyToggle, enabled: bool)
+        -> Result<(), PlatformError>;
+    fn get_privacy_toggle(&self, toggle: PrivacyToggle) -> Result<bool, PlatformError>;
+    fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError>;
+    fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError>;
 
     // Taskbar and AppBar mutations
     fn set_taskbar_visible(&self, visible: bool) -> Result<(), PlatformError>;
@@ -81,6 +156,9 @@ pub trait Platform: Send + Sync {
     fn register_hotkey(&self, id: u32, modifiers: Modifiers, key: Key)
         -> Result<(), PlatformError>;
     fn unregister_hotkey(&self, id: u32) -> Result<(), PlatformError>;
+
+    // Real process sampling and telemetry
+    fn get_system_snapshot(&self) -> Result<nx_governor_policy::SystemSnapshot, PlatformError>;
 }
 
 /// Historical record of a mutation invoked on the platform
@@ -152,6 +230,40 @@ pub enum PlatformCall {
     UnregisterHotkey {
         id: u32,
     },
+    SetAlwaysOnTop {
+        id: WindowId,
+        topmost: bool,
+    },
+    SetProcessAffinity {
+        pid: u32,
+        affinity_mask: u64,
+    },
+    SetPowerProfile {
+        profile: PowerProfile,
+    },
+    SetRegistryValue {
+        hive: String,
+        subkey: String,
+        value_name: String,
+        value: RegistryValueData,
+    },
+    DeleteRegistryValue {
+        hive: String,
+        subkey: String,
+        value_name: String,
+    },
+    SetServiceState {
+        service_name: String,
+        state: ServiceRunState,
+    },
+    SetPrivacyToggle {
+        toggle: PrivacyToggle,
+        enabled: bool,
+    },
+    WriteSystemFile {
+        path: String,
+        content: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -160,18 +272,22 @@ pub struct FakeWindowState {
     pub visible: bool,
     pub cloaked: bool,
     pub dwm_transitions: bool,
+    pub always_on_top: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct FakeProcessState {
+    pub name: String,
     pub priority: ProcessPriority,
     pub cpu_cap: Option<u32>,
     pub suspended: bool,
     pub working_set_purged: bool,
+    pub affinity: Option<u64>,
+    pub cpu_usage_pct: f32,
+    pub is_fullscreen: bool,
 }
 
 /// In-memory mock platform for unit and integration testing without Win32.
-#[derive(Default)]
 pub struct FakePlatform {
     pub windows: RwLock<HashMap<WindowId, FakeWindowState>>,
     pub processes: RwLock<HashMap<u32, FakeProcessState>>,
@@ -180,7 +296,19 @@ pub struct FakePlatform {
     pub timer_resolution: RwLock<Option<u32>>,
     pub hotkeys: RwLock<HashMap<u32, (Modifiers, Key)>>,
     pub foreground_window: RwLock<Option<WindowId>>,
+    pub power_profile: RwLock<PowerProfile>,
+    pub registry: RwLock<HashMap<(String, String, String), RegistryValueData>>,
+    pub services: RwLock<HashMap<String, ServiceRunState>>,
+    pub privacy_toggles: RwLock<HashMap<PrivacyToggle, bool>>,
+    pub system_files: RwLock<HashMap<String, Vec<u8>>>,
+    pub system_snapshot: RwLock<Option<nx_governor_policy::SystemSnapshot>>,
     pub calls: RwLock<Vec<PlatformCall>>,
+}
+
+impl Default for FakePlatform {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FakePlatform {
@@ -193,6 +321,12 @@ impl FakePlatform {
             timer_resolution: RwLock::new(None),
             hotkeys: RwLock::new(HashMap::new()),
             foreground_window: RwLock::new(None),
+            power_profile: RwLock::new(PowerProfile::Balanced),
+            registry: RwLock::new(HashMap::new()),
+            services: RwLock::new(HashMap::new()),
+            privacy_toggles: RwLock::new(HashMap::new()),
+            system_files: RwLock::new(HashMap::new()),
+            system_snapshot: RwLock::new(None),
             calls: RwLock::new(Vec::new()),
         }
     }
@@ -205,6 +339,7 @@ impl FakePlatform {
                 visible,
                 cloaked: false,
                 dwm_transitions: true,
+                always_on_top: false,
             },
         );
     }
@@ -213,12 +348,42 @@ impl FakePlatform {
         self.processes.write().insert(
             pid,
             FakeProcessState {
+                name: format!("process_{pid}.exe"),
                 priority: ProcessPriority::Normal,
                 cpu_cap: None,
                 suspended: false,
                 working_set_purged: false,
+                affinity: None,
+                cpu_usage_pct: 0.0,
+                is_fullscreen: false,
             },
         );
+    }
+
+    pub fn insert_process_detailed(
+        &self,
+        pid: u32,
+        name: impl Into<String>,
+        cpu_usage_pct: f32,
+        is_fullscreen: bool,
+    ) {
+        self.processes.write().insert(
+            pid,
+            FakeProcessState {
+                name: name.into(),
+                priority: ProcessPriority::Normal,
+                cpu_cap: None,
+                suspended: false,
+                working_set_purged: false,
+                affinity: None,
+                cpu_usage_pct,
+                is_fullscreen,
+            },
+        );
+    }
+
+    pub fn set_system_snapshot(&self, snapshot: nx_governor_policy::SystemSnapshot) {
+        *self.system_snapshot.write() = Some(snapshot);
     }
 
     pub fn calls(&self) -> Vec<PlatformCall> {
@@ -265,6 +430,7 @@ impl Platform for FakePlatform {
             visible: true,
             cloaked: false,
             dwm_transitions: true,
+            always_on_top: false,
         });
         win.rect = rect;
         Ok(())
@@ -278,6 +444,7 @@ impl Platform for FakePlatform {
             visible: true,
             cloaked: false,
             dwm_transitions: true,
+            always_on_top: false,
         });
         win.visible = true;
         Ok(())
@@ -301,6 +468,7 @@ impl Platform for FakePlatform {
             visible: true,
             cloaked: false,
             dwm_transitions: true,
+            always_on_top: false,
         });
         win.cloaked = cloaked;
         Ok(())
@@ -364,10 +532,14 @@ impl Platform for FakePlatform {
             .push(PlatformCall::SetProcessPriority { pid, priority });
         let mut guard = self.processes.write();
         let proc = guard.entry(pid).or_insert(FakeProcessState {
+            name: format!("process_{pid}.exe"),
             priority,
             cpu_cap: None,
             suspended: false,
             working_set_purged: false,
+            affinity: None,
+            cpu_usage_pct: 0.0,
+            is_fullscreen: false,
         });
         proc.priority = priority;
         Ok(())
@@ -379,10 +551,14 @@ impl Platform for FakePlatform {
             .push(PlatformCall::SetJobCpuRateCap { pid, rate_percent });
         let mut guard = self.processes.write();
         let proc = guard.entry(pid).or_insert(FakeProcessState {
+            name: format!("process_{pid}.exe"),
             priority: ProcessPriority::Normal,
             cpu_cap: Some(rate_percent),
             suspended: false,
             working_set_purged: false,
+            affinity: None,
+            cpu_usage_pct: 0.0,
+            is_fullscreen: false,
         });
         proc.cpu_cap = Some(rate_percent);
         Ok(())
@@ -404,10 +580,14 @@ impl Platform for FakePlatform {
             .push(PlatformCall::SuspendProcess { pid });
         let mut guard = self.processes.write();
         let proc = guard.entry(pid).or_insert(FakeProcessState {
+            name: format!("process_{pid}.exe"),
             priority: ProcessPriority::Normal,
             cpu_cap: None,
             suspended: true,
             working_set_purged: false,
+            affinity: None,
+            cpu_usage_pct: 0.0,
+            is_fullscreen: false,
         });
         proc.suspended = true;
         Ok(())
@@ -487,6 +667,223 @@ impl Platform for FakePlatform {
             .push(PlatformCall::UnregisterHotkey { id });
         self.hotkeys.write().remove(&id);
         Ok(())
+    }
+
+    fn set_always_on_top(&self, id: WindowId, topmost: bool) -> Result<(), PlatformError> {
+        self.calls
+            .write()
+            .push(PlatformCall::SetAlwaysOnTop { id, topmost });
+        let mut guard = self.windows.write();
+        let win = guard.entry(id).or_insert(FakeWindowState {
+            rect: Rect::new(0, 0, 800, 600),
+            visible: true,
+            cloaked: false,
+            dwm_transitions: true,
+            always_on_top: false,
+        });
+        win.always_on_top = topmost;
+        Ok(())
+    }
+
+    fn is_always_on_top(&self, id: WindowId) -> bool {
+        self.windows
+            .read()
+            .get(&id)
+            .map(|w| w.always_on_top)
+            .unwrap_or(false)
+    }
+
+    fn set_process_affinity(&self, pid: u32, affinity_mask: u64) -> Result<(), PlatformError> {
+        self.calls
+            .write()
+            .push(PlatformCall::SetProcessAffinity { pid, affinity_mask });
+        let mut guard = self.processes.write();
+        let proc = guard.entry(pid).or_insert(FakeProcessState {
+            name: format!("process_{pid}.exe"),
+            priority: ProcessPriority::Normal,
+            cpu_cap: None,
+            suspended: false,
+            working_set_purged: false,
+            affinity: Some(affinity_mask),
+            cpu_usage_pct: 0.0,
+            is_fullscreen: false,
+        });
+        proc.affinity = Some(affinity_mask);
+        Ok(())
+    }
+
+    fn get_process_affinity(&self, pid: u32) -> Result<u64, PlatformError> {
+        self.processes
+            .read()
+            .get(&pid)
+            .and_then(|p| p.affinity)
+            .ok_or(PlatformError::ProcessNotFound(pid))
+    }
+
+    fn set_power_profile(&self, profile: PowerProfile) -> Result<(), PlatformError> {
+        self.calls
+            .write()
+            .push(PlatformCall::SetPowerProfile { profile });
+        *self.power_profile.write() = profile;
+        Ok(())
+    }
+
+    fn get_power_profile(&self) -> Result<PowerProfile, PlatformError> {
+        Ok(*self.power_profile.read())
+    }
+
+    fn set_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+        value: RegistryValueData,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::SetRegistryValue {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            value_name: value_name.to_string(),
+            value: value.clone(),
+        });
+        self.registry.write().insert(
+            (hive.to_string(), subkey.to_string(), value_name.to_string()),
+            value,
+        );
+        Ok(())
+    }
+
+    fn get_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<Option<RegistryValueData>, PlatformError> {
+        Ok(self
+            .registry
+            .read()
+            .get(&(hive.to_string(), subkey.to_string(), value_name.to_string()))
+            .cloned())
+    }
+
+    fn delete_registry_value(
+        &self,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::DeleteRegistryValue {
+            hive: hive.to_string(),
+            subkey: subkey.to_string(),
+            value_name: value_name.to_string(),
+        });
+        self.registry.write().remove(&(
+            hive.to_string(),
+            subkey.to_string(),
+            value_name.to_string(),
+        ));
+        Ok(())
+    }
+
+    fn set_service_state(
+        &self,
+        service_name: &str,
+        state: ServiceRunState,
+    ) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::SetServiceState {
+            service_name: service_name.to_string(),
+            state,
+        });
+        self.services
+            .write()
+            .insert(service_name.to_string(), state);
+        Ok(())
+    }
+
+    fn get_service_state(
+        &self,
+        service_name: &str,
+    ) -> Result<Option<ServiceRunState>, PlatformError> {
+        Ok(self.services.read().get(service_name).copied())
+    }
+
+    fn set_privacy_toggle(
+        &self,
+        toggle: PrivacyToggle,
+        enabled: bool,
+    ) -> Result<(), PlatformError> {
+        self.calls
+            .write()
+            .push(PlatformCall::SetPrivacyToggle { toggle, enabled });
+        self.privacy_toggles.write().insert(toggle, enabled);
+        Ok(())
+    }
+
+    fn get_privacy_toggle(&self, toggle: PrivacyToggle) -> Result<bool, PlatformError> {
+        Ok(self
+            .privacy_toggles
+            .read()
+            .get(&toggle)
+            .copied()
+            .unwrap_or(false))
+    }
+
+    fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError> {
+        self.calls.write().push(PlatformCall::WriteSystemFile {
+            path: path.to_string(),
+            content: content.to_vec(),
+        });
+        self.system_files
+            .write()
+            .insert(path.to_string(), content.to_vec());
+        Ok(())
+    }
+
+    fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError> {
+        self.system_files
+            .read()
+            .get(path)
+            .cloned()
+            .ok_or_else(|| PlatformError::OperationFailed(format!("File not found: {path}")))
+    }
+
+    fn get_system_snapshot(&self) -> Result<nx_governor_policy::SystemSnapshot, PlatformError> {
+        if let Some(s) = self.system_snapshot.read().clone() {
+            return Ok(s);
+        }
+        let procs = self.processes.read();
+        let mut samples = Vec::new();
+        let mut total_cpu = 0.0f32;
+        let fg_id = *self.foreground_window.read();
+        let fg_pid = fg_id.map(|w| w.0 as u32);
+        let mut fullscreen_pid = None;
+
+        for (&pid, proc) in procs.iter() {
+            let is_fg = fg_pid == Some(pid);
+            let is_fs = proc.is_fullscreen;
+            if is_fs {
+                fullscreen_pid = Some(nx_governor_policy::Pid(pid));
+            }
+            total_cpu += proc.cpu_usage_pct;
+            let sample = nx_governor_policy::ProcessSample::new(
+                nx_governor_policy::Pid(pid),
+                proc.name.clone(),
+                proc.cpu_usage_pct,
+            )
+            .with_foreground(is_fg)
+            .with_fullscreen(is_fs);
+            samples.push(sample);
+        }
+        let mut snap = nx_governor_policy::SystemSnapshot::new(
+            total_cpu.clamp(0.0, 100.0),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+        snap.foreground_pid = fg_pid.map(nx_governor_policy::Pid);
+        snap.fullscreen_pid = fullscreen_pid;
+        snap.processes = samples;
+        Ok(snap)
     }
 }
 
@@ -632,5 +1029,127 @@ mod tests {
 
         let err3 = PlatformError::Unsupported;
         assert_eq!(err3.to_string(), "Platform operation unsupported");
+    }
+
+    #[test]
+    fn test_fake_platform_extended_mutations() {
+        let platform = FakePlatform::new();
+        let w = WindowId::new(77);
+        let pid = 4321;
+        platform.insert_window(w, Rect::new(0, 0, 800, 600), true);
+        platform.insert_process(pid);
+
+        // Always on top
+        assert!(!platform.is_always_on_top(w));
+        assert!(platform.set_always_on_top(w, true).is_ok());
+        assert!(platform.is_always_on_top(w));
+        assert!(platform.has_call(&PlatformCall::SetAlwaysOnTop {
+            id: w,
+            topmost: true
+        }));
+
+        // Affinity
+        assert!(platform.set_process_affinity(pid, 0x05).is_ok());
+        assert_eq!(platform.get_process_affinity(pid).unwrap(), 0x05);
+        assert!(platform.has_call(&PlatformCall::SetProcessAffinity {
+            pid,
+            affinity_mask: 0x05
+        }));
+
+        // Power Profile
+        assert_eq!(
+            platform.get_power_profile().unwrap(),
+            PowerProfile::Balanced
+        );
+        assert!(platform.set_power_profile(PowerProfile::MaxCompute).is_ok());
+        assert_eq!(
+            platform.get_power_profile().unwrap(),
+            PowerProfile::MaxCompute
+        );
+        assert!(platform.has_call(&PlatformCall::SetPowerProfile {
+            profile: PowerProfile::MaxCompute
+        }));
+
+        // Registry
+        assert!(platform
+            .set_registry_value(
+                "HKLM",
+                r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+                "AllowTelemetry",
+                RegistryValueData::Dword(0)
+            )
+            .is_ok());
+        assert_eq!(
+            platform
+                .get_registry_value(
+                    "HKLM",
+                    r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+                    "AllowTelemetry"
+                )
+                .unwrap(),
+            Some(RegistryValueData::Dword(0))
+        );
+        assert!(platform
+            .delete_registry_value(
+                "HKLM",
+                r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+                "AllowTelemetry"
+            )
+            .is_ok());
+        assert_eq!(
+            platform
+                .get_registry_value(
+                    "HKLM",
+                    r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+                    "AllowTelemetry"
+                )
+                .unwrap(),
+            None
+        );
+
+        // Services
+        assert!(platform
+            .set_service_state("DiagTrack", ServiceRunState::Disabled)
+            .is_ok());
+        assert_eq!(
+            platform.get_service_state("DiagTrack").unwrap(),
+            Some(ServiceRunState::Disabled)
+        );
+
+        // Privacy toggles
+        assert!(!platform
+            .get_privacy_toggle(PrivacyToggle::Location)
+            .unwrap());
+        assert!(platform
+            .set_privacy_toggle(PrivacyToggle::Location, true)
+            .is_ok());
+        assert!(platform
+            .get_privacy_toggle(PrivacyToggle::Location)
+            .unwrap());
+
+        // System files
+        assert!(platform
+            .write_system_file(r"C:\Windows\System32\drivers\etc\hosts", b"127.0.0.1")
+            .is_ok());
+        assert_eq!(
+            platform
+                .read_system_file(r"C:\Windows\System32\drivers\etc\hosts")
+                .unwrap(),
+            b"127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn test_fake_platform_system_snapshot() {
+        let platform = FakePlatform::new();
+        platform.insert_process_detailed(100, "game.exe", 45.0, true);
+        platform.insert_process_detailed(200, "hog.exe", 85.0, false);
+        platform.set_foreground_window(WindowId::new(100)).unwrap();
+
+        let snap = platform.get_system_snapshot().unwrap();
+        assert_eq!(snap.foreground_pid, Some(nx_governor_policy::Pid(100)));
+        assert_eq!(snap.fullscreen_pid, Some(nx_governor_policy::Pid(100)));
+        assert_eq!(snap.processes.len(), 2);
+        assert!(snap.total_cpu_pct >= 99.0);
     }
 }

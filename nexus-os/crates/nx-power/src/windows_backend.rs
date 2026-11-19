@@ -4,11 +4,10 @@ use crate::types::WindowId;
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use nexus_model::layout::WindowId as ModelWindowId;
+    use nexus_model::platform::Platform;
+    use os_core::platform::Win32Platform;
     use windows::Win32::Foundation::{BOOL, HWND};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE,
-    };
 
     #[link(name = "user32")]
     extern "system" {
@@ -17,21 +16,9 @@ mod imp {
     }
 
     pub fn set_always_on_top(window_id: WindowId, topmost: bool) -> PowerResult<()> {
-        let hwnd = HWND(window_id.as_raw() as *mut _);
-        let insert_after = if topmost {
-            HWND_TOPMOST
-        } else {
-            HWND_NOTOPMOST
-        };
-
-        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
-        let success = unsafe { SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags) };
-
-        if success.is_ok() {
-            Ok(())
-        } else {
-            Err(crate::error::PowerError::WindowNotFound(window_id))
-        }
+        Win32Platform::new()
+            .set_always_on_top(ModelWindowId::new(window_id.0), topmost)
+            .map_err(|_| crate::error::PowerError::WindowNotFound(window_id))
     }
 
     /// Registers a clipboard listener HWND via AddClipboardFormatListener.

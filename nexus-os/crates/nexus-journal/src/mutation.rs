@@ -110,6 +110,49 @@ pub enum Mutation {
         previous_enabled: bool,
         enabled: bool,
     },
+    /// `SetProcessAffinityMask` for `pid`.
+    ProcessAffinity {
+        pid: u32,
+        previous_mask: u64,
+        new_mask: u64,
+    },
+    /// Window topmost pin (`SetWindowPos` HWND_TOPMOST / HWND_NOTOPMOST).
+    AlwaysOnTop {
+        hwnd: u64,
+        previous: bool,
+        new: bool,
+    },
+    /// Power profile / plan change (0 = EcoSilent, 1 = Balanced, 2 = MaxCompute).
+    PowerPlan {
+        previous_profile: u8,
+        new_profile: u8,
+    },
+    /// Registry key value set/delete.
+    RegistryValue {
+        hive: String,
+        subkey: String,
+        value_name: String,
+        previous: Option<Vec<u8>>,
+        new: Option<Vec<u8>>,
+    },
+    /// System service state modification.
+    ServiceState {
+        service_name: String,
+        previous_state: u8,
+        new_state: u8,
+    },
+    /// Privacy setting toggle.
+    PrivacyToggle {
+        toggle_id: u8,
+        previous_enabled: bool,
+        enabled: bool,
+    },
+    /// File operations that change system state (e.g. hosts file).
+    SystemFile {
+        path: String,
+        previous_content: Option<Vec<u8>>,
+        new_content: Option<Vec<u8>>,
+    },
 }
 
 const KIND_PRIORITY: u8 = 1;
@@ -122,6 +165,13 @@ const KIND_CLOAK: u8 = 7;
 const KIND_HIDE: u8 = 8;
 const KIND_POSITION: u8 = 9;
 const KIND_ECOQOS: u8 = 10;
+const KIND_AFFINITY: u8 = 11;
+const KIND_ALWAYS_ON_TOP: u8 = 12;
+const KIND_POWER_PLAN: u8 = 13;
+const KIND_REGISTRY: u8 = 14;
+const KIND_SERVICE: u8 = 15;
+const KIND_PRIVACY: u8 = 16;
+const KIND_SYSTEM_FILE: u8 = 17;
 
 struct Writer {
     buf: Vec<u8>,
@@ -153,6 +203,25 @@ impl Writer {
         self.i32(r.y);
         self.i32(r.width);
         self.i32(r.height);
+    }
+
+    fn string(&mut self, s: &str) {
+        let bytes = s.as_bytes();
+        self.u32(bytes.len() as u32);
+        self.buf.extend_from_slice(bytes);
+    }
+
+    fn opt_bytes(&mut self, opt: &Option<Vec<u8>>) {
+        match opt {
+            Some(bytes) => {
+                self.u8(1);
+                self.u32(bytes.len() as u32);
+                self.buf.extend_from_slice(bytes);
+            }
+            None => {
+                self.u8(0);
+            }
+        }
     }
 }
 
@@ -208,6 +277,23 @@ impl<'a> Reader<'a> {
             width: self.i32()?,
             height: self.i32()?,
         })
+    }
+
+    fn string(&mut self) -> Option<String> {
+        let len = self.u32()? as usize;
+        let bytes = self.bytes(len)?;
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+
+    fn opt_bytes(&mut self) -> Option<Option<Vec<u8>>> {
+        let has = self.u8()?;
+        if has == 1 {
+            let len = self.u32()? as usize;
+            let bytes = self.bytes(len)?;
+            Some(Some(bytes.to_vec()))
+        } else {
+            Some(None)
+        }
     }
 }
 
@@ -288,6 +374,78 @@ pub fn encode_payload(mutation: &Mutation) -> Vec<u8> {
             w.u8(u8::from(*previous_enabled));
             w.u8(u8::from(*enabled));
         }
+        Mutation::ProcessAffinity {
+            pid,
+            previous_mask,
+            new_mask,
+        } => {
+            w.u8(KIND_AFFINITY);
+            w.u32(*pid);
+            w.u64(*previous_mask);
+            w.u64(*new_mask);
+        }
+        Mutation::AlwaysOnTop {
+            hwnd,
+            previous,
+            new,
+        } => {
+            w.u8(KIND_ALWAYS_ON_TOP);
+            w.u64(*hwnd);
+            w.u8(u8::from(*previous));
+            w.u8(u8::from(*new));
+        }
+        Mutation::PowerPlan {
+            previous_profile,
+            new_profile,
+        } => {
+            w.u8(KIND_POWER_PLAN);
+            w.u8(*previous_profile);
+            w.u8(*new_profile);
+        }
+        Mutation::RegistryValue {
+            hive,
+            subkey,
+            value_name,
+            previous,
+            new,
+        } => {
+            w.u8(KIND_REGISTRY);
+            w.string(hive);
+            w.string(subkey);
+            w.string(value_name);
+            w.opt_bytes(previous);
+            w.opt_bytes(new);
+        }
+        Mutation::ServiceState {
+            service_name,
+            previous_state,
+            new_state,
+        } => {
+            w.u8(KIND_SERVICE);
+            w.string(service_name);
+            w.u8(*previous_state);
+            w.u8(*new_state);
+        }
+        Mutation::PrivacyToggle {
+            toggle_id,
+            previous_enabled,
+            enabled,
+        } => {
+            w.u8(KIND_PRIVACY);
+            w.u8(*toggle_id);
+            w.u8(u8::from(*previous_enabled));
+            w.u8(u8::from(*enabled));
+        }
+        Mutation::SystemFile {
+            path,
+            previous_content,
+            new_content,
+        } => {
+            w.u8(KIND_SYSTEM_FILE);
+            w.string(path);
+            w.opt_bytes(previous_content);
+            w.opt_bytes(new_content);
+        }
     }
     w.buf
 }
@@ -335,6 +493,42 @@ pub fn decode_payload(bytes: &[u8]) -> Option<Mutation> {
             pid: r.u32()?,
             previous_enabled: r.u8()? == 1,
             enabled: r.u8()? == 1,
+        },
+        KIND_AFFINITY => Mutation::ProcessAffinity {
+            pid: r.u32()?,
+            previous_mask: r.u64()?,
+            new_mask: r.u64()?,
+        },
+        KIND_ALWAYS_ON_TOP => Mutation::AlwaysOnTop {
+            hwnd: r.u64()?,
+            previous: r.u8()? == 1,
+            new: r.u8()? == 1,
+        },
+        KIND_POWER_PLAN => Mutation::PowerPlan {
+            previous_profile: r.u8()?,
+            new_profile: r.u8()?,
+        },
+        KIND_REGISTRY => Mutation::RegistryValue {
+            hive: r.string()?,
+            subkey: r.string()?,
+            value_name: r.string()?,
+            previous: r.opt_bytes()?,
+            new: r.opt_bytes()?,
+        },
+        KIND_SERVICE => Mutation::ServiceState {
+            service_name: r.string()?,
+            previous_state: r.u8()?,
+            new_state: r.u8()?,
+        },
+        KIND_PRIVACY => Mutation::PrivacyToggle {
+            toggle_id: r.u8()?,
+            previous_enabled: r.u8()? == 1,
+            enabled: r.u8()? == 1,
+        },
+        KIND_SYSTEM_FILE => Mutation::SystemFile {
+            path: r.string()?,
+            previous_content: r.opt_bytes()?,
+            new_content: r.opt_bytes()?,
         },
         _ => return None,
     };
@@ -402,6 +596,44 @@ mod tests {
                 pid: 11,
                 previous_enabled: false,
                 enabled: true,
+            },
+            Mutation::ProcessAffinity {
+                pid: 42,
+                previous_mask: 0x0F,
+                new_mask: 0x03,
+            },
+            Mutation::AlwaysOnTop {
+                hwnd: 0x1234,
+                previous: false,
+                new: true,
+            },
+            Mutation::PowerPlan {
+                previous_profile: 1,
+                new_profile: 2,
+            },
+            Mutation::RegistryValue {
+                hive: "HKLM".into(),
+                subkey: r"SOFTWARE\Policies\Microsoft\Windows\DataCollection".into(),
+                value_name: "AllowTelemetry".into(),
+                previous: Some(vec![1, 0, 0, 0]),
+                new: Some(vec![0, 0, 0, 0]),
+            },
+            Mutation::ServiceState {
+                service_name: "DiagTrack".into(),
+                previous_state: 1,
+                new_state: 0,
+            },
+            Mutation::PrivacyToggle {
+                toggle_id: 3,
+                previous_enabled: true,
+                enabled: false,
+            },
+            Mutation::SystemFile {
+                path: r"C:\Windows\System32\drivers\etc\hosts".into(),
+                previous_content: Some(b"127.0.0.1 localhost\n".to_vec()),
+                new_content: Some(
+                    b"127.0.0.1 localhost\n0.0.0.0 telemetry.microsoft.com\n".to_vec(),
+                ),
             },
         ]
     }
