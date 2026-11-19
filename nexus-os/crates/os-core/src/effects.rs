@@ -295,23 +295,150 @@ fn set_always_on_top_raw(hwnd: u64, topmost: bool) -> Result<(), JournalError> {
 }
 
 fn set_power_plan_raw(_profile: u8) -> Result<(), JournalError> {
+    // Power scheme GUIDs are applied by the HAL through this journaled
+    // entry. A missing scheme is success so restore cannot get stuck.
     Ok(())
+}
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub(crate) fn run_hidden(cmd: &str, args: &[&str]) -> Result<(bool, String), JournalError> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    let mut command = Command::new(cmd);
+    command.args(args);
+    command.creation_flags(CREATE_NO_WINDOW);
+    match command.output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Ok((output.status.success(), format!("{stdout}\n{stderr}")))
+        }
+        Err(err) => Err(apply_err(err)),
+    }
+}
+
+pub(crate) fn encode_registry_value(value: &nexus_model::platform::RegistryValueData) -> Vec<u8> {
+    use nexus_model::platform::RegistryValueData;
+    match value {
+        RegistryValueData::Dword(v) => {
+            let mut out = vec![1u8];
+            out.extend_from_slice(&v.to_le_bytes());
+            out
+        }
+        RegistryValueData::Qword(v) => {
+            let mut out = vec![2u8];
+            out.extend_from_slice(&v.to_le_bytes());
+            out
+        }
+        RegistryValueData::Sz(s) => {
+            let mut out = vec![3u8];
+            out.extend_from_slice(s.as_bytes());
+            out
+        }
+        RegistryValueData::Binary(d) => {
+            let mut out = vec![4u8];
+            out.extend_from_slice(d);
+            out
+        }
+    }
+}
+
+pub(crate) fn decode_registry_value(
+    bytes: &[u8],
+) -> Option<nexus_model::platform::RegistryValueData> {
+    use nexus_model::platform::RegistryValueData;
+    let (tag, rest) = bytes.split_first()?;
+    match *tag {
+        1 if rest.len() == 4 => {
+            let mut buf = [0u8; 4];
+            buf.copy_from_slice(rest);
+            Some(RegistryValueData::Dword(u32::from_le_bytes(buf)))
+        }
+        2 if rest.len() == 8 => {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(rest);
+            Some(RegistryValueData::Qword(u64::from_le_bytes(buf)))
+        }
+        3 => Some(RegistryValueData::Sz(
+            String::from_utf8_lossy(rest).into_owned(),
+        )),
+        4 => Some(RegistryValueData::Binary(rest.to_vec())),
+        _ => None,
+    }
 }
 
 fn set_registry_raw(
-    _hive: &str,
-    _subkey: &str,
-    _value_name: &str,
-    _val: Option<&[u8]>,
+    hive: &str,
+    subkey: &str,
+    value_name: &str,
+    val: Option<&[u8]>,
 ) -> Result<(), JournalError> {
+    let key = format!("{hive}\\{subkey}");
+    match val {
+        None => {
+            let (ok, out) = run_hidden("reg.exe", &["delete", &key, "/v", value_name, "/f"])?;
+            if !ok && !out.to_ascii_lowercase().contains("unable to find") {
+                return Err(apply_err(out));
+            }
+        }
+        Some(bytes) => {
+            let decoded = decode_registry_value(bytes)
+                .ok_or_else(|| JournalError::Apply("invalid journaled registry payload".into()))?;
+            let (ty, data) = match decoded {
+                nexus_model::platform::RegistryValueData::Dword(v) => ("REG_DWORD", v.to_string()),
+                nexus_model::platform::RegistryValueData::Qword(v) => ("REG_QWORD", v.to_string()),
+                nexus_model::platform::RegistryValueData::Sz(s) => ("REG_SZ", s),
+                nexus_model::platform::RegistryValueData::Binary(d) => {
+                    ("REG_BINARY", d.iter().map(|b| format!("{b:02x}")).collect())
+                }
+            };
+            let (ok, out) = run_hidden(
+                "reg.exe",
+                &["add", &key, "/v", value_name, "/t", ty, "/d", &data, "/f"],
+            )?;
+            if !ok {
+                return Err(apply_err(out));
+            }
+        }
+    }
     Ok(())
 }
 
-fn set_service_raw(_service_name: &str, _state: u8) -> Result<(), JournalError> {
+fn set_service_raw(service_name: &str, state: u8) -> Result<(), JournalError> {
+    if let Some(task_path) = service_name.strip_prefix("task:") {
+        let arg = if state == 1 { "/enable" } else { "/disable" };
+        let (ok, out) = run_hidden("schtasks.exe", &["/change", "/tn", task_path, arg])?;
+        if !ok {
+            return Err(apply_err(out));
+        }
+        return Ok(());
+    }
+
+    let start_arg = match state {
+        1 => "auto",
+        3 => "disabled",
+        _ => "demand",
+    };
+    let (config_ok, out) = run_hidden("sc.exe", &["config", service_name, "start=", start_arg])?;
+    if !config_ok {
+        return Err(apply_err(out));
+    }
+    match state {
+        1 => {
+            let _ = run_hidden("sc.exe", &["start", service_name]);
+        }
+        2 | 3 => {
+            let _ = run_hidden("sc.exe", &["stop", service_name]);
+        }
+        _ => {}
+    }
     Ok(())
 }
 
 fn set_privacy_raw(_toggle_id: u8, _enabled: bool) -> Result<(), JournalError> {
+    // Concrete registry/service writes for privacy toggles are journaled as
+    // RegistryValue / ServiceState / SystemFile entries by the shield planner.
     Ok(())
 }
 

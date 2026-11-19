@@ -419,34 +419,14 @@ impl Platform for Win32Platform {
     }
 
     fn set_always_on_top(&self, id: WindowId, topmost: bool) -> Result<(), PlatformError> {
-        let hwnd = HWND(id.0 as *mut _);
-        let insert_after = if topmost {
-            windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST
-        } else {
-            windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST
-        };
-        let flags = windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-            | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-            | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE
-            | windows::Win32::UI::WindowsAndMessaging::SWP_ASYNCWINDOWPOS;
+        let previous = self.is_always_on_top(id);
         let mutation = nexus_journal::Mutation::AlwaysOnTop {
             hwnd: id.0,
-            previous: !topmost,
+            previous,
             new: topmost,
         };
-        let _ = crate::recovery::commit(&mutation);
-        unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
-                hwnd,
-                insert_after,
-                0,
-                0,
-                0,
-                0,
-                flags,
-            );
-        }
-        Ok(())
+        crate::recovery::commit(&mutation)
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
     }
 
     fn is_always_on_top(&self, id: WindowId) -> bool {
@@ -470,9 +450,6 @@ impl Platform for Win32Platform {
             new_mask: affinity_mask,
         };
         crate::recovery::commit(&mutation)
-            .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
-        handle
-            .set_affinity(affinity_mask)
             .map_err(|e| PlatformError::OperationFailed(e.to_string()))
     }
 
@@ -507,14 +484,19 @@ impl Platform for Win32Platform {
         hive: &str,
         subkey: &str,
         value_name: &str,
-        _value: RegistryValueData,
+        value: RegistryValueData,
     ) -> Result<(), PlatformError> {
+        let previous = self
+            .get_registry_value(hive, subkey, value_name)
+            .ok()
+            .flatten()
+            .map(|prev| crate::effects::encode_registry_value(&prev));
         let mutation = nexus_journal::Mutation::RegistryValue {
             hive: hive.to_string(),
             subkey: subkey.to_string(),
             value_name: value_name.to_string(),
-            previous: None,
-            new: Some(vec![]),
+            previous,
+            new: Some(crate::effects::encode_registry_value(&value)),
         };
         crate::recovery::commit(&mutation)
             .map_err(|e| PlatformError::OperationFailed(e.to_string()))
@@ -522,11 +504,18 @@ impl Platform for Win32Platform {
 
     fn get_registry_value(
         &self,
-        _hive: &str,
-        _subkey: &str,
-        _value_name: &str,
+        hive: &str,
+        subkey: &str,
+        value_name: &str,
     ) -> Result<Option<RegistryValueData>, PlatformError> {
-        Ok(None)
+        let key = format!("{hive}\\{subkey}");
+        let (ok, output) =
+            crate::effects::run_hidden("reg.exe", &["query", &key, "/v", value_name])
+                .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+        if !ok {
+            return Ok(None);
+        }
+        Ok(parse_reg_query(&output, value_name))
     }
 
     fn delete_registry_value(
@@ -535,11 +524,16 @@ impl Platform for Win32Platform {
         subkey: &str,
         value_name: &str,
     ) -> Result<(), PlatformError> {
+        let previous = self
+            .get_registry_value(hive, subkey, value_name)
+            .ok()
+            .flatten()
+            .map(|prev| crate::effects::encode_registry_value(&prev));
         let mutation = nexus_journal::Mutation::RegistryValue {
             hive: hive.to_string(),
             subkey: subkey.to_string(),
             value_name: value_name.to_string(),
-            previous: None,
+            previous,
             new: None,
         };
         crate::recovery::commit(&mutation)
@@ -567,9 +561,30 @@ impl Platform for Win32Platform {
 
     fn get_service_state(
         &self,
-        _service_name: &str,
+        service_name: &str,
     ) -> Result<Option<ServiceRunState>, PlatformError> {
-        Ok(Some(ServiceRunState::Running))
+        if let Some(task_path) = service_name.strip_prefix("task:") {
+            let (ok, output) =
+                crate::effects::run_hidden("schtasks.exe", &["/query", "/tn", task_path])
+                    .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+            if !ok {
+                return Ok(None);
+            }
+            if output.contains("Disabled") {
+                return Ok(Some(ServiceRunState::Disabled));
+            }
+            return Ok(Some(ServiceRunState::Running));
+        }
+        let (ok, output) = crate::effects::run_hidden("sc.exe", &["query", service_name])
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
+        if !ok {
+            return Ok(None);
+        }
+        if output.contains("RUNNING") {
+            Ok(Some(ServiceRunState::Running))
+        } else {
+            Ok(Some(ServiceRunState::Stopped))
+        }
     }
 
     fn set_privacy_toggle(
@@ -601,14 +616,14 @@ impl Platform for Win32Platform {
     }
 
     fn write_system_file(&self, path: &str, content: &[u8]) -> Result<(), PlatformError> {
+        let previous_content = std::fs::read(path).ok();
         let mutation = nexus_journal::Mutation::SystemFile {
             path: path.to_string(),
-            previous_content: None,
+            previous_content,
             new_content: Some(content.to_vec()),
         };
         crate::recovery::commit(&mutation)
-            .map_err(|e| PlatformError::OperationFailed(e.to_string()))?;
-        std::fs::write(path, content).map_err(|e| PlatformError::OperationFailed(e.to_string()))
+            .map_err(|e| PlatformError::OperationFailed(e.to_string()))
     }
 
     fn read_system_file(&self, path: &str) -> Result<Vec<u8>, PlatformError> {
@@ -724,6 +739,50 @@ impl Platform for Win32Platform {
         snapshot.processes = samples;
         Ok(snapshot)
     }
+}
+
+#[cfg(windows)]
+fn parse_reg_query(output: &str, value_name: &str) -> Option<RegistryValueData> {
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[0].eq_ignore_ascii_case(value_name) {
+            let reg_type = parts[1];
+            let val_str = parts[2..].join(" ");
+            return Some(match reg_type {
+                "REG_DWORD" => {
+                    let parsed = if let Some(hex) = val_str
+                        .strip_prefix("0x")
+                        .or_else(|| val_str.strip_prefix("0X"))
+                    {
+                        u32::from_str_radix(hex, 16).unwrap_or(0)
+                    } else {
+                        val_str.parse::<u32>().unwrap_or(0)
+                    };
+                    RegistryValueData::Dword(parsed)
+                }
+                "REG_QWORD" => {
+                    let parsed = if let Some(hex) = val_str
+                        .strip_prefix("0x")
+                        .or_else(|| val_str.strip_prefix("0X"))
+                    {
+                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                    } else {
+                        val_str.parse::<u64>().unwrap_or(0)
+                    };
+                    RegistryValueData::Qword(parsed)
+                }
+                "REG_BINARY" => {
+                    let bytes = (0..val_str.len())
+                        .step_by(2)
+                        .filter_map(|i| u8::from_str_radix(val_str.get(i..i + 2)?, 16).ok())
+                        .collect();
+                    RegistryValueData::Binary(bytes)
+                }
+                _ => RegistryValueData::Sz(val_str),
+            });
+        }
+    }
+    None
 }
 
 #[cfg(not(windows))]

@@ -1566,7 +1566,9 @@ dependencies = [
 name = "nx-power"
 version = "0.1.0"
 dependencies = [
+ "nexus-model",
  "nx-fs",
+ "os-core",
  "parking_lot",
  "proptest",
  "regex",
@@ -1579,6 +1581,8 @@ dependencies = [
 name = "nx-privacy"
 version = "0.1.0"
 dependencies = [
+ "nexus-model",
+ "os-core",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
@@ -1950,6 +1954,8 @@ name = "os-hal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nexus-model",
+ "os-core",
  "tracing",
 ]
 
@@ -1959,6 +1965,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "nx-explorer-ui",
+ "nx-power",
+ "nx-privacy",
+ "nx-privacy-dash",
+ "nx-shell",
+ "nx-ui",
+ "nx-wm",
  "os-compositor",
  "os-config",
  "os-core",
