@@ -5,6 +5,7 @@ pub mod clock;
 pub mod dock;
 pub mod error;
 pub mod expose;
+pub mod gpui_views;
 pub mod host;
 pub mod menu_bar;
 pub mod scene;
@@ -39,3 +40,4 @@ pub use spotlight::{
     SpotlightHit, SpotlightLayout,
 };
 pub use squircle::{coverage_mask, Squircle};
+pub use gpui_views::{DockView, MenuBarView, MissionControlView, SpotlightView};
