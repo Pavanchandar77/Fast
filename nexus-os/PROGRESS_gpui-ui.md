@@ -1,5 +1,7 @@
 # GPUI UI Migration Progress
 
+STATUS: DONE
+
 ## Target Platform & Build Toolchain
 - **Official Target:** `x86_64-pc-windows-gnu` (Windows primary target for Nexus-OS)
 - **Host / Verification Target:** `x86_64-unknown-linux-gnu`
@@ -11,68 +13,85 @@
 
 ## Crates Porting Status
 - [x] Step 1: Add GPUI 0.2.2 to workspace & verify `x86_64-pc-windows-gnu` / linux build.
-- [x] Step 2: Rewrite `nx-ui` design tokens / theme as GPUI theme module (`nx_ui::gpui_theme`):
-  - macOS look: vibrancy/blur via Mica/Acrylic window backdrop (`theme.blurred_window_options`).
-  - SF-style typography (`sf_font_family`, `apply_type_step`).
-  - Continuous squircle smooth corners (`corner_radius_px`).
-  - Spring animation stepping (`step_spring`).
-  - `Theme` registered as a `gpui::Global`.
-- [x] Step 3: Rewrite `nx-shell` views (`crates/nx-shell/src/gpui_views.rs`):
-  - `MenuBarView`: macOS-style top bar with mark, app title, menus, privacy chips, volume, clipboard badge, and clock.
-  - `DockView`: bottom dock with squircle container, running indicators, pinned apps, and smooth magnification via `magnification_target`.
-  - `MissionControlView`: Exposé window management with virtual desktop spaces bar and window preview grid.
-  - `SpotlightView`: floating search palette with query input, categorized results (Calculator, Application, Setting, File), and active selection highlight.
-- [x] Step 4: Rewrite `nx-explorer-ui` views (`crates/nx-explorer-ui/src/gpui_view.rs`):
-  - `ExplorerView`: Finder-grade virtualized file list via `gpui::uniform_list` capable of smoothly rendering 100k+ rows with instant response.
-  - Unified toolbar with navigation buttons, breadcrumb path, search input, and view mode switcher.
-  - Favorites sidebar and bottom status bar with item count and free disk capacity.
-- [x] Step 5: Rewrite `nx-privacy-dash` views (`crates/nx-privacy-dash/src/gpui_view.rs`):
-  - `PrivacyDashboardView`: macOS/Nexus-styled security hub with Mica/Acrylic backdrop and SF typography.
-  - Live hardware indicators: Camera, Microphone, and Location with active app sessions and decay timers.
-  - Master kill switches: 6 hardware/system toggles (Camera, Mic, Location, Tracker Blocker, DiagTrack Telemetry, Recall & AI Snapshot Shield) with reversible dry-run verified command previews.
-  - Per-app permission audit matrix: risk level badges (Critical, High, Medium, Low) and capability toggles.
-  - Network monitor: discrete traffic metrics (bytes sent/received, allowed vs blocked requests).
-  - Clipboard guard: sensitive token/credential detection, auto-clear countdown, and read alerts history.
-  - Deterministic audit log table.
-- [x] Step 6: Wire session startup to open all GPUI windows (`crates/os-session/src/startup.rs`):
-  - `open_gpui_windows(cx, &mut session)`: wires `MenuBarView`, `DockView`, `SpotlightView`, `MissionControlView`, `ExplorerView`, and `PrivacyDashboardView` with blurred backdrops and accurate bounds.
-  - Added GPUI test verification for session window orchestration.
+- [x] Step 2: Rewrite `nx-ui` design tokens / theme as GPUI theme module (`nx_ui::gpui_theme`).
+- [x] Step 3: Rewrite `nx-shell` views (`crates/nx-shell/src/gpui_views.rs`): MenuBarView, DockView, MissionControlView, SpotlightView.
+- [x] Step 4: Rewrite `nx-explorer-ui` views (`crates/nx-explorer-ui/src/gpui_view.rs`): ExplorerView with `gpui::uniform_list`.
+- [x] Step 5: Rewrite `nx-privacy-dash` views (`crates/nx-privacy-dash/src/gpui_view.rs`): PrivacyDashboardView.
+- [x] Step 6: Wire session startup to open all GPUI windows (`crates/os-session/src/startup.rs` + `main.rs`).
 - [x] Step 7: Verification tests & gates.
 
-## Quality Gates Verification
+## Fix round 1
+
+Watchdog: check/clippy/fmt/tests passed, but the shipped binary was not actually running GPUI. Four follow-up fixes:
+
+### Fix 1 — `nexus-os` starts a real GPUI application (`cf4fb3c`)
+`crates/os-session/src/main.rs` now calls `gpui::Application::new().run(...)` and `open_gpui_windows`, so the menu bar, dock, Spotlight, Mission Control, explorer, and privacy dashboard are real GPUI windows.
+
+The compositor / governor / hotkey / heartbeat / WinEvent 120Hz solver runs on a background thread (`nexus-compositor-loop`). Fail-safe Ctrl+Alt+Shift+Esc restores the session via `WindowManager::restore_all_on_exit` and then `cx.quit()`. `HotkeyAction::CommandBar` toggles the GPUI `SpotlightView` (window starts hidden; toggle shows/hides it).
+
+### Fix 2 — Explorer host opens `ExplorerView` via GPUI (`1e220a9`)
+`crates/nx-explorer-ui/src/host.rs` opens `ExplorerView` with `gpui::Application::new().run`. The winit / `nx_ui` renderer host path and wgpu/winit deps were removed from `nx-explorer-ui`.
+
+### Fix 3 — os-compositor user chrome removed (`61c2058`)
+`crates/os-compositor/src/gpu/top_bar.rs` and `command_bar.rs` (raw wgpu top bar and command bar) were deleted. GPUI `MenuBarView` and `SpotlightView` replace them. `main.rs` no longer creates those surfaces.
+
+**`border_overlay` and `window_surface` are compositor effects only**, not user-facing UI chrome:
+- `border_overlay.rs` is a fullscreen click-through HWND that draws the L4-norm squircle **focus border** around the active managed window at 120Hz.
+- `window_surface.rs` is the Win32 HWND / wgpu `Surface` bridge used by that overlay (and DirectComposition frame setup). It does not draw menus, docks, Spotlight, or any other chrome.
+
+### Fix 4 — nx-ui custom renderer removed (`aae07ce`)
+Deleted `crates/nx-ui/src/gpu`, `scene`, `atlas`, `text` engine, and `examples/gallery.rs`. wgpu was dropped from `nx-ui`. What remains is `gpui_theme` plus pure gpui-independent layout/model helpers still used by shell/explorer/privacy.
+
+## Quality Gates Verification (Fix round 1)
+
+PATH=`$HOME/.cargo/bin:$PATH`, cwd `nexus-os`.
 
 ### 1. Windows GNU Cargo Check (`x86_64-pc-windows-gnu`)
 ```
-cargo check --target x86_64-pc-windows-gnu
-Finished dev profile [unoptimized + debuginfo] target(s) in 4.95s
+$ cargo check --workspace --all-targets --target x86_64-pc-windows-gnu
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.28s
+Exit code: 0
 Errors: 0
 ```
 
 ### 2. Windows GNU Cargo Clippy (`x86_64-pc-windows-gnu`)
 ```
-cargo clippy --target x86_64-pc-windows-gnu -p nx-ui -p nx-shell -p nx-explorer-ui -p nx-privacy-dash -p os-session --all-targets -- -D warnings
-Finished dev profile [unoptimized + debuginfo] target(s) in 10.84s
-Warnings: 0, Errors: 0
+$ cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.50s
+Exit code: 0
+Warnings treated as errors: none (clean)
 ```
 
 ### 3. Rustfmt Check
 ```
-cargo fmt --check
-Exit code: 0 (All code formatted cleanly)
+$ cargo fmt --all --check
+Exit code: 0
 ```
 
 ### 4. Linux Unit & GPUI Tests
-- `cargo test -p nx-ui`: 89 passed, 0 failed
-- `cargo test -p nx-shell`: 69 passed (62 unit + 7 property tests), 0 failed
-- `cargo test -p nx-explorer-ui`: 17 passed (10 unit + 7 view model tests), 0 failed
-- `cargo test -p nx-privacy-dash`: 48 passed (41 unit + 7 integration tests), 0 failed
-- `cargo test -p os-session`: 4 passed (including `test_gpui_session_startup_opens_windows`), 0 failed
-**Total Passed Tests:** 227 passed; 0 failed
-
-### 5. No HTML / React / WebView Check
 ```
-rg -i 'html|react|webview' crates/
-Exit code: 1 (0 matches found in UI crates)
+$ cargo test --workspace --no-fail-fast
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 45.67s
+```
+All suites: **698 passed; 0 failed; 0 ignored.**
+
+Notable os-session tests:
+- `test_gpui_session_startup_opens_windows`
+- `test_command_bar_toggles_gpui_spotlight`
+(5 os-session lib tests passed)
+
+### 5. Real GPUI startup path
+```
+$ rg -n "open_gpui_windows|Application::new" crates/os-session/src/main.rs
+198:        gpui::Application::new().run(move |cx| {
+201:            let windows = os_session::startup::open_gpui_windows(cx, &mut session);
 ```
 
-STATUS: FIX_ROUND_1_IN_PROGRESS
+### 6. No custom-renderer / winit user-facing UI
+```
+$ rg -n "nx_ui::gpu|nx_ui::scene|winit" crates
+crates/nx-explorer-ui/src/gpui_view.rs:9:use nx_ui::gpui_theme::sf_font_family;
+crates/nx-shell/src/gpui_views.rs:8:use nx_ui::gpui_theme::{sf_font_family, ThemeStyledExt};
+crates/nx-privacy-dash/src/gpui_view.rs:12:use nx_ui::gpui_theme::sf_font_family;
+```
+The only hits are `nx_ui::gpui_theme` (the `nx_ui::gpu` regex is a prefix of `gpui`). No `nx_ui::gpu` renderer, no `nx_ui::scene`, no `winit`. No user-facing UI uses the old custom toolkit.
