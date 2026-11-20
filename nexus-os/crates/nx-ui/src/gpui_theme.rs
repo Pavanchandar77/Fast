@@ -9,8 +9,8 @@ use crate::spring::Spring;
 use crate::theme::Theme;
 use crate::tokens::{TypeStep, Weight, CORNER_SMOOTHING};
 use gpui::{
-    px, Bounds, FontWeight, Global, Hsla, Pixels, Rgba, SharedString, Styled, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions,
+    px, Bounds, FontWeight, Global, Hsla, Pixels, Rgba, SharedString, Styled,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 
 impl Global for Theme {}
@@ -129,7 +129,11 @@ impl Theme {
     }
 
     /// Creates GPUI `WindowOptions` with explicit control over Mica/Acrylic blur.
-    pub fn window_options_with_backdrop(&self, bounds: Bounds<Pixels>, blurred: bool) -> WindowOptions {
+    pub fn window_options_with_backdrop(
+        &self,
+        bounds: Bounds<Pixels>,
+        blurred: bool,
+    ) -> WindowOptions {
         let appearance = if blurred {
             WindowBackgroundAppearance::Blurred
         } else {
@@ -238,7 +242,10 @@ mod tests {
         assert!(opts.window_bounds.is_some());
 
         let solid_opts = theme.window_options(bounds);
-        assert_eq!(solid_opts.window_background, WindowBackgroundAppearance::Opaque);
+        assert_eq!(
+            solid_opts.window_background,
+            WindowBackgroundAppearance::Opaque
+        );
     }
 
     #[gpui::test]

@@ -25,6 +25,7 @@ pub use expose::{
     grid_shape, layout_expose, thumbnail_slots, ExposeModel, ExposeParams, ExposeTile,
     ExposeWindow, ThumbnailSlot,
 };
+pub use gpui_views::{DockView, MenuBarView, MissionControlView, SpotlightView};
 pub use host::{
     apply_backdrop, dwm_flush, register_thumbnail, unregister_thumbnail, update_thumbnail,
     LiveThumbnailManager,
@@ -40,4 +41,3 @@ pub use spotlight::{
     SpotlightHit, SpotlightLayout,
 };
 pub use squircle::{coverage_mask, Squircle};
-pub use gpui_views::{DockView, MenuBarView, MissionControlView, SpotlightView};

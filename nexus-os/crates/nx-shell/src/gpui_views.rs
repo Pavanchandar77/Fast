@@ -92,8 +92,9 @@ impl Render for MenuBarView {
                     .gap(px(10.0 * theme.scale))
                     // Privacy indicator chips (Camera, Mic, Location)
                     .children(self.model.privacy.iter().map(|chip| {
-                        let hex_val = u32::from_str_radix(chip.color_hex.trim_start_matches('#'), 16)
-                            .unwrap_or(0x34c759);
+                        let hex_val =
+                            u32::from_str_radix(chip.color_hex.trim_start_matches('#'), 16)
+                                .unwrap_or(0x34c759);
                         let chip_color = nx_ui::Color::hex(hex_val);
                         div()
                             .px(px(7.0 * theme.scale))
@@ -106,22 +107,25 @@ impl Render for MenuBarView {
                             .child(chip.label.clone())
                     }))
                     // Volume widget indicator
-                    .when(self.model.volume.level > 0.0 || self.model.volume.muted, |d| {
-                        let vol_pct = (self.model.volume.level * 100.0) as u32;
-                        let vol_label = if self.model.volume.muted {
-                            "🔇 Muted".to_string()
-                        } else {
-                            format!("🔊 {}%", vol_pct)
-                        };
-                        d.child(
-                            div()
-                                .px(px(6.0 * theme.scale))
-                                .py(px(2.0 * theme.scale))
-                                .rounded(px(theme.radii.xs))
-                                .text_color(theme.text_secondary_hsla())
-                                .child(vol_label),
-                        )
-                    })
+                    .when(
+                        self.model.volume.level > 0.0 || self.model.volume.muted,
+                        |d| {
+                            let vol_pct = (self.model.volume.level * 100.0) as u32;
+                            let vol_label = if self.model.volume.muted {
+                                "🔇 Muted".to_string()
+                            } else {
+                                format!("🔊 {}%", vol_pct)
+                            };
+                            d.child(
+                                div()
+                                    .px(px(6.0 * theme.scale))
+                                    .py(px(2.0 * theme.scale))
+                                    .rounded(px(theme.radii.xs))
+                                    .text_color(theme.text_secondary_hsla())
+                                    .child(vol_label),
+                            )
+                        },
+                    )
                     // Clipboard indicator if sensitive items detected
                     .when(self.model.clipboard.count > 0, |d| {
                         d.child(
@@ -232,7 +236,9 @@ impl Render for DockView {
                             .h(px(4.0))
                             .rounded(px(2.0))
                             .when(item.running, |d| d.bg(theme.text_primary_hsla()))
-                            .when(!item.running, |d| d.bg(Hsla::from(nx_ui::Color::TRANSPARENT))),
+                            .when(!item.running, |d| {
+                                d.bg(Hsla::from(nx_ui::Color::TRANSPARENT))
+                            }),
                     )
             }))
     }
@@ -342,9 +348,27 @@ impl Render for MissionControlView {
                                         div()
                                             .flex()
                                             .gap(px(4.0))
-                                            .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(Hsla::from(nx_ui::Color::hex(0xff5f57))))
-                                            .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(Hsla::from(nx_ui::Color::hex(0xfebc2e))))
-                                            .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(Hsla::from(nx_ui::Color::hex(0x28c840)))),
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded(px(4.0))
+                                                    .bg(Hsla::from(nx_ui::Color::hex(0xff5f57))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded(px(4.0))
+                                                    .bg(Hsla::from(nx_ui::Color::hex(0xfebc2e))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded(px(4.0))
+                                                    .bg(Hsla::from(nx_ui::Color::hex(0x28c840))),
+                                            ),
                                     ),
                             )
                             // Window preview canvas
@@ -425,88 +449,83 @@ impl Render for SpotlightView {
                     ),
             )
             // Results list
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .p(px(8.0))
-                    .gap(px(2.0))
-                    .children(hits.into_iter().enumerate().map(|(idx, hit)| {
-                        let is_selected = idx == 0;
-                        let badge_color = match hit.kind {
-                            ProviderKind::Calculator => nx_ui::Color::hex(0xbf5af2), // Purple
-                            ProviderKind::App => nx_ui::Color::hex(0x0a84ff),        // Blue
-                            ProviderKind::Setting => nx_ui::Color::hex(0xff9f0a),    // Orange
-                            ProviderKind::File => nx_ui::Color::hex(0x8e8e93),       // Gray
-                        };
+            .child(div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
+                hits.into_iter().enumerate().map(|(idx, hit)| {
+                    let is_selected = idx == 0;
+                    let badge_color = match hit.kind {
+                        ProviderKind::Calculator => nx_ui::Color::hex(0xbf5af2), // Purple
+                        ProviderKind::App => nx_ui::Color::hex(0x0a84ff),        // Blue
+                        ProviderKind::Setting => nx_ui::Color::hex(0xff9f0a),    // Orange
+                        ProviderKind::File => nx_ui::Color::hex(0x8e8e93),       // Gray
+                    };
 
-                        let kind_name = match hit.kind {
-                            ProviderKind::Calculator => "Calculation",
-                            ProviderKind::App => "Application",
-                            ProviderKind::Setting => "System Setting",
-                            ProviderKind::File => "Document",
-                        };
+                    let kind_name = match hit.kind {
+                        ProviderKind::Calculator => "Calculation",
+                        ProviderKind::App => "Application",
+                        ProviderKind::Setting => "System Setting",
+                        ProviderKind::File => "Document",
+                    };
 
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .rounded(px(theme.radii.md))
-                            .when(is_selected, |d| d.bg(theme.selection_hsla()))
-                            .hover(|s| s.bg(theme.hover_hsla()))
-                            // Left: Title and Subtitle
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(1.0))
-                                    .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .px(px(12.0))
+                        .py(px(8.0))
+                        .rounded(px(theme.radii.md))
+                        .when(is_selected, |d| d.bg(theme.selection_hsla()))
+                        .hover(|s| s.bg(theme.hover_hsla()))
+                        // Left: Title and Subtitle
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(1.0))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_size(px(14.0))
+                                        .text_color(theme.text_primary_hsla())
+                                        .child(hit.title),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text_secondary_hsla())
+                                        .child(hit.subtitle),
+                                ),
+                        )
+                        // Right: Badge / value
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.0))
+                                .when_some(hit.value, |d, val| {
+                                    d.child(
                                         div()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_size(px(14.0))
-                                            .text_color(theme.text_primary_hsla())
-                                            .child(hit.title),
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_size(px(16.0))
+                                            .text_color(theme.accent_hsla())
+                                            .child(val),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.0))
-                                            .text_color(theme.text_secondary_hsla())
-                                            .child(hit.subtitle),
-                                    ),
-                            )
-                            // Right: Badge / value
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .when_some(hit.value, |d, val| {
-                                        d.child(
-                                            div()
-                                                .font_weight(FontWeight::BOLD)
-                                                .text_size(px(16.0))
-                                                .text_color(theme.accent_hsla())
-                                                .child(val),
-                                        )
-                                    })
-                                    .child(
-                                        div()
-                                            .px(px(6.0))
-                                            .py(px(2.0))
-                                            .rounded(px(theme.radii.xs))
-                                            .bg(Hsla::from(badge_color.with_alpha(0.2)))
-                                            .text_color(Hsla::from(badge_color))
-                                            .text_size(px(11.0))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(kind_name),
-                                    ),
-                            )
-                    })),
-            )
+                                })
+                                .child(
+                                    div()
+                                        .px(px(6.0))
+                                        .py(px(2.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .bg(Hsla::from(badge_color.with_alpha(0.2)))
+                                        .text_color(Hsla::from(badge_color))
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(kind_name),
+                                ),
+                        )
+                }),
+            ))
     }
 }
 

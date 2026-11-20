@@ -13,8 +13,8 @@ pub mod draw;
 pub mod error;
 pub mod gallery;
 pub mod geom;
-pub mod gpui_theme;
 pub mod gpu;
+pub mod gpui_theme;
 pub mod icon;
 pub mod image;
 pub mod input;
@@ -35,7 +35,7 @@ pub use anim::{
 pub use color::Color;
 pub use error::{Error, Result};
 pub use geom::{CornerRadii, Insets, Point, Rect, Size};
+pub use gpui_theme::{sf_font_family, step_spring, ThemeStyledExt};
 pub use scene::{NodeId, Scene};
 pub use spring::{Spring, SpringConfig};
 pub use theme::{Accent, Theme, ThemeMode};
-pub use gpui_theme::{sf_font_family, step_spring, ThemeStyledExt};

@@ -2,7 +2,8 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
+    div, px, uniform_list, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled,
+    Window,
 };
 use nx_fs::EntryKind;
 use nx_ui::gpui_theme::sf_font_family;

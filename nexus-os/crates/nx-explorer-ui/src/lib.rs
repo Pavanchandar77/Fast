@@ -25,8 +25,8 @@ pub mod views;
 pub mod watcher;
 
 pub use context_menu::{ContextItem, ExplorerContextMenu};
-pub use gpui_view::{format_bytes, ExplorerView, FileRowSnapshot};
 pub use drag_drop::{DragDropState, DropAction};
+pub use gpui_view::{format_bytes, ExplorerView, FileRowSnapshot};
 #[cfg(windows)]
 pub use host::ExplorerApp;
 pub use index_cache::PersistentIndexManager;

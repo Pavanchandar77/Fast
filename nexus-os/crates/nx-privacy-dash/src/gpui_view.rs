@@ -57,10 +57,10 @@ pub fn risk_color(risk: RiskLevel) -> Hsla {
 /// Helper to map IndicatorStatusKind to color.
 pub fn chip_status_color(status: IndicatorStatusKind) -> Hsla {
     match status {
-        IndicatorStatusKind::InUse => Hsla::from(rgb(0x34c759)),        // Active Green
+        IndicatorStatusKind::InUse => Hsla::from(rgb(0x34c759)), // Active Green
         IndicatorStatusKind::RecentlyUsed => Hsla::from(rgb(0xff9500)), // Amber Warning
-        IndicatorStatusKind::Blocked => Hsla::from(rgb(0xff3b30)),      // Blocked Red
-        IndicatorStatusKind::Idle => Hsla::from(rgb(0x8e8e93)),         // Idle Gray
+        IndicatorStatusKind::Blocked => Hsla::from(rgb(0xff3b30)), // Blocked Red
+        IndicatorStatusKind::Idle => Hsla::from(rgb(0x8e8e93)),  // Idle Gray
     }
 }
 
@@ -442,87 +442,83 @@ impl PrivacyDashboardView {
                             )),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0 * theme.scale))
-                    .children(profiles.values().map(|profile| {
-                        let risk_col = risk_color(profile.risk_level);
-                        let app_name = profile.app.display_name().to_string();
+            .child(div().flex().flex_col().gap(px(8.0 * theme.scale)).children(
+                profiles.values().map(|profile| {
+                    let risk_col = risk_color(profile.risk_level);
+                    let app_name = profile.app.display_name().to_string();
 
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .p(px(12.0 * theme.scale))
-                            .rounded(theme.corner_radius_px(8.0))
-                            .bg(theme.elevated_hsla())
-                            .border_1()
-                            .border_color(theme.separator_hsla())
-                            // Left: App name + Risk badge
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(10.0 * theme.scale))
-                                    .child(
-                                        div()
-                                            .px(px(6.0 * theme.scale))
-                                            .py(px(2.0 * theme.scale))
-                                            .rounded(theme.corner_radius_px(4.0))
-                                            .bg(with_alpha(risk_col, 0.2))
-                                            .font_family(sf_font_family())
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_size(px(10.0 * theme.scale))
-                                            .text_color(risk_col)
-                                            .child(format!("{:?}", profile.risk_level)),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(sf_font_family())
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_size(px(13.0 * theme.scale))
-                                            .text_color(theme.text_primary_hsla())
-                                            .child(app_name),
-                                    ),
-                            )
-                            // Right: Capabilities pill badges
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(6.0 * theme.scale))
-                                    .children(PermissionCapability::all().into_iter().map(|cap| {
-                                        let allowed = profile.is_allowed(cap);
-                                        let (bg_pill, text_pill) = if allowed {
-                                            (
-                                                with_alpha(Hsla::from(rgb(0x34c759)), 0.2),
-                                                Hsla::from(rgb(0x34c759)),
-                                            )
-                                        } else {
-                                            (
-                                                with_alpha(Hsla::from(rgb(0x8e8e93)), 0.15),
-                                                theme.text_tertiary_hsla(),
-                                            )
-                                        };
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .p(px(12.0 * theme.scale))
+                        .rounded(theme.corner_radius_px(8.0))
+                        .bg(theme.elevated_hsla())
+                        .border_1()
+                        .border_color(theme.separator_hsla())
+                        // Left: App name + Risk badge
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(10.0 * theme.scale))
+                                .child(
+                                    div()
+                                        .px(px(6.0 * theme.scale))
+                                        .py(px(2.0 * theme.scale))
+                                        .rounded(theme.corner_radius_px(4.0))
+                                        .bg(with_alpha(risk_col, 0.2))
+                                        .font_family(sf_font_family())
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_size(px(10.0 * theme.scale))
+                                        .text_color(risk_col)
+                                        .child(format!("{:?}", profile.risk_level)),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(sf_font_family())
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(13.0 * theme.scale))
+                                        .text_color(theme.text_primary_hsla())
+                                        .child(app_name),
+                                ),
+                        )
+                        // Right: Capabilities pill badges
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.0 * theme.scale))
+                                .children(PermissionCapability::all().into_iter().map(|cap| {
+                                    let allowed = profile.is_allowed(cap);
+                                    let (bg_pill, text_pill) = if allowed {
+                                        (
+                                            with_alpha(Hsla::from(rgb(0x34c759)), 0.2),
+                                            Hsla::from(rgb(0x34c759)),
+                                        )
+                                    } else {
+                                        (
+                                            with_alpha(Hsla::from(rgb(0x8e8e93)), 0.15),
+                                            theme.text_tertiary_hsla(),
+                                        )
+                                    };
 
-                                        div()
-                                            .px(px(6.0 * theme.scale))
-                                            .py(px(2.0 * theme.scale))
-                                            .rounded(theme.corner_radius_px(4.0))
-                                            .bg(bg_pill)
-                                            .font_family(sf_font_family())
-                                            .text_size(px(10.0 * theme.scale))
-                                            .text_color(text_pill)
-                                            .child(cap.display_name())
-                                    })),
-                            )
-                    })),
-            )
+                                    div()
+                                        .px(px(6.0 * theme.scale))
+                                        .py(px(2.0 * theme.scale))
+                                        .rounded(theme.corner_radius_px(4.0))
+                                        .bg(bg_pill)
+                                        .font_family(sf_font_family())
+                                        .text_size(px(10.0 * theme.scale))
+                                        .text_color(text_pill)
+                                        .child(cap.display_name())
+                                })),
+                        )
+                }),
+            ))
     }
 
     fn render_network(&self, theme: &Theme) -> impl IntoElement {
@@ -560,80 +556,76 @@ impl PrivacyDashboardView {
                             )),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0 * theme.scale))
-                    .children(summaries.into_iter().map(|sum| {
-                        let total = sum.total_bytes;
+            .child(div().flex().flex_col().gap(px(8.0 * theme.scale)).children(
+                summaries.into_iter().map(|sum| {
+                    let total = sum.total_bytes;
 
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .p(px(12.0 * theme.scale))
-                            .rounded(theme.corner_radius_px(8.0))
-                            .bg(theme.elevated_hsla())
-                            .border_1()
-                            .border_color(theme.separator_hsla())
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .font_family(sf_font_family())
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_size(px(13.0 * theme.scale))
-                                            .text_color(theme.text_primary_hsla())
-                                            .child(sum.app.display_name().to_string()),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(sf_font_family())
-                                            .text_size(px(11.0 * theme.scale))
-                                            .text_color(theme.text_secondary_hsla())
-                                            .child(format!(
-                                                "Traffic: {} (Sent: {}, Recv: {})",
-                                                format_bytes(total),
-                                                format_bytes(sum.total_bytes_sent),
-                                                format_bytes(sum.total_bytes_received)
-                                            )),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(8.0 * theme.scale))
-                                    .child(
-                                        div()
-                                            .px(px(8.0 * theme.scale))
-                                            .py(px(3.0 * theme.scale))
-                                            .rounded(theme.corner_radius_px(4.0))
-                                            .bg(with_alpha(Hsla::from(rgb(0x34c759)), 0.2))
-                                            .font_family(sf_font_family())
-                                            .text_size(px(10.5 * theme.scale))
-                                            .text_color(Hsla::from(rgb(0x34c759)))
-                                            .child(format!("{} Allowed", sum.allowed_count)),
-                                    )
-                                    .child(
-                                        div()
-                                            .px(px(8.0 * theme.scale))
-                                            .py(px(3.0 * theme.scale))
-                                            .rounded(theme.corner_radius_px(4.0))
-                                            .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
-                                            .font_family(sf_font_family())
-                                            .text_size(px(10.5 * theme.scale))
-                                            .text_color(Hsla::from(rgb(0xff3b30)))
-                                            .child(format!("{} Blocked", sum.blocked_count)),
-                                    ),
-                            )
-                    })),
-            )
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .p(px(12.0 * theme.scale))
+                        .rounded(theme.corner_radius_px(8.0))
+                        .bg(theme.elevated_hsla())
+                        .border_1()
+                        .border_color(theme.separator_hsla())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .font_family(sf_font_family())
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(13.0 * theme.scale))
+                                        .text_color(theme.text_primary_hsla())
+                                        .child(sum.app.display_name().to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(sf_font_family())
+                                        .text_size(px(11.0 * theme.scale))
+                                        .text_color(theme.text_secondary_hsla())
+                                        .child(format!(
+                                            "Traffic: {} (Sent: {}, Recv: {})",
+                                            format_bytes(total),
+                                            format_bytes(sum.total_bytes_sent),
+                                            format_bytes(sum.total_bytes_received)
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.0 * theme.scale))
+                                .child(
+                                    div()
+                                        .px(px(8.0 * theme.scale))
+                                        .py(px(3.0 * theme.scale))
+                                        .rounded(theme.corner_radius_px(4.0))
+                                        .bg(with_alpha(Hsla::from(rgb(0x34c759)), 0.2))
+                                        .font_family(sf_font_family())
+                                        .text_size(px(10.5 * theme.scale))
+                                        .text_color(Hsla::from(rgb(0x34c759)))
+                                        .child(format!("{} Allowed", sum.allowed_count)),
+                                )
+                                .child(
+                                    div()
+                                        .px(px(8.0 * theme.scale))
+                                        .py(px(3.0 * theme.scale))
+                                        .rounded(theme.corner_radius_px(4.0))
+                                        .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
+                                        .font_family(sf_font_family())
+                                        .text_size(px(10.5 * theme.scale))
+                                        .text_color(Hsla::from(rgb(0xff3b30)))
+                                        .child(format!("{} Blocked", sum.blocked_count)),
+                                ),
+                        )
+                }),
+            ))
     }
 
     fn render_clipboard(&self, theme: &Theme) -> impl IntoElement {
@@ -796,63 +788,59 @@ impl PrivacyDashboardView {
                             .child(format!("Recorded {} immutable audit events", logs.len())),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0 * theme.scale))
-                    .children(logs.iter().rev().map(|entry| {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .p(px(10.0 * theme.scale))
-                            .rounded(theme.corner_radius_px(6.0))
-                            .bg(theme.elevated_hsla())
-                            .border_1()
-                            .border_color(theme.separator_hsla())
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .font_family(sf_font_family())
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_size(px(12.5 * theme.scale))
-                                            .text_color(theme.text_primary_hsla())
-                                            .child(format!(
-                                                "[{}] {}",
-                                                entry.category, entry.description
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(sf_font_family())
-                                            .text_size(px(10.5 * theme.scale))
-                                            .text_color(theme.text_tertiary_hsla())
-                                            .child(format!(
-                                                "Actor: {} • ID: #{}",
-                                                entry.actor, entry.id
-                                            )),
-                                    ),
-                            )
-                            .when(entry.is_critical, |this| {
-                                this.child(
+            .child(div().flex().flex_col().gap(px(6.0 * theme.scale)).children(
+                logs.iter().rev().map(|entry| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .p(px(10.0 * theme.scale))
+                        .rounded(theme.corner_radius_px(6.0))
+                        .bg(theme.elevated_hsla())
+                        .border_1()
+                        .border_color(theme.separator_hsla())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
                                     div()
-                                        .px(px(6.0 * theme.scale))
-                                        .py(px(2.0 * theme.scale))
-                                        .rounded(theme.corner_radius_px(4.0))
-                                        .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
                                         .font_family(sf_font_family())
-                                        .text_size(px(10.0 * theme.scale))
-                                        .text_color(Hsla::from(rgb(0xff3b30)))
-                                        .child("CRITICAL"),
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(12.5 * theme.scale))
+                                        .text_color(theme.text_primary_hsla())
+                                        .child(format!(
+                                            "[{}] {}",
+                                            entry.category, entry.description
+                                        )),
                                 )
-                            })
-                    })),
-            )
+                                .child(
+                                    div()
+                                        .font_family(sf_font_family())
+                                        .text_size(px(10.5 * theme.scale))
+                                        .text_color(theme.text_tertiary_hsla())
+                                        .child(format!(
+                                            "Actor: {} • ID: #{}",
+                                            entry.actor, entry.id
+                                        )),
+                                ),
+                        )
+                        .when(entry.is_critical, |this| {
+                            this.child(
+                                div()
+                                    .px(px(6.0 * theme.scale))
+                                    .py(px(2.0 * theme.scale))
+                                    .rounded(theme.corner_radius_px(4.0))
+                                    .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
+                                    .font_family(sf_font_family())
+                                    .text_size(px(10.0 * theme.scale))
+                                    .text_color(Hsla::from(rgb(0xff3b30)))
+                                    .child("CRITICAL"),
+                            )
+                        })
+                }),
+            ))
     }
 }
 
@@ -902,7 +890,10 @@ mod tests {
         cx.update(|cx| {
             let vm = DashboardViewModel::new();
             let entity = cx.new(|_cx| PrivacyDashboardView::new(vm));
-            assert_eq!(entity.read(cx).view_model.active_tab, DashboardTab::Overview);
+            assert_eq!(
+                entity.read(cx).view_model.active_tab,
+                DashboardTab::Overview
+            );
         });
     }
 
