@@ -1,15 +1,8 @@
 //! Buttons, scroll, search, segments, menus, tooltips, sidebar, and toolbar.
 
-use super::{style_of, Frame};
-use crate::color::Color;
-use crate::draw::{Border, Layer, Paint};
-use crate::geom::{CornerRadii, Insets, Point, Rect, Size};
-use crate::icon::{ICON_CHECK, ICON_SEARCH};
+use crate::geom::{Point, Rect, Size};
 use crate::input::Input;
-use crate::scene::Scene;
 use crate::spring::{Spring, SpringConfig};
-use crate::text::TextStyle;
-use crate::tokens::Weight;
 
 fn cfg(response: f32) -> SpringConfig {
     SpringConfig::macos(response, 1.0)
@@ -35,6 +28,18 @@ impl Button {
 
     pub fn icon_only(icon: &'static str) -> Self {
         Self::build(String::new(), Some(icon), false)
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn is_accent(&self) -> bool {
+        self.accent
+    }
+
+    pub fn icon(&self) -> Option<&'static str> {
+        self.icon
     }
 
     pub fn set_icon(&mut self, icon: &'static str) {
@@ -78,59 +83,6 @@ impl Button {
         self.press.step(dt);
         self.hover.step(dt);
         clicked
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        let inset = self.press.position;
-        let rect = bounds.inset(Insets::all(inset));
-        let fill = if self.accent {
-            theme
-                .palette
-                .accent
-                .mix(theme.palette.text_primary, 0.12 * self.press.position)
-        } else {
-            theme
-                .palette
-                .control
-                .mix(theme.palette.hover, self.hover.position * 0.85)
-        };
-        let mut shadow = theme.elevation.sm;
-        shadow.color = shadow
-            .color
-            .with_alpha(shadow.color.a * (1.0 - 0.45 * self.press.position));
-        frame.panel(
-            Scene::root(),
-            rect,
-            Paint::Solid(fill),
-            CornerRadii::all(theme.radii.md).clamped(rect.size()),
-            Border {
-                color: theme.palette.separator,
-                width: if self.accent { 0.0 } else { 1.0 },
-            },
-            shadow,
-            Layer::Foreground,
-        );
-        let fg = if self.accent {
-            theme.palette.on_accent
-        } else {
-            theme.palette.text_primary
-        };
-        let pad = theme.spacing.s8;
-        let mut text_x = rect.x + pad;
-        if let Some(icon) = self.icon {
-            let px = 16.0 * theme.scale.max(0.5);
-            let y = rect.y + (rect.h - px) * 0.5;
-            frame.icon(Scene::root(), Point::new(rect.x + pad, y), icon, px, fg);
-            text_x += px + theme.spacing.s4;
-        }
-        if !self.label.is_empty() {
-            let base = style_of(theme.type_scale.subhead);
-            let style = TextStyle::new(base.size, base.line, Weight::Medium);
-            let prepared = frame.text.prepare(frame.atlas, &self.label, style);
-            let y = rect.y + (rect.h - prepared.height) * 0.5;
-            frame.label(Scene::root(), Point::new(text_x, y), &self.label, style, fg);
-        }
     }
 }
 
@@ -286,55 +238,6 @@ impl SearchField {
         self.focus.step(dt);
         changed
     }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        let border = theme
-            .palette
-            .separator
-            .mix(theme.palette.accent, self.focus.position);
-        frame.panel(
-            Scene::root(),
-            bounds,
-            Paint::Solid(theme.palette.fill),
-            CornerRadii::all(theme.radii.sm).clamped(bounds.size()),
-            Border {
-                color: border,
-                width: 1.0 + self.focus.position,
-            },
-            theme.elevation.sm,
-            Layer::Foreground,
-        );
-        let px = 14.0 * theme.scale.max(0.5);
-        let icon_y = bounds.y + (bounds.h - px) * 0.5;
-        frame.icon(
-            Scene::root(),
-            Point::new(bounds.x + theme.spacing.s8, icon_y),
-            ICON_SEARCH,
-            px,
-            theme.palette.text_secondary,
-        );
-        let style = style_of(theme.type_scale.subhead);
-        let text_x = bounds.x + theme.spacing.s8 + px + theme.spacing.s4;
-        let text_y = bounds.y + (bounds.h - style.line) * 0.5;
-        if self.query.is_empty() {
-            frame.label(
-                Scene::root(),
-                Point::new(text_x, text_y),
-                "Search",
-                style,
-                theme.palette.text_tertiary,
-            );
-        } else {
-            frame.label(
-                Scene::root(),
-                Point::new(text_x, text_y),
-                &self.query,
-                style,
-                theme.palette.text_primary,
-            );
-        }
-    }
 }
 
 impl Default for SearchField {
@@ -391,55 +294,6 @@ impl Segmented {
         self.thumb.set_target(self.index as f32);
         self.thumb.step(dt);
         changed
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        frame.panel(
-            Scene::root(),
-            bounds,
-            Paint::Solid(theme.palette.fill),
-            CornerRadii::all(theme.radii.sm).clamped(bounds.size()),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            crate::tokens::Shadow::none(),
-            Layer::Foreground,
-        );
-        if self.labels.is_empty() {
-            return;
-        }
-        let inset = 3.0 * theme.scale.max(0.5);
-        let inner = bounds.inset(Insets::all(inset));
-        let w = inner.w / self.labels.len() as f32;
-        let thumb = Rect::new(inner.x + self.thumb.position * w, inner.y, w, inner.h);
-        frame.panel(
-            Scene::root(),
-            thumb,
-            Paint::Solid(theme.palette.control),
-            CornerRadii::all(theme.radii.xs).clamped(thumb.size()),
-            Border::default(),
-            theme.elevation.sm,
-            Layer::Foreground,
-        );
-        let style = TextStyle::new(
-            theme.type_scale.caption1.size,
-            theme.type_scale.caption1.line,
-            Weight::Medium,
-        );
-        for (i, label) in self.labels.iter().enumerate() {
-            let slot = Rect::new(inner.x + i as f32 * w, inner.y, w, inner.h);
-            let prepared = frame.text.prepare(frame.atlas, label, style);
-            let x = slot.x + (slot.w - prepared.width) * 0.5;
-            let y = slot.y + (slot.h - prepared.height) * 0.5;
-            let color = if i == self.index {
-                theme.palette.text_primary
-            } else {
-                theme.palette.text_secondary
-            };
-            frame.label(Scene::root(), Point::new(x, y), label, style, color);
-        }
     }
 }
 
@@ -563,68 +417,6 @@ impl ContextMenu {
         self.opacity.step(dt);
         selected
     }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, viewport: Size) {
-        if !self.open || self.opacity.position <= 0.02 {
-            return;
-        }
-        let theme = frame.theme;
-        let bounds = self.bounds(viewport);
-        let scale = self.scale.position.clamp(0.9, 1.05);
-        let center = bounds.center();
-        let scaled = Rect::new(
-            center.x - bounds.w * scale * 0.5,
-            center.y - bounds.h * scale * 0.5,
-            bounds.w * scale,
-            bounds.h * scale,
-        );
-        frame.material(
-            Scene::root(),
-            scaled,
-            CornerRadii::all(theme.radii.md),
-            theme.materials.menu,
-        );
-        // A transparent foreground panel supplies the shadow. Materials do not.
-        frame.panel(
-            Scene::root(),
-            scaled,
-            Paint::Solid(Color::TRANSPARENT),
-            CornerRadii::all(theme.radii.md),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            theme.elevation.md,
-            Layer::Foreground,
-        );
-        let style = style_of(theme.type_scale.subhead);
-        for (i, item) in self.items.iter().enumerate() {
-            let row = Rect::new(
-                scaled.x + 4.0 * scale,
-                scaled.y + (4.0 + i as f32 * Self::ITEM_H) * scale,
-                (scaled.w - 8.0 * scale).max(0.0),
-                Self::ITEM_H * scale,
-            );
-            if self.hover == Some(i) {
-                frame.panel(
-                    Scene::root(),
-                    row,
-                    Paint::Solid(theme.palette.selection),
-                    CornerRadii::all(theme.radii.xs),
-                    Border::default(),
-                    crate::tokens::Shadow::none(),
-                    Layer::Foreground,
-                );
-            }
-            frame.label(
-                Scene::root(),
-                Point::new(row.x + 12.0 * scale, row.y + (row.h - style.line) * 0.5),
-                item,
-                style,
-                theme.palette.text_primary,
-            );
-        }
-    }
 }
 
 pub struct Tooltip {
@@ -646,6 +438,10 @@ impl Tooltip {
             anchor: Point::new(0.0, 0.0),
             opacity: Spring::new(0.0, cfg(0.16)),
         }
+    }
+
+    pub fn text(&self) -> &'static str {
+        self.text
     }
 
     pub fn shown(&self) -> bool {
@@ -671,34 +467,6 @@ impl Tooltip {
         }
         self.opacity.set_target(if self.shown { 1.0 } else { 0.0 });
         self.opacity.step(dt);
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, viewport: Size) {
-        if self.opacity.position <= 0.02 {
-            return;
-        }
-        let theme = frame.theme;
-        let style = style_of(theme.type_scale.caption1);
-        let prepared = frame.text.prepare(frame.atlas, self.text, style);
-        let pad = theme.spacing.s8;
-        let w = prepared.width + pad * 2.0;
-        let h = style.line + pad;
-        let x = self.anchor.x.min((viewport.w - w).max(0.0));
-        let y = self.anchor.y.min((viewport.h - h).max(0.0));
-        let rect = Rect::new(x, y, w, h);
-        frame.material(
-            Scene::root(),
-            rect,
-            CornerRadii::all(theme.radii.sm),
-            theme.materials.tooltip,
-        );
-        frame.label(
-            Scene::root(),
-            Point::new(x + pad, y + (h - prepared.height) * 0.5),
-            self.text,
-            style,
-            theme.palette.text_primary,
-        );
     }
 }
 
@@ -774,75 +542,6 @@ impl Sidebar {
         self.width.step(dt);
         changed
     }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        frame.material(
-            Scene::root(),
-            bounds,
-            CornerRadii::all(0.0),
-            theme.materials.sidebar,
-        );
-        let expanded = self.width.position > (Self::COLLAPSED + Self::EXPANDED) * 0.5;
-        let style = TextStyle::new(
-            theme.type_scale.subhead.size,
-            theme.type_scale.subhead.line,
-            Weight::Medium,
-        );
-        for (i, item) in self.items.iter().enumerate() {
-            let row = Rect::new(
-                bounds.x + theme.spacing.s8,
-                bounds.y + Self::ITEM_Y + i as f32 * Self::ITEM_H,
-                (bounds.w - theme.spacing.s16).max(0.0),
-                Self::ITEM_H - 4.0,
-            );
-            if i == self.selected {
-                frame.panel(
-                    Scene::root(),
-                    row,
-                    Paint::Solid(theme.palette.selection),
-                    CornerRadii::all(theme.radii.sm),
-                    Border::default(),
-                    crate::tokens::Shadow::none(),
-                    Layer::Foreground,
-                );
-            }
-            let px = 18.0 * theme.scale.max(0.5);
-            let tint = if i == self.selected {
-                theme.palette.accent
-            } else {
-                theme.palette.text_secondary
-            };
-            frame.icon(
-                Scene::root(),
-                Point::new(row.x + 8.0, row.y + (row.h - px) * 0.5),
-                item.icon,
-                px,
-                tint,
-            );
-            if expanded {
-                frame.label(
-                    Scene::root(),
-                    Point::new(
-                        row.x + 8.0 + px + theme.spacing.s8,
-                        row.y + (row.h - style.line) * 0.5,
-                    ),
-                    item.label,
-                    style,
-                    theme.palette.text_primary,
-                );
-                if i == self.selected {
-                    frame.icon(
-                        Scene::root(),
-                        Point::new(row.right() - px - 4.0, row.y + (row.h - px) * 0.5),
-                        ICON_CHECK,
-                        px * 0.8,
-                        theme.palette.accent,
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -861,6 +560,10 @@ pub struct Toolbar {
 impl Toolbar {
     pub fn new(title: &'static str) -> Self {
         Self { title }
+    }
+
+    pub fn title(&self) -> &'static str {
+        self.title
     }
 
     pub fn animating(&self) -> bool {
@@ -885,47 +588,12 @@ impl Toolbar {
             theme,
         }
     }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        frame.material(
-            Scene::root(),
-            bounds,
-            CornerRadii::all(0.0),
-            theme.materials.bar,
-        );
-        let hair = Rect::new(bounds.x, bounds.bottom() - 1.0, bounds.w, 1.0);
-        frame.panel(
-            Scene::root(),
-            hair,
-            Paint::Solid(theme.palette.separator),
-            CornerRadii::all(0.0),
-            Border::default(),
-            crate::tokens::Shadow::none(),
-            Layer::Foreground,
-        );
-        let style = TextStyle::new(
-            theme.type_scale.headline.size,
-            theme.type_scale.headline.line,
-            Weight::Semibold,
-        );
-        let slots = Self::slots(bounds);
-        frame.label(
-            Scene::root(),
-            Point::new(
-                slots.toggle.right() + theme.spacing.s8,
-                bounds.y + (bounds.h - style.line) * 0.5,
-            ),
-            self.title,
-            style,
-            theme.palette.text_primary,
-        );
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::icon::ICON_SEARCH;
 
     fn press(point: Point) -> Input {
         Input {

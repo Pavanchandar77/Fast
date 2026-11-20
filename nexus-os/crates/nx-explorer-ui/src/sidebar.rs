@@ -2,14 +2,9 @@
 
 use crate::icons::{ICON_DRIVE, ICON_FOLDER, ICON_HOME, ICON_TAG};
 use nx_ui::color::Color;
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect};
+use nx_ui::geom::Rect;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
 use nx_ui::spring::{Spring, SpringConfig};
-use nx_ui::text::TextStyle;
-use nx_ui::tokens::Weight;
-use nx_ui::widgets::Frame;
 use std::path::PathBuf;
 
 fn cfg(response: f32) -> SpringConfig {
@@ -218,127 +213,5 @@ impl ExplorerSidebar {
         }
 
         clicked_path
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-
-        // Vibrancy material for translucent sidebar
-        frame.material(
-            Scene::root(),
-            bounds,
-            CornerRadii::all(0.0),
-            theme.materials.sidebar,
-        );
-
-        let is_expanded = self.width.position > (Self::COLLAPSED + Self::EXPANDED) * 0.5;
-
-        let header_style = TextStyle::new(
-            theme.type_scale.caption2.size,
-            theme.type_scale.caption2.line,
-            Weight::Semibold,
-        );
-        let item_style = TextStyle::new(
-            theme.type_scale.subhead.size,
-            theme.type_scale.subhead.line,
-            Weight::Regular,
-        );
-
-        let mut y = bounds.y + 12.0;
-
-        for (sec_idx, sec) in self.sections.iter().enumerate() {
-            // Header
-            if is_expanded {
-                frame.label(
-                    Scene::root(),
-                    Point::new(bounds.x + 16.0, y + 4.0),
-                    sec.title,
-                    header_style,
-                    theme.palette.text_tertiary,
-                );
-            }
-            y += Self::HEADER_H;
-
-            // Items
-            for (item_idx, entry) in sec.entries.iter().enumerate() {
-                let item_rect = Rect::new(bounds.x + 8.0, y, bounds.w - 16.0, Self::ITEM_H);
-                let is_selected = self.selected_path.as_ref() == Some(&entry.path);
-                let is_hovered = self.hover_item == Some((sec_idx, item_idx));
-
-                if is_selected {
-                    frame.panel(
-                        Scene::root(),
-                        item_rect,
-                        Paint::Solid(theme.palette.selection),
-                        CornerRadii::all(theme.radii.sm),
-                        Border::default(),
-                        nx_ui::tokens::Shadow::none(),
-                        Layer::Foreground,
-                    );
-                } else if is_hovered {
-                    frame.panel(
-                        Scene::root(),
-                        item_rect,
-                        Paint::Solid(theme.palette.hover),
-                        CornerRadii::all(theme.radii.sm),
-                        Border::default(),
-                        nx_ui::tokens::Shadow::none(),
-                        Layer::Foreground,
-                    );
-                }
-
-                // Icon or Tag dot
-                let icon_px = 16.0;
-                let icon_x = item_rect.x + 8.0;
-                let icon_y = item_rect.y + (item_rect.h - icon_px) * 0.5;
-
-                if let Some(color) = entry.tag_color {
-                    // Draw tag dot
-                    let dot_rect = Rect::new(icon_x + 3.0, icon_y + 3.0, 10.0, 10.0);
-                    frame.panel(
-                        Scene::root(),
-                        dot_rect,
-                        Paint::Solid(color),
-                        CornerRadii::all(5.0),
-                        Border::default(),
-                        nx_ui::tokens::Shadow::none(),
-                        Layer::Foreground,
-                    );
-                } else {
-                    let tint = if is_selected {
-                        theme.palette.accent
-                    } else {
-                        theme.palette.text_secondary
-                    };
-                    frame.icon(
-                        Scene::root(),
-                        Point::new(icon_x, icon_y),
-                        entry.icon,
-                        icon_px,
-                        tint,
-                    );
-                }
-
-                if is_expanded {
-                    let text_x = icon_x + icon_px + 8.0;
-                    let text_y = item_rect.y + (item_rect.h - item_style.line) * 0.5;
-                    let text_color = if is_selected {
-                        theme.palette.text_primary
-                    } else {
-                        theme.palette.text_secondary
-                    };
-                    frame.label(
-                        Scene::root(),
-                        Point::new(text_x, text_y),
-                        &entry.label,
-                        item_style,
-                        text_color,
-                    );
-                }
-
-                y += Self::ITEM_H;
-            }
-            y += 8.0;
-        }
     }
 }

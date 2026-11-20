@@ -3,9 +3,7 @@ mod imp {
     use os_compositor::hooks::WinEventListener;
     use os_compositor::hotkeys::{pump_messages, GlobalKeyboardHook, HotkeyAction};
     use os_compositor::manager::WindowManager;
-    use os_compositor::{
-        create_border_overlay_window, BorderOverlay, GpuContext,
-    };
+    use os_compositor::{create_border_overlay_window, BorderOverlay, GpuContext};
     use os_config::watcher::ConfigWatcher;
     use os_core::hollow_shell::HollowShellManager;
     use os_core::window::WindowHandle;
@@ -276,8 +274,6 @@ mod imp {
                 bo.update(dt);
                 let _ = bo.render();
             }
-
-
 
             let elapsed = frame_start.elapsed();
             if elapsed < target_frame_time {

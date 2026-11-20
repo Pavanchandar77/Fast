@@ -8,7 +8,6 @@ pub mod expose;
 pub mod gpui_views;
 pub mod host;
 pub mod menu_bar;
-pub mod scene;
 pub mod scheduler;
 pub mod spotlight;
 pub mod squircle;
@@ -34,7 +33,6 @@ pub use menu_bar::{
     bar_height, hit_menu_bar, layout_menu_bar, BarSlot, ClipboardWidget, MeasuredSlot, MenuAction,
     MenuBarLayout, MenuBarModel, MenuEntry, PlacedSlot, StatusKind, StatusWidget, VolumeWidget,
 };
-pub use scene::{render_dock, render_expose, render_menu_bar, render_spotlight};
 pub use scheduler::{present_pace, FrameScheduler, PresentMode, PresentPace};
 pub use spotlight::{
     engine_from_paths, eval_calculator, fuzzy_score, layout_spotlight, ProviderKind, Spotlight,

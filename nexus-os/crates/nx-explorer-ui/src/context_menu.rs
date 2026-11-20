@@ -1,13 +1,8 @@
 //! Spring-animated Context Menu for file and background operations.
 
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect, Size};
+use nx_ui::geom::{Point, Rect, Size};
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
 use nx_ui::spring::{Spring, SpringConfig};
-use nx_ui::text::TextStyle;
-use nx_ui::tokens::Weight;
-use nx_ui::widgets::Frame;
 
 fn cfg(response: f32) -> SpringConfig {
     SpringConfig::macos(response, 1.0)
@@ -195,87 +190,5 @@ impl ExplorerContextMenu {
         }
 
         None
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, viewport: Size) {
-        if !self.is_open() || self.opacity.position <= 0.01 {
-            return;
-        }
-
-        let theme = frame.theme;
-        let bounds = self.bounds(viewport);
-        let alpha = self.opacity.position.clamp(0.0, 1.0);
-
-        frame.material(
-            Scene::root(),
-            bounds,
-            CornerRadii::all(theme.radii.md),
-            theme.materials.menu,
-        );
-
-        let style = TextStyle::new(
-            theme.type_scale.callout.size,
-            theme.type_scale.callout.line,
-            Weight::Regular,
-        );
-        let shortcut_style = TextStyle::new(
-            theme.type_scale.caption1.size,
-            theme.type_scale.caption1.line,
-            Weight::Regular,
-        );
-
-        let pad_x = theme.spacing.s12;
-
-        for (i, &item) in self.items.iter().enumerate() {
-            let row = Rect::new(
-                bounds.x + 4.0,
-                bounds.y + 4.0 + i as f32 * Self::ITEM_H,
-                bounds.w - 8.0,
-                Self::ITEM_H,
-            );
-
-            if self.hover == Some(i) {
-                let mut sel_color = theme.palette.selection;
-                sel_color.a *= alpha;
-                frame.panel(
-                    Scene::root(),
-                    row,
-                    Paint::Solid(sel_color),
-                    CornerRadii::all(theme.radii.xs),
-                    Border::default(),
-                    nx_ui::tokens::Shadow::none(),
-                    Layer::Foreground,
-                );
-            }
-
-            let mut text_color = theme.palette.text_primary;
-            text_color.a *= alpha;
-            let mut sub_color = theme.palette.text_tertiary;
-            sub_color.a *= alpha;
-
-            let text_y = row.y + (row.h - style.line) * 0.5;
-            frame.label(
-                Scene::root(),
-                Point::new(row.x + pad_x, text_y),
-                item.label(),
-                style,
-                text_color,
-            );
-
-            // Right-aligned shortcut
-            let sc = item.shortcut();
-            if !sc.is_empty() {
-                let prepared = frame.text.prepare(frame.atlas, sc, shortcut_style);
-                let sc_x = row.right() - pad_x - prepared.width;
-                let sc_y = row.y + (row.h - shortcut_style.line) * 0.5;
-                frame.label(
-                    Scene::root(),
-                    Point::new(sc_x, sc_y),
-                    sc,
-                    shortcut_style,
-                    sub_color,
-                );
-            }
-        }
     }
 }

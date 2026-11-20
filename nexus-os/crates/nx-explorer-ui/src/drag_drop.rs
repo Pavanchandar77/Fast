@@ -1,12 +1,7 @@
 //! Drag and drop state, drop target hit-testing, and floating badge rendering.
 
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect};
+use nx_ui::geom::Point;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
-use nx_ui::text::TextStyle;
-use nx_ui::tokens::Weight;
-use nx_ui::widgets::Frame;
 use std::path::PathBuf;
 
 const DRAG_THRESHOLD: f32 = 4.0;
@@ -105,63 +100,5 @@ impl DragDropState {
         self.paths.clear();
         self.action = None;
         self.target_path = None;
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>) {
-        if !self.active || self.paths.is_empty() {
-            return;
-        }
-
-        let theme = frame.theme;
-        let style = TextStyle::new(
-            theme.type_scale.caption1.size,
-            theme.type_scale.caption1.line,
-            Weight::Medium,
-        );
-
-        let mut buf = [0u8; 32];
-        let label = if self.paths.len() == 1 {
-            self.paths[0]
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_else(|| "1 item".into())
-        } else {
-            let count = self.paths.len();
-            let text = format!("{count} items");
-            let len = text.len().min(buf.len());
-            buf[..len].copy_from_slice(&text.as_bytes()[..len]);
-            std::str::from_utf8(&buf[..len]).unwrap_or("Items").into()
-        };
-
-        let prepared = frame.text.prepare(frame.atlas, &label, style);
-        let pad = theme.spacing.s8;
-        let pill_w = prepared.width + pad * 2.0 + 20.0;
-        let pill_h = style.line + pad;
-
-        let origin = Point::new(self.current_pos.x + 12.0, self.current_pos.y + 12.0);
-        let rect = Rect::new(origin.x, origin.y, pill_w, pill_h);
-
-        frame.panel(
-            Scene::root(),
-            rect,
-            Paint::Solid(theme.palette.control),
-            CornerRadii::all(theme.radii.pill),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            theme.elevation.md,
-            Layer::Foreground,
-        );
-
-        let badge_text_x = rect.x + pad;
-        let badge_text_y = rect.y + (rect.h - prepared.height) * 0.5;
-        frame.label(
-            Scene::root(),
-            Point::new(badge_text_x, badge_text_y),
-            &label,
-            style,
-            theme.palette.text_primary,
-        );
     }
 }

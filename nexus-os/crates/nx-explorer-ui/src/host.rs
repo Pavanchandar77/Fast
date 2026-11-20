@@ -31,9 +31,8 @@ pub fn open_explorer(window: ExplorerWindow) {
             origin: gpui::point(gpui::px(100.0), gpui::px(100.0)),
             size: gpui::size(gpui::px(1024.0), gpui::px(700.0)),
         };
-        let _ = cx.open_window(
-            theme.blurred_window_options(bounds),
-            move |_window, cx| cx.new(|_cx| ExplorerView::new(window)),
-        );
+        let _ = cx.open_window(theme.blurred_window_options(bounds), move |_window, cx| {
+            cx.new(|_cx| ExplorerView::new(window))
+        });
     });
 }

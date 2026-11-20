@@ -4,20 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Nexus-OS design system and GPU UI toolkit"
+description = "Nexus-OS design system and UI toolkit"
 publish = false
 
 [dependencies]
 gpui.workspace = true
-bytemuck.workspace = true
-wgpu.workspace = true
-tracing.workspace = true
-cosmic-text = "0.14"
-fontdb = "0.16"
-pollster = "0.4"
-resvg = "0.45"
-tiny-skia = "0.11"
-png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
@@ -25,13 +16,6 @@ nx-compat.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"
-naga = "24.0"
-raw-window-handle.workspace = true
-winit = "0.30"
-
-[[example]]
-name = "nx-ui-gallery"
-path = "examples/gallery.rs"
 
 [[bench]]
 name = "layout_100k"

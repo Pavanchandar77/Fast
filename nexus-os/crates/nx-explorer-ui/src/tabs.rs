@@ -1,14 +1,8 @@
 //! Multi-tab bar with spring-animated active tab indicator.
 
-use crate::icons::{ICON_CLOSE, ICON_FOLDER, ICON_PLUS, ICON_SEARCH};
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect};
+use nx_ui::geom::Rect;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
 use nx_ui::spring::{Spring, SpringConfig};
-use nx_ui::text::TextStyle;
-use nx_ui::tokens::Weight;
-use nx_ui::widgets::Frame;
 
 fn cfg(response: f32) -> SpringConfig {
     SpringConfig::macos(response, 1.0)
@@ -123,127 +117,5 @@ impl TabBar {
         }
 
         (select_tab, close_tab, add_tab)
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect, tabs: &[TabItem]) {
-        let theme = frame.theme;
-
-        // Background
-        frame.panel(
-            Scene::root(),
-            bounds,
-            Paint::Solid(theme.palette.window_bg),
-            CornerRadii::all(0.0),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            nx_ui::tokens::Shadow::none(),
-            Layer::Background,
-        );
-
-        let n = tabs.len().max(1);
-        let avail_w = (bounds.w - 36.0).max(0.0);
-        let tab_w = (avail_w / n as f32).clamp(Self::MIN_TAB_WIDTH, Self::MAX_TAB_WIDTH);
-
-        // Active tab spring indicator pill
-        let ind_x = bounds.x + self.indicator.position * tab_w + 3.0;
-        let ind_rect = Rect::new(ind_x, bounds.y + 3.0, tab_w - 6.0, bounds.h - 6.0);
-        frame.panel(
-            Scene::root(),
-            ind_rect,
-            Paint::Solid(theme.palette.control),
-            CornerRadii::all(theme.radii.sm),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            theme.elevation.sm,
-            Layer::Background,
-        );
-
-        let style = TextStyle::new(
-            theme.type_scale.callout.size,
-            theme.type_scale.callout.line,
-            Weight::Medium,
-        );
-
-        for (i, tab) in tabs.iter().enumerate() {
-            let tab_x = bounds.x + i as f32 * tab_w;
-            let tab_rect = Rect::new(tab_x, bounds.y, tab_w, bounds.h);
-
-            // Icon
-            let icon = if tab.is_search {
-                ICON_SEARCH
-            } else {
-                ICON_FOLDER
-            };
-            let icon_px = 16.0;
-            let icon_x = tab_rect.x + 10.0;
-            let icon_y = tab_rect.y + (tab_rect.h - icon_px) * 0.5;
-            let icon_color = if i == self.active_tab {
-                theme.palette.accent
-            } else {
-                theme.palette.text_secondary
-            };
-            frame.icon(
-                Scene::root(),
-                Point::new(icon_x, icon_y),
-                icon,
-                icon_px,
-                icon_color,
-            );
-
-            // Label
-            let text_color = if i == self.active_tab {
-                theme.palette.text_primary
-            } else {
-                theme.palette.text_secondary
-            };
-            let text_x = icon_x + icon_px + 6.0;
-            let text_y = tab_rect.y + (tab_rect.h - style.line) * 0.5;
-            let _max_title_w = tab_w - 54.0;
-            frame.label(
-                Scene::root(),
-                Point::new(text_x, text_y),
-                &tab.title,
-                style,
-                text_color,
-            );
-
-            // Close button × (visible when active or hovered)
-            if i == self.active_tab || self.hover_tab == Some(i) {
-                let close_x = tab_rect.right() - 20.0;
-                let close_y = tab_rect.y + (tab_rect.h - 12.0) * 0.5;
-                let close_color = if self.hover_close == Some(i) {
-                    theme.palette.text_primary
-                } else {
-                    theme.palette.text_tertiary
-                };
-                frame.icon(
-                    Scene::root(),
-                    Point::new(close_x, close_y),
-                    ICON_CLOSE,
-                    12.0,
-                    close_color,
-                );
-            }
-        }
-
-        // Plus button +
-        let plus_x = bounds.x + tab_w * n as f32 + 6.0;
-        let plus_y = bounds.y + (bounds.h - 16.0) * 0.5;
-        let plus_color = if self.hover_plus {
-            theme.palette.text_primary
-        } else {
-            theme.palette.text_secondary
-        };
-        frame.icon(
-            Scene::root(),
-            Point::new(plus_x, plus_y),
-            ICON_PLUS,
-            16.0,
-            plus_color,
-        );
     }
 }

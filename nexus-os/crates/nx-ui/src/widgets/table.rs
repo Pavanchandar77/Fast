@@ -1,14 +1,8 @@
 //! Virtualized table. A 100k-row document list only builds the visible window.
 
-use super::{style_of, Frame};
-use crate::color::Color;
-use crate::draw::{Border, Layer, Paint};
-use crate::geom::{CornerRadii, Point, Rect};
+use crate::geom::Rect;
 use crate::input::Input;
-use crate::layout::{layout_columns, virtual_window, Align, ColWidth, Column, VirtualSpec};
-use crate::scene::Scene;
-use crate::text::TextStyle;
-use crate::tokens::Weight;
+use crate::layout::{virtual_window, Align, ColWidth, Column, VirtualSpec};
 use crate::widgets::ScrollView;
 
 pub const TABLE_COLUMNS: [Column; 4] = [
@@ -122,115 +116,6 @@ impl VirtualTable {
         }
     }
 
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-        frame.panel(
-            Scene::root(),
-            bounds,
-            Paint::Solid(theme.palette.content_bg),
-            CornerRadii::all(0.0),
-            Border::default(),
-            crate::tokens::Shadow::none(),
-            Layer::Background,
-        );
-        let mut widths = [0.0f32; 4];
-        let gap = theme.spacing.s8;
-        let pad = theme.spacing.s12;
-        let inner_w = (bounds.w - pad * 2.0).max(0.0);
-        if !layout_columns(inner_w, gap, &TABLE_COLUMNS, &mut widths) {
-            return;
-        }
-        let mut xs = [0.0f32; 4];
-        let mut cursor = bounds.x + pad;
-        for (i, width) in widths.iter().enumerate() {
-            xs[i] = cursor;
-            cursor += width + gap;
-        }
-        let body = self.body(bounds);
-        let spec = self.spec();
-        let visual = self.scroll.visual_offset();
-        let window = virtual_window(&spec, visual, body.h);
-        let extra = window.scroll - visual;
-        let row_style = style_of(theme.type_scale.footnote);
-        let mut name_buf = [0u8; 24];
-        for slot in 0..window.count {
-            let visible_index = window.first + u64::from(slot);
-            let Some(index) = self.source_index(visible_index) else {
-                continue;
-            };
-            let mut row = window.row_rect(body, visible_index, self.row_height);
-            row.y += extra;
-            if row.bottom() < body.y || row.y > body.bottom() {
-                continue;
-            }
-            let fill = if self.selected == Some(index) {
-                theme.palette.selection
-            } else if self.hover == Some(index) {
-                theme.palette.hover
-            } else if index % 2 == 1 {
-                theme.palette.row_alt
-            } else {
-                Color::TRANSPARENT
-            };
-            if fill.a > 0.0 {
-                frame.panel(
-                    Scene::root(),
-                    row,
-                    Paint::Solid(fill),
-                    CornerRadii::all(0.0),
-                    Border::default(),
-                    crate::tokens::Shadow::none(),
-                    Layer::Background,
-                );
-            }
-            let name = row_name(index, &mut name_buf);
-            let cells = [name, kind_of(index), size_of(index), modified_of(index)];
-            for (i, cell) in cells.iter().enumerate() {
-                let prepared = frame.text.prepare(frame.atlas, cell, row_style);
-                let x = match TABLE_COLUMNS[i].align {
-                    Align::End => xs[i] + widths[i] - prepared.width,
-                    _ => xs[i],
-                };
-                frame.label(
-                    Scene::root(),
-                    Point::new(x, row.y + (row.h - prepared.height) * 0.5),
-                    cell,
-                    row_style,
-                    theme.palette.text_primary,
-                );
-            }
-        }
-        let header = Rect::new(bounds.x, bounds.y, bounds.w, HEADER_H);
-        frame.panel(
-            Scene::root(),
-            header,
-            Paint::Solid(theme.palette.fill_secondary),
-            CornerRadii::all(0.0),
-            Border::default(),
-            crate::tokens::Shadow::none(),
-            Layer::Foreground,
-        );
-        let head_style = TextStyle::new(
-            theme.type_scale.caption1.size,
-            theme.type_scale.caption1.line,
-            Weight::Semibold,
-        );
-        for (i, col) in TABLE_COLUMNS.iter().enumerate() {
-            let prepared = frame.text.prepare(frame.atlas, col.title, head_style);
-            let x = match col.align {
-                Align::End => xs[i] + widths[i] - prepared.width,
-                _ => xs[i],
-            };
-            frame.label(
-                Scene::root(),
-                Point::new(x, header.y + (HEADER_H - prepared.height) * 0.5),
-                col.title,
-                head_style,
-                theme.palette.text_secondary,
-            );
-        }
-    }
-
     fn body(&self, bounds: Rect) -> Rect {
         Rect::new(
             bounds.x,
@@ -316,25 +201,6 @@ fn kind_of(index: u64) -> &'static str {
         1 => "File",
         _ => "Image",
     }
-}
-
-fn size_of(index: u64) -> &'static str {
-    const SIZES: [&str; 8] = [
-        "1 KB", "24 KB", "128 KB", "1.2 MB", "8 MB", "64 MB", "256 MB", "1.4 GB",
-    ];
-    SIZES[(index % 8) as usize]
-}
-
-fn modified_of(index: u64) -> &'static str {
-    const DAYS: [&str; 6] = [
-        "Today",
-        "Yesterday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Nov 2",
-    ];
-    DAYS[(index % 6) as usize]
 }
 
 fn contains_ascii_ignore(hay: &str, needle: &str) -> bool {
