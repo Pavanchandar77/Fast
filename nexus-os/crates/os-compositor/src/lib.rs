@@ -11,10 +11,7 @@ pub mod manager;
 pub mod spring;
 
 #[cfg(windows)]
-pub use gpu::{
-    create_border_overlay_window, create_command_bar_window, create_top_bar_window, BorderOverlay,
-    CommandBar, GpuContext, TopBar,
-};
+pub use gpu::{create_border_overlay_window, BorderOverlay, GpuContext};
 #[cfg(windows)]
 pub use hooks::WinEventListener;
 #[cfg(windows)]
