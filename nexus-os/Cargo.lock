@@ -4440,6 +4440,7 @@ dependencies = [
  "os-shield",
  "os-vfs",
  "parking_lot",
+ "raw-window-handle",
  "tracing",
  "tracing-subscriber",
  "windows 0.58.0",

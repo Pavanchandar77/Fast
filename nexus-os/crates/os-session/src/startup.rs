@@ -320,18 +320,20 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             .ok();
 
         let spotlight_query = shell.spotlight.query.clone();
+        let mut spotlight_opts = theme.blurred_window_options(gpui::Bounds {
+            origin: gpui::point(gpui::px(620.0), gpui::px(280.0)),
+            size: gpui::size(gpui::px(680.0), gpui::px(420.0)),
+        });
+        // Spotlight starts closed; HotkeyAction::CommandBar toggles it.
+        spotlight_opts.show = false;
+        spotlight_opts.focus = false;
+        spotlight_opts.kind = gpui::WindowKind::PopUp;
         windows.spotlight_window = cx
-            .open_window(
-                theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(620.0), gpui::px(280.0)),
-                    size: gpui::size(gpui::px(680.0), gpui::px(420.0)),
-                }),
-                move |_window, cx| {
-                    let mut s = Spotlight::new();
-                    s.query = spotlight_query;
-                    cx.new(|_cx| SpotlightView::new(s))
-                },
-            )
+            .open_window(spotlight_opts, move |_window, cx| {
+                let mut s = Spotlight::new();
+                s.query = spotlight_query;
+                cx.new(|_cx| SpotlightView::new(s))
+            })
             .ok();
 
         let expose_model = shell.expose.clone();
@@ -372,6 +374,45 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     }
 
     windows
+}
+
+/// Toggle the GPUI Spotlight window in response to `HotkeyAction::CommandBar`.
+///
+/// Returns true when Spotlight is open afterwards.
+pub fn toggle_gpui_spotlight(
+    handle: gpui::WindowHandle<SpotlightView>,
+    cx: &mut gpui::App,
+) -> bool {
+    handle
+        .update(cx, |view, window, cx| {
+            let open = view.toggle();
+            apply_spotlight_visibility(window, open);
+            if open {
+                window.activate_window();
+            }
+            cx.notify();
+            open
+        })
+        .unwrap_or(false)
+}
+
+fn apply_spotlight_visibility(_window: &gpui::Window, _visible: bool) {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::RawWindowHandle;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNORMAL};
+
+        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(_window) {
+            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                let hwnd = HWND(win32.hwnd.get() as *mut std::ffi::c_void);
+                let cmd = if _visible { SW_SHOWNORMAL } else { SW_HIDE };
+                unsafe {
+                    let _ = ShowWindow(hwnd, cmd);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -436,6 +477,25 @@ mod tests {
             assert!(windows.expose_window.is_some());
             assert!(windows.explorer_window.is_some());
             assert!(windows.privacy_dashboard_window.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn test_command_bar_toggles_gpui_spotlight(cx: &mut gpui::TestAppContext) {
+        let mut session = start_session();
+        cx.update(|cx| {
+            let windows = open_gpui_windows(cx, &mut session);
+            let handle = windows
+                .spotlight_window
+                .expect("SpotlightView window must be created");
+            assert!(
+                !handle.read(cx).expect("spotlight view").model.is_open(),
+                "Spotlight starts closed"
+            );
+            assert!(toggle_gpui_spotlight(handle, cx));
+            assert!(handle.read(cx).expect("spotlight view").model.is_open());
+            assert!(!toggle_gpui_spotlight(handle, cx));
+            assert!(!handle.read(cx).expect("spotlight view").model.is_open());
         });
     }
 }

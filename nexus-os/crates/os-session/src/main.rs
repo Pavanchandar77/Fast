@@ -10,6 +10,7 @@ mod imp {
     use os_governor::Governor;
     use parking_lot::RwLock;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tracing::{info, warn};
@@ -19,6 +20,16 @@ mod imp {
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     };
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetForegroundWindow};
+
+    enum SessionUiEvent {
+        FailSafeQuit,
+        ToggleSpotlight,
+    }
+
+    #[allow(dead_code)]
+    struct LiveSession(os_session::SessionHandle);
+
+    impl gpui::Global for LiveSession {}
 
     pub fn run() -> anyhow::Result<()> {
         // Restore journaled mutations on panic before anything else runs.
@@ -119,7 +130,7 @@ mod imp {
         // The keyboard hook is installed before any system mutation. If it cannot
         // be installed, startup stops and the drop guard restores the journal.
         info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
-        let (_keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start_with_config(
+        let (keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start_with_config(
             fail_safe,
             &config_arc.read().keybindings,
         ) {
@@ -143,7 +154,7 @@ mod imp {
 
         // 4. Start WinEvent Hooks (Window lifecycle & foreground transitions)
         info!("Attaching NT WinEvent Hook subsystem...");
-        let (_win_event_listener, win_event_rx) = WinEventListener::start()?;
+        let (win_event_listener, win_event_rx) = WinEventListener::start()?;
 
         // 6. Enumerate and ingest all existing desktop windows into the compositor
         info!("Scanning initial desktop surface hierarchy...");
@@ -166,119 +177,207 @@ mod imp {
             }
         }
 
-        // 8. Initialize Hardware-Accelerated Shell Surface Subsystem (Top Bar, Command Center, Squircle Border)
-        info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
-        let gpu = match GpuContext::new() {
-            Ok(g) => Some(g),
-            Err(e) => {
-                warn!("GPU rendering initialization bypassed: {:?}", e);
-                None
-            }
+        let compositor = CompositorLoop {
+            _keyboard_hook: keyboard_hook,
+            hotkey_rx,
+            _win_event_listener: win_event_listener,
+            win_event_rx,
+            governor,
+            wm,
+            _watcher: watcher,
+            config_rx,
+            compositor_config,
+            governor_config,
+            config_arc,
         };
 
-        let mut border_overlay = gpu.as_ref().and_then(|g| {
-            let hwnd = create_border_overlay_window().ok()?;
-            let spring_cfg = WindowManager::to_spring_config(&config_arc.read().compositor.spring);
-            BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
+        // 8b. Real GPUI windows: menu bar, dock, Spotlight, Mission Control,
+        // explorer, and privacy dashboard. The compositor/governor/hotkey loop
+        // continues on a background thread at 120Hz.
+        info!("Starting GPUI application...");
+        gpui::Application::new().run(move |cx| {
+            let mut session = os_session::startup::start_session();
+            info!("session surfaces: {}", session.summary());
+            let windows = os_session::startup::open_gpui_windows(cx, &mut session);
+            // Keep component state alive for the GPUI application lifetime.
+            cx.set_global(LiveSession(session));
+
+            let (ui_tx, ui_rx) = crossbeam_channel::unbounded::<SessionUiEvent>();
+            let running = Arc::new(AtomicBool::new(true));
+            let running_for_quit = running.clone();
+            cx.on_app_quit(move |_| {
+                running_for_quit.store(false, Ordering::SeqCst);
+                async {}
+            })
+            .detach();
+
+            let spotlight = windows.spotlight_window;
+            if let Err(err) = std::thread::Builder::new()
+                .name("nexus-compositor-loop".into())
+                .spawn(move || compositor.run(ui_tx, running))
+            {
+                warn!("failed to spawn compositor loop thread: {err}");
+            }
+
+            cx.spawn(async move |cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(8))
+                    .await;
+                let mut quit = false;
+                while let Ok(event) = ui_rx.try_recv() {
+                    match event {
+                        SessionUiEvent::FailSafeQuit => {
+                            let _ = cx.update(|cx| cx.quit());
+                            quit = true;
+                        }
+                        SessionUiEvent::ToggleSpotlight => {
+                            let _ = cx.update(|cx| {
+                                if let Some(handle) = spotlight {
+                                    os_session::startup::toggle_gpui_spotlight(handle, cx);
+                                }
+                            });
+                        }
+                    }
+                }
+                if quit {
+                    break;
+                }
+            })
+            .detach();
         });
 
-        // 8b. Bring up shell, explorer, privacy dashboard, and power features.
-        // A single failure logs and continues; the session stays up.
-        let _session_surfaces = os_session::startup::start_session();
-        info!("session surfaces: {}", _session_surfaces.summary());
+        Ok(())
+    }
 
-        // 9. Main Orchestration & Event Dispatch Loop (120Hz Animation Solver & Windows Message Pump)
-        info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
-        let mut last_frame = Instant::now();
-        let target_frame_time = Duration::from_micros(8333); // 120Hz
+    struct CompositorLoop {
+        _keyboard_hook: GlobalKeyboardHook,
+        hotkey_rx: crossbeam_channel::Receiver<HotkeyAction>,
+        _win_event_listener: WinEventListener,
+        win_event_rx: crossbeam_channel::Receiver<os_compositor::hooks::WindowEvent>,
+        governor: Arc<Governor>,
+        wm: Arc<RwLock<WindowManager>>,
+        _watcher: ConfigWatcher,
+        config_rx: crossbeam_channel::Receiver<os_config::schema::SystemConfig>,
+        compositor_config: Arc<RwLock<os_config::schema::CompositorConfig>>,
+        governor_config: Arc<RwLock<os_config::schema::GovernorConfig>>,
+        config_arc: Arc<RwLock<os_config::schema::SystemConfig>>,
+    }
 
-        loop {
-            let now = Instant::now();
-            let dt = (now - last_frame).as_secs_f32();
-            last_frame = now;
-            let frame_start = Instant::now();
-
-            os_core::heartbeat::pulse();
-            if pump_messages() {
-                warn!("Emergency fail-safe triggered");
-                info!("Restoring the journaled session and exiting");
-                wm.write().restore_all_on_exit();
-                return Ok(());
-            }
-
-            // Drain incoming WinEvents (Window creation, destruction, focus changes)
-            while let Ok(event) = win_event_rx.try_recv() {
-                match &event {
-                    os_compositor::hooks::WindowEvent::ForegroundChanged(hwnd) => {
-                        governor.on_foreground_changed(*hwnd);
-                    }
-                    os_compositor::hooks::WindowEvent::WindowHide(hwnd)
-                    | os_compositor::hooks::WindowEvent::WindowCloaked(hwnd) => {
-                        governor.on_window_minimized(*hwnd);
-                    }
-                    os_compositor::hooks::WindowEvent::WindowShow(hwnd)
-                    | os_compositor::hooks::WindowEvent::WindowUncloaked(hwnd) => {
-                        governor.on_window_restored(*hwnd);
-                    }
-                    os_compositor::hooks::WindowEvent::WindowDestroyed(hwnd) => {
-                        governor.on_process_exit(hwnd.pid());
-                    }
-                    _ => {}
+    impl CompositorLoop {
+        fn run(self, ui_tx: crossbeam_channel::Sender<SessionUiEvent>, running: Arc<AtomicBool>) {
+            // Create the focus-border overlay on this thread so the HWND has
+            // the compositor loop's thread affinity.
+            info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
+            let gpu = match GpuContext::new() {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    warn!("GPU rendering initialization bypassed: {:?}", e);
+                    None
                 }
-                wm.write().handle_event(event);
-            }
+            };
+            let mut border_overlay = gpu.as_ref().and_then(|g| {
+                let hwnd = create_border_overlay_window().ok()?;
+                let spring_cfg =
+                    WindowManager::to_spring_config(&self.config_arc.read().compositor.spring);
+                BorderOverlay::new(g.clone(), hwnd, spring_cfg).ok()
+            });
 
-            // Drain incoming Hotkey Actions
-            while let Ok(action) = hotkey_rx.try_recv() {
-                match action {
-                    HotkeyAction::PanicFailSafe => {
-                        warn!("Emergency fail-safe triggered");
-                        info!("Restoring the journaled session and exiting");
-                        wm.write().restore_all_on_exit();
-                        return Ok(());
+            info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
+            let mut last_frame = Instant::now();
+            let target_frame_time = Duration::from_micros(8333); // 120Hz
+
+            while running.load(Ordering::SeqCst) {
+                let now = Instant::now();
+                let dt = (now - last_frame).as_secs_f32();
+                last_frame = now;
+                let frame_start = Instant::now();
+
+                os_core::heartbeat::pulse();
+                if pump_messages() {
+                    self.fail_safe_restore_and_quit(&ui_tx);
+                    return;
+                }
+
+                // Drain incoming WinEvents (Window creation, destruction, focus changes)
+                while let Ok(event) = self.win_event_rx.try_recv() {
+                    match &event {
+                        os_compositor::hooks::WindowEvent::ForegroundChanged(hwnd) => {
+                            self.governor.on_foreground_changed(*hwnd);
+                        }
+                        os_compositor::hooks::WindowEvent::WindowHide(hwnd)
+                        | os_compositor::hooks::WindowEvent::WindowCloaked(hwnd) => {
+                            self.governor.on_window_minimized(*hwnd);
+                        }
+                        os_compositor::hooks::WindowEvent::WindowShow(hwnd)
+                        | os_compositor::hooks::WindowEvent::WindowUncloaked(hwnd) => {
+                            self.governor.on_window_restored(*hwnd);
+                        }
+                        os_compositor::hooks::WindowEvent::WindowDestroyed(hwnd) => {
+                            self.governor.on_process_exit(hwnd.pid());
+                        }
+                        _ => {}
                     }
-                    HotkeyAction::Terminal => {
-                        info!("Hotkey: Launching terminal...");
-                        let _ = std::process::Command::new("powershell.exe").spawn();
-                    }
-                    HotkeyAction::CommandBar => {
-                        info!("Hotkey: Toggle Command Bar / Spotlight in <2ms");
-                    }
-                    other => {
-                        wm.write().handle_hotkey(other);
+                    self.wm.write().handle_event(event);
+                }
+
+                // Drain incoming Hotkey Actions
+                while let Ok(action) = self.hotkey_rx.try_recv() {
+                    match action {
+                        HotkeyAction::PanicFailSafe => {
+                            self.fail_safe_restore_and_quit(&ui_tx);
+                            return;
+                        }
+                        HotkeyAction::Terminal => {
+                            info!("Hotkey: Launching terminal...");
+                            let _ = std::process::Command::new("powershell.exe").spawn();
+                        }
+                        HotkeyAction::CommandBar => {
+                            info!("Hotkey: Toggle GPUI SpotlightView");
+                            let _ = ui_tx.send(SessionUiEvent::ToggleSpotlight);
+                        }
+                        other => {
+                            self.wm.write().handle_hotkey(other);
+                        }
                     }
                 }
-            }
 
-            // Drain live config hot-reloads (<10ms)
-            while let Ok(new_cfg) = config_rx.try_recv() {
-                info!("Applying hot-reloaded configuration to Compositor and Governor...");
-                *compositor_config.write() = new_cfg.compositor.clone();
-                *governor_config.write() = new_cfg.governor.clone();
-                os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
-                    &new_cfg.keybindings,
-                );
-                let active_ws = wm.read().active_workspace();
-                *config_arc.write() = new_cfg;
-                wm.write().retile_workspace(active_ws);
-            }
-
-            // Step Spring Physics solver and reposition windows at 120Hz
-            wm.write().update_animations(dt);
-
-            // Update and Render GPU Shell Surfaces
-            if let Some(bo) = &mut border_overlay {
-                if let Some(rect) = wm.read().active_window_rect() {
-                    bo.set_target_rect(rect);
+                // Drain live config hot-reloads (<10ms)
+                while let Ok(new_cfg) = self.config_rx.try_recv() {
+                    info!("Applying hot-reloaded configuration to Compositor and Governor...");
+                    *self.compositor_config.write() = new_cfg.compositor.clone();
+                    *self.governor_config.write() = new_cfg.governor.clone();
+                    os_compositor::hotkeys::GlobalKeyboardHook::update_keybindings(
+                        &new_cfg.keybindings,
+                    );
+                    let active_ws = self.wm.read().active_workspace();
+                    *self.config_arc.write() = new_cfg;
+                    self.wm.write().retile_workspace(active_ws);
                 }
-                bo.update(dt);
-                let _ = bo.render();
-            }
 
-            let elapsed = frame_start.elapsed();
-            if elapsed < target_frame_time {
-                std::thread::sleep(target_frame_time - elapsed);
+                // Step Spring Physics solver and reposition windows at 120Hz
+                self.wm.write().update_animations(dt);
+
+                // Update and Render GPU Shell Surfaces (focus border overlay only)
+                if let Some(bo) = &mut border_overlay {
+                    if let Some(rect) = self.wm.read().active_window_rect() {
+                        bo.set_target_rect(rect);
+                    }
+                    bo.update(dt);
+                    let _ = bo.render();
+                }
+
+                let elapsed = frame_start.elapsed();
+                if elapsed < target_frame_time {
+                    std::thread::sleep(target_frame_time - elapsed);
+                }
             }
+        }
+
+        fn fail_safe_restore_and_quit(&self, ui_tx: &crossbeam_channel::Sender<SessionUiEvent>) {
+            warn!("Emergency fail-safe triggered");
+            info!("Restoring the journaled session and exiting");
+            self.wm.write().restore_all_on_exit();
+            let _ = ui_tx.send(SessionUiEvent::FailSafeQuit);
         }
     }
 

@@ -396,6 +396,12 @@ impl SpotlightView {
     pub fn new(model: Spotlight) -> Self {
         Self { model }
     }
+
+    /// Toggle the Spotlight palette. Returns true when it is open afterwards.
+    pub fn toggle(&mut self) -> bool {
+        self.model.toggle();
+        self.model.is_open()
+    }
 }
 
 impl Render for SpotlightView {

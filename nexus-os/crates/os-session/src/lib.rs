@@ -3,6 +3,6 @@
 pub mod startup;
 
 pub use startup::{
-    open_gpui_windows, start_session, start_session_with, ComponentStatus, GpuiSessionWindows,
-    SessionComponent, SessionHandle,
+    open_gpui_windows, start_session, start_session_with, toggle_gpui_spotlight, ComponentStatus,
+    GpuiSessionWindows, SessionComponent, SessionHandle,
 };
