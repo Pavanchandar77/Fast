@@ -8,6 +8,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+gpui = { workspace = true }
 nx-compat = { path = "../nx-compat" }
 nx-ui = { path = "../nx-ui" }
 nx-wm = { path = "../nx-wm" }

@@ -1,11 +1,8 @@
 //! Split pane geometry and divider interaction.
 
 use nx_explorer::action::PaneId;
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Rect};
+use nx_ui::geom::Rect;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
-use nx_ui::widgets::Frame;
 
 pub struct SplitLayout {
     split_enabled: bool,
@@ -101,18 +98,5 @@ impl SplitLayout {
             let ratio = offset_x / content_bounds.w.max(1.0);
             self.ratio = ratio.clamp(0.2, 0.8);
         }
-    }
-
-    pub fn paint_divider(&self, frame: &mut Frame<'_>, divider_rect: Rect) {
-        let theme = frame.theme;
-        frame.panel(
-            Scene::root(),
-            divider_rect,
-            Paint::Solid(theme.palette.separator),
-            CornerRadii::all(0.0),
-            Border::default(),
-            nx_ui::tokens::Shadow::none(),
-            Layer::Foreground,
-        );
     }
 }

@@ -1,10 +1,6 @@
 //! Rubber-band selection rectangle logic and rendering.
 
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect};
-use nx_ui::scene::Scene;
-use nx_ui::tokens::Shadow;
-use nx_ui::widgets::Frame;
+use nx_ui::geom::{Point, Rect};
 
 #[derive(Debug, Clone, Default)]
 pub struct RubberBand {
@@ -65,36 +61,6 @@ impl RubberBand {
         }
         let r = self.rect();
         r.intersects(target)
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>) {
-        if !self.active {
-            return;
-        }
-        let r = self.rect();
-        if r.w < 1.0 || r.h < 1.0 {
-            return;
-        }
-
-        let theme = frame.theme;
-        let mut fill_color = theme.palette.accent;
-        fill_color.a = 0.16;
-
-        let mut border_color = theme.palette.accent;
-        border_color.a = 0.65;
-
-        frame.panel(
-            Scene::root(),
-            r,
-            Paint::Solid(fill_color),
-            CornerRadii::all(theme.radii.xs),
-            Border {
-                color: border_color,
-                width: 1.0,
-            },
-            Shadow::none(),
-            Layer::Foreground,
-        );
     }
 }
 

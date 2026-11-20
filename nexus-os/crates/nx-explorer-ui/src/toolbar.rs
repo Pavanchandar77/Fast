@@ -1,17 +1,12 @@
 //! Unified Finder/Explorer toolbar with navigation, breadcrumbs / address bar, view switcher, and search.
 
 use crate::icons::{
-    ICON_BACK, ICON_CHEVRON_RIGHT, ICON_EYE, ICON_FORWARD, ICON_MOON, ICON_REFRESH, ICON_SPLIT,
-    ICON_UP,
+    ICON_BACK, ICON_EYE, ICON_FORWARD, ICON_MOON, ICON_REFRESH, ICON_SPLIT, ICON_UP,
 };
 use nx_explorer::action::ViewKind;
-use nx_ui::draw::{Border, Layer, Paint};
-use nx_ui::geom::{CornerRadii, Point, Rect};
+use nx_ui::geom::Rect;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
-use nx_ui::text::TextStyle;
-use nx_ui::tokens::Weight;
-use nx_ui::widgets::{Button, Frame, SearchField, Segmented};
+use nx_ui::widgets::{Button, SearchField, Segmented};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,143 +277,5 @@ impl UnifiedToolbar {
         }
 
         actions
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>, bounds: Rect) {
-        let theme = frame.theme;
-
-        // Toolbar background
-        frame.panel(
-            Scene::root(),
-            bounds,
-            Paint::Solid(theme.palette.window_bg),
-            CornerRadii::all(0.0),
-            Border {
-                color: theme.palette.separator,
-                width: 1.0,
-            },
-            nx_ui::tokens::Shadow::none(),
-            Layer::Background,
-        );
-
-        let pad_x = 12.0;
-        let mut x = bounds.x + pad_x;
-        let cy = bounds.y + (bounds.h - 28.0) * 0.5;
-
-        // Nav buttons
-        self.back.paint(frame, Rect::new(x, cy, 28.0, 28.0));
-        x += 32.0;
-        self.forward.paint(frame, Rect::new(x, cy, 28.0, 28.0));
-        x += 32.0;
-        self.up.paint(frame, Rect::new(x, cy, 28.0, 28.0));
-        x += 40.0;
-
-        // View switcher
-        let seg_w = 240.0;
-        self.segmented.paint(frame, Rect::new(x, cy, seg_w, 28.0));
-        x += seg_w + 16.0;
-
-        // Right side
-        let mut rx = bounds.right() - pad_x;
-        rx -= 28.0;
-        self.theme_btn.paint(frame, Rect::new(rx, cy, 28.0, 28.0));
-        rx -= 8.0;
-
-        rx -= 28.0;
-        self.preview_btn.paint(frame, Rect::new(rx, cy, 28.0, 28.0));
-        rx -= 8.0;
-
-        rx -= 28.0;
-        self.split_btn.paint(frame, Rect::new(rx, cy, 28.0, 28.0));
-        rx -= 16.0;
-
-        let search_w = 180.0;
-        rx -= search_w;
-        self.search.paint(frame, Rect::new(rx, cy, search_w, 28.0));
-        rx -= 16.0;
-
-        // Middle: Breadcrumb pill / Address input
-        let crumb_w = (rx - x).max(60.0);
-        let crumb_rect = Rect::new(x, cy, crumb_w, 28.0);
-
-        frame.panel(
-            Scene::root(),
-            crumb_rect,
-            Paint::Solid(theme.palette.control),
-            CornerRadii::all(theme.radii.sm),
-            Border {
-                color: if self.address_mode {
-                    theme.palette.accent
-                } else {
-                    theme.palette.separator
-                },
-                width: 1.0,
-            },
-            theme.elevation.sm,
-            Layer::Foreground,
-        );
-
-        let style = TextStyle::new(
-            theme.type_scale.caption1.size,
-            theme.type_scale.caption1.line,
-            Weight::Medium,
-        );
-
-        if self.address_mode {
-            let text_y = crumb_rect.y + (crumb_rect.h - style.line) * 0.5;
-            let cursor_str = format!("{}|", self.address_text);
-            frame.label(
-                Scene::root(),
-                Point::new(crumb_rect.x + 8.0, text_y),
-                &cursor_str,
-                style,
-                theme.palette.text_primary,
-            );
-        } else {
-            let mut chip_x = crumb_rect.x + 8.0;
-            let text_y = crumb_rect.y + (crumb_rect.h - style.line) * 0.5;
-
-            for (i, (label, _)) in self.breadcrumbs.iter().enumerate() {
-                let prep = frame.text.prepare(frame.atlas, label, style);
-                let w = (prep.width + 12.0).max(20.0);
-
-                if self.hover_crumb == Some(i) {
-                    let chip_rect = Rect::new(chip_x, crumb_rect.y + 2.0, w, crumb_rect.h - 4.0);
-                    frame.panel(
-                        Scene::root(),
-                        chip_rect,
-                        Paint::Solid(theme.palette.hover),
-                        CornerRadii::all(theme.radii.xs),
-                        Border::default(),
-                        nx_ui::tokens::Shadow::none(),
-                        Layer::Foreground,
-                    );
-                }
-
-                frame.label(
-                    Scene::root(),
-                    Point::new(chip_x + 6.0, text_y),
-                    label,
-                    style,
-                    if i + 1 == self.breadcrumbs.len() {
-                        theme.palette.text_primary
-                    } else {
-                        theme.palette.text_secondary
-                    },
-                );
-                chip_x += w;
-
-                if i + 1 < self.breadcrumbs.len() {
-                    frame.icon(
-                        Scene::root(),
-                        Point::new(chip_x, crumb_rect.y + (crumb_rect.h - 10.0) * 0.5),
-                        ICON_CHEVRON_RIGHT,
-                        10.0,
-                        theme.palette.text_tertiary,
-                    );
-                    chip_x += 14.0;
-                }
-            }
-        }
     }
 }

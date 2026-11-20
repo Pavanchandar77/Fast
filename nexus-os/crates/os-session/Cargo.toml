@@ -30,6 +30,7 @@ name = "os_session"
 path = "src/lib.rs"
 
 [dependencies]
+gpui = { workspace = true }
 anyhow.workspace = true
 tracing.workspace = true
 nx-shell = { path = "../nx-shell" }
@@ -53,3 +54,4 @@ tracing-subscriber.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
 windows.workspace = true
+raw-window-handle.workspace = true

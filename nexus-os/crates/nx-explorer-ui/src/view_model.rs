@@ -23,7 +23,6 @@ use nx_explorer::{Explorer, Focus};
 use nx_ui::geom::{Rect, Size};
 use nx_ui::input::Input;
 use nx_ui::theme::{Accent, Theme, ThemeMode};
-use nx_ui::widgets::Frame;
 
 use std::path::{Path, PathBuf};
 
@@ -476,109 +475,6 @@ impl ExplorerWindow {
         self.sync_status();
 
         fx
-    }
-
-    pub fn paint(&self, frame: &mut Frame<'_>) {
-        let content_top = TabBar::HEIGHT + UnifiedToolbar::HEIGHT;
-        let content_h = (self.viewport.h - content_top - StatusBar::HEIGHT).max(0.0);
-
-        let sidebar_w = self.sidebar.width();
-        let preview_w = self.preview.width();
-        let center_w = (self.viewport.w - sidebar_w - preview_w).max(0.0);
-
-        let tabs_rect = Rect::new(0.0, 0.0, self.viewport.w, TabBar::HEIGHT);
-        let toolbar_rect = Rect::new(0.0, TabBar::HEIGHT, self.viewport.w, UnifiedToolbar::HEIGHT);
-        let sidebar_rect = Rect::new(0.0, content_top, sidebar_w, content_h);
-        let center_rect = Rect::new(sidebar_w, content_top, center_w, content_h);
-        let preview_rect = Rect::new(
-            self.viewport.w - preview_w,
-            content_top,
-            preview_w,
-            content_h,
-        );
-        let status_rect = Rect::new(
-            0.0,
-            self.viewport.h - StatusBar::HEIGHT,
-            self.viewport.w,
-            StatusBar::HEIGHT,
-        );
-
-        // 1. Sidebar
-        self.sidebar.paint(frame, sidebar_rect);
-
-        // 2. Main Content View
-        let (primary_rect, sec_rect, div_rect) = self.split.compute_rects(center_rect);
-        if let Some(pane) = self.explorer.pane() {
-            let rename_row = if self.explorer.focus == Focus::Rename {
-                pane.cursor()
-            } else {
-                None
-            };
-            let rename_text = self.explorer.input.text();
-
-            match pane.view {
-                ViewKind::Details => {
-                    self.details_view
-                        .paint(frame, primary_rect, pane, rename_row, rename_text);
-                }
-                ViewKind::List => {
-                    self.list_view
-                        .paint(frame, primary_rect, pane, rename_row, rename_text);
-                }
-                ViewKind::Grid => {
-                    self.grid_view.paint(frame, primary_rect, pane);
-                }
-                ViewKind::Columns => {
-                    self.columns_view.paint(frame, primary_rect, pane);
-                }
-            }
-        }
-
-        // Secondary split pane if open
-        if let Some(sec_r) = sec_rect {
-            if let Some(pane) = self.explorer.pane() {
-                self.details_view.paint(frame, sec_r, pane, None, "");
-            }
-        }
-
-        if let Some(div_r) = div_rect {
-            self.split.paint_divider(frame, div_r);
-        }
-
-        // 3. Rubber-band selection box
-        self.rubber_band.paint(frame);
-
-        // 4. Preview Pane
-        self.preview.paint(frame, preview_rect);
-
-        // 5. Tabs
-        let tabs_meta: Vec<TabItem> = self
-            .explorer
-            .tabs()
-            .iter()
-            .map(|t| TabItem {
-                title: t.title(),
-                is_search: t
-                    .pane()
-                    .is_some_and(|p| matches!(p.location, Location::Search { .. })),
-            })
-            .collect();
-        self.tabs.paint(frame, tabs_rect, &tabs_meta);
-
-        // 6. Toolbar
-        self.toolbar.paint(frame, toolbar_rect);
-
-        // 7. Status bar
-        self.status_bar.paint(frame, status_rect);
-
-        // 8. Context Menu (floating on top)
-        self.context_menu.paint(frame, self.viewport);
-
-        // 9. Drag Drop badge
-        self.drag_drop.paint(frame);
-
-        // 10. Operations progress banner
-        self.ops_progress.paint(frame, center_rect);
     }
 
     pub fn current_dir(&self) -> Option<PathBuf> {

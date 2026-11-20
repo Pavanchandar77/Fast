@@ -8,6 +8,7 @@
 
 pub mod context_menu;
 pub mod drag_drop;
+pub mod gpui_view;
 pub mod host;
 pub mod icons;
 pub mod index_cache;
@@ -25,8 +26,8 @@ pub mod watcher;
 
 pub use context_menu::{ContextItem, ExplorerContextMenu};
 pub use drag_drop::{DragDropState, DropAction};
-#[cfg(windows)]
-pub use host::ExplorerApp;
+pub use gpui_view::{format_bytes, ExplorerView, FileRowSnapshot};
+pub use host::{open_explorer, ExplorerApp};
 pub use index_cache::PersistentIndexManager;
 pub use ops_progress::{ActiveOp, OpsProgressView};
 pub use preview::PreviewPane;

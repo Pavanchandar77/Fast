@@ -1,6 +1,6 @@
 //! Platform-free pointer and keyboard edges for one frame.
 //!
-//! The gallery example fills this from winit. Widgets only see this struct,
+//! Widgets only see this struct,
 //! so they run under `cargo test` with no window.
 
 use crate::geom::Point;

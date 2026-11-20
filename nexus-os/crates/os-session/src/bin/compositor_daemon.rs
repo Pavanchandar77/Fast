@@ -6,10 +6,7 @@ mod imp {
     use os_compositor::hooks::WinEventListener;
     use os_compositor::hotkeys::{pump_messages, GlobalKeyboardHook, HotkeyAction};
     use os_compositor::manager::WindowManager;
-    use os_compositor::{
-        create_border_overlay_window, create_command_bar_window, create_top_bar_window,
-        BorderOverlay, CommandBar, GpuContext, TopBar,
-    };
+    use os_compositor::{create_border_overlay_window, BorderOverlay, GpuContext};
     use os_config::watcher::ConfigWatcher;
     use os_core::window::WindowHandle;
     use parking_lot::RwLock;
@@ -92,14 +89,6 @@ mod imp {
             }
         };
 
-        let mut top_bar = gpu.as_ref().and_then(|g| {
-            let hwnd = create_top_bar_window().ok()?;
-            TopBar::new(g.clone(), hwnd).ok()
-        });
-        let mut command_bar = gpu.as_ref().and_then(|g| {
-            let hwnd = create_command_bar_window().ok()?;
-            CommandBar::new(g.clone(), hwnd).ok()
-        });
         let mut border_overlay = gpu.as_ref().and_then(|g| {
             let hwnd = create_border_overlay_window().ok()?;
             let spring_cfg = WindowManager::to_spring_config(&compositor_config.read().spring);
@@ -133,11 +122,6 @@ mod imp {
                         wm.write().restore_all_on_exit();
                         return Ok(());
                     }
-                    HotkeyAction::CommandBar => {
-                        if let Some(cb) = &mut command_bar {
-                            cb.toggle();
-                        }
-                    }
                     other => wm.write().handle_hotkey(other),
                 }
             }
@@ -153,23 +137,13 @@ mod imp {
 
             wm.write().update_animations(dt);
 
-            // Update and Render GPU Shell Surfaces
+            // Update and Render GPU Shell Surfaces (Focus border overlay)
             if let Some(bo) = &mut border_overlay {
                 if let Some(rect) = wm.read().active_window_rect() {
                     bo.set_target_rect(rect);
                 }
                 bo.update(dt);
                 let _ = bo.render();
-            }
-
-            if let Some(tb) = &mut top_bar {
-                tb.set_active_workspace(wm.read().active_workspace() as u32);
-                tb.step();
-                let _ = tb.render();
-            }
-
-            if let Some(cb) = &mut command_bar {
-                let _ = cb.render();
             }
 
             let elapsed = frame_start.elapsed();

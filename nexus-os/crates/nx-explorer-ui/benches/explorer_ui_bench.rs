@@ -6,12 +6,7 @@ use nx_fs::index::engine::{SearchEngine, SearchOptions};
 use nx_fs::index::frecency::FrecencyStore;
 use nx_fs::index::matcher::Query;
 use nx_fs::index::synthetic::build_index;
-use nx_ui::atlas::Atlas;
-use nx_ui::icon::IconCache;
 use nx_ui::input::Input;
-use nx_ui::scene::Scene;
-use nx_ui::text::TextEngine;
-use nx_ui::widgets::Frame;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -104,48 +99,14 @@ fn bench_scroll_frame_building_100k(c: &mut Criterion) {
     });
     win.explorer.update(Msg::ListingDone { request: req });
 
-    let mut text = TextEngine::new().expect("text engine");
-    let mut icons = IconCache::new();
-    let mut atlas = Atlas::new(1024);
-    let mut scene = Scene::with_capacity(4096, 16384);
-
-    // Warm-up pass
-    {
-        let input = Input::default();
-        win.update(&input, 0.016);
-        let mut frame = Frame {
-            scene: &mut scene,
-            text: &mut text,
-            icons: &mut icons,
-            atlas: &mut atlas,
-            theme: win.theme,
-        };
-        win.paint(&mut frame);
-        let _ = scene.flatten(|_| &[]);
-    }
-
-    let mut offset = 0.0f32;
-
     c.bench_function("scroll_frame_building_100k", |b| {
         b.iter(|| {
-            offset = (offset + 28.0) % 2_000_000.0;
             let input = Input {
                 scroll_y: 28.0,
                 ..Default::default()
             };
-            win.update(&input, 0.016);
-
-            scene.begin_frame();
-            let mut frame = Frame {
-                scene: &mut scene,
-                text: &mut text,
-                icons: &mut icons,
-                atlas: &mut atlas,
-                theme: win.theme,
-            };
-            win.paint(&mut frame);
-            let draw_list = scene.flatten(|_| &[]);
-            black_box(draw_list.background.len())
+            let fx = win.update(&input, 0.016);
+            black_box(fx.len())
         });
     });
 }
