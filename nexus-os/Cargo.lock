@@ -4169,15 +4169,11 @@ dependencies = [
  "nx-fs",
  "nx-ui",
  "parking_lot",
- "pollster 0.4.0",
  "proptest",
- "raw-window-handle",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
- "wgpu",
  "windows 0.58.0",
- "winit",
 ]
 
 [[package]]
