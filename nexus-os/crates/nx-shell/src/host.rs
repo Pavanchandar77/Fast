@@ -26,6 +26,9 @@ mod imp {
     }
 
     pub fn dwm_flush() -> ShellResult<()> {
+        if !nx_compat::is_capability_operational(nx_compat::Capability::DwmFlush) {
+            return Ok(());
+        }
         unsafe { DwmFlush().map_err(|e| ShellError::Thumbnail(format!("DwmFlush: {e}"))) }
     }
 
@@ -33,6 +36,11 @@ mod imp {
         if dest_hwnd == 0 || src_hwnd == 0 {
             return Err(ShellError::Thumbnail(
                 "null dest or source hwnd".to_string(),
+            ));
+        }
+        if !nx_compat::is_capability_operational(nx_compat::Capability::DwmThumbnails) {
+            return Err(ShellError::Thumbnail(
+                "DWM thumbnail capability unavailable on this build".to_string(),
             ));
         }
         unsafe {

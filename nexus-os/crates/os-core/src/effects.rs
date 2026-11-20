@@ -319,53 +319,13 @@ pub(crate) fn run_hidden(cmd: &str, args: &[&str]) -> Result<(bool, String), Jou
 }
 
 pub(crate) fn encode_registry_value(value: &nexus_model::platform::RegistryValueData) -> Vec<u8> {
-    use nexus_model::platform::RegistryValueData;
-    match value {
-        RegistryValueData::Dword(v) => {
-            let mut out = vec![1u8];
-            out.extend_from_slice(&v.to_le_bytes());
-            out
-        }
-        RegistryValueData::Qword(v) => {
-            let mut out = vec![2u8];
-            out.extend_from_slice(&v.to_le_bytes());
-            out
-        }
-        RegistryValueData::Sz(s) => {
-            let mut out = vec![3u8];
-            out.extend_from_slice(s.as_bytes());
-            out
-        }
-        RegistryValueData::Binary(d) => {
-            let mut out = vec![4u8];
-            out.extend_from_slice(d);
-            out
-        }
-    }
+    value.encode()
 }
 
 pub(crate) fn decode_registry_value(
     bytes: &[u8],
 ) -> Option<nexus_model::platform::RegistryValueData> {
-    use nexus_model::platform::RegistryValueData;
-    let (tag, rest) = bytes.split_first()?;
-    match *tag {
-        1 if rest.len() == 4 => {
-            let mut buf = [0u8; 4];
-            buf.copy_from_slice(rest);
-            Some(RegistryValueData::Dword(u32::from_le_bytes(buf)))
-        }
-        2 if rest.len() == 8 => {
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(rest);
-            Some(RegistryValueData::Qword(u64::from_le_bytes(buf)))
-        }
-        3 => Some(RegistryValueData::Sz(
-            String::from_utf8_lossy(rest).into_owned(),
-        )),
-        4 => Some(RegistryValueData::Binary(rest.to_vec())),
-        _ => None,
-    }
+    nexus_model::platform::RegistryValueData::decode(bytes)
 }
 
 fn set_registry_raw(

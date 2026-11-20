@@ -42,6 +42,8 @@ nx-ui = { path = "../nx-ui" }
 nx-wm = { path = "../nx-wm" }
 
 [target.'cfg(windows)'.dependencies]
+nexus-journal = { path = "../nexus-journal" }
+nx-compat = { path = "../nx-compat" }
 os-core = { path = "../os-core" }
 os-config = { path = "../os-config" }
 os-governor = { path = "../os-governor" }

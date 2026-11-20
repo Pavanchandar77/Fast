@@ -22,6 +22,8 @@ This document says what each piece does, what Linux tests actually run, and what
 
 **Never-brick (`nexus-journal`, `os-core` recovery).** Every system mutation is recorded to disk before it is applied: priority, affinity, job caps, EcoQoS, taskbar, app bars, timer resolution, cloak/hide/move, always-on-top, power plan, registry, services, privacy toggles, and system files. Clean exit, panic, fail-safe, watchdog fallback, and the next startup all restore the journal.
 
+**Update resilience (`nx-compat`).** Windows updates arrive every few days, so Nexus checks the Windows build on every start. When the build changes, it re-runs runtime capability probes and switches any feature whose API changed to a fallback instead of failing. Settings an update reset are re-applied from the journal. If explorer.exe or DWM restarts, Nexus re-attaches its hooks, app bars, and windows without restarting the session. Version-sensitive calls go through nx-compat, not straight to Win32.
+
 **Config (`os-config`, `nexus-model`).** TOML schema with hot reload. Governor defaults cannot brick a session: no App Nap, no NtSuspend, no HIGH unless whitelisted, no below-normal background class from the shell adapter.
 
 **HAL and VFS (`os-hal`, `os-vfs`).** Power-profile requests go through Platform. The VFS crate still holds the MFT/USN/Quick Look shape; live USN enumeration is not a completed Windows runtime path.

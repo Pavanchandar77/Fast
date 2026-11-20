@@ -58,6 +58,58 @@ mod imp {
         os_core::heartbeat::start()?;
         os_shield::attach(true, os_core::recovery::is_dry_run());
 
+        // 0c. Windows Update Resilience & Capability Self-Check
+        let journal_path = os_core::recovery::default_journal_path();
+        let state_dir = journal_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let store = nx_compat::BuildHistoryStore::new(state_dir);
+        let notices = Arc::new(nx_compat::NoticeQueue::new());
+        let engine = nx_compat::SelfHealingEngine::new(store, notices.clone());
+        let win_platform = os_core::platform::Win32Platform::new();
+        if let Ok(mut journal) = nexus_journal::Journal::open(&journal_path) {
+            let build = nx_compat::detect_build();
+            info!(
+                "Nexus-OS Compat: Windows build detected: {}",
+                build.full_version_string()
+            );
+            match engine.run_startup_self_check(
+                &build,
+                &win_platform,
+                &mut journal,
+                &nx_compat::LiveProbeProvider,
+                true,
+            ) {
+                Ok(report) => {
+                    info!(
+                        "Resilience self-check finished: clean={}, healed={:?}, regressions={:?}",
+                        report.is_clean(),
+                        report.settings_healed,
+                        report.regressions
+                    );
+                }
+                Err(e) => {
+                    warn!("Resilience startup self-check non-fatal error: {e}");
+                }
+            }
+        }
+
+        // 0d. Mid-session Explorer.exe and DWM restart watcher
+        let restart_handler = Arc::new(nx_compat::RestartHandler::new(
+            nx_compat::RestartConfig::default(),
+            notices,
+        ));
+        let taskbar_created_msg = restart_handler.register_taskbar_created_message();
+        let rh_clone = restart_handler.clone();
+        os_compositor::hotkeys::set_message_callback(move |msg_id| {
+            if msg_id == taskbar_created_msg {
+                let p = os_core::platform::Win32Platform::new();
+                let _ = rh_clone.handle_explorer_restart(&p);
+            } else if rh_clone.is_dwm_change_message(msg_id) {
+                let _ = rh_clone.handle_dwm_restart(&nx_compat::LiveProbeProvider);
+            }
+        });
+
         // 1. Locate and watch declarative configuration
         let config_path = find_config_path();
         info!("Loading system configuration from: {:?}", config_path);

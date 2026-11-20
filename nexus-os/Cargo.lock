@@ -4132,6 +4132,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nx-compat"
+version = "0.1.0"
+dependencies = [
+ "nexus-journal",
+ "nexus-model",
+ "nx-governor-policy",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "nx-explorer"
 version = "0.1.0"
 dependencies = [
@@ -4238,6 +4254,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "gpui",
+ "nx-compat",
  "nx-fs",
  "nx-governor-policy",
  "nx-power",
@@ -4259,6 +4276,7 @@ dependencies = [
  "fontdb 0.16.2",
  "gpui",
  "naga 24.0.0",
+ "nx-compat",
  "png 0.17.16",
  "pollster 0.4.0",
  "raw-window-handle",
@@ -4758,6 +4776,7 @@ version = "0.1.0"
 dependencies = [
  "nexus-journal",
  "nexus-model",
+ "nx-compat",
  "nx-governor-policy",
  "thiserror 1.0.69",
  "tracing",
@@ -4796,6 +4815,8 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "gpui",
+ "nexus-journal",
+ "nx-compat",
  "nx-explorer-ui",
  "nx-power",
  "nx-privacy",
