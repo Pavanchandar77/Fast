@@ -134,6 +134,9 @@ pub struct IslandView {
     detector: Option<SensitivePatternDetector>,
     pub shelf: Vec<PathBuf>,
     build_line: Option<String>,
+    /// Simulated battery (preview/demo) that host sampling must not clobber.
+    battery_override: Option<(u8, bool)>,
+    charge_step: i64,
 }
 
 impl IslandView {
@@ -172,6 +175,8 @@ impl IslandView {
             detector: None,
             shelf: Vec::new(),
             build_line: None,
+            battery_override: None,
+            charge_step: 0,
         }
     }
 
@@ -441,6 +446,10 @@ impl IslandView {
     fn slow_tick(&mut self, cx: &mut Context<Self>) {
         let now = self.now();
         self.model.tick();
+        if let Some((pct, charging)) = self.battery_override {
+            self.model.battery_pct = Some(pct);
+            self.model.charging = charging;
+        }
         for alert in self
             .model
             .battery_sample(self.model.battery_pct, self.model.charging)
@@ -509,6 +518,7 @@ impl IslandView {
     }
 
     pub fn battery_preview(&mut self, pct: u8, charging: bool) {
+        self.battery_override = Some((pct, charging));
         self.model.battery_pct = Some(pct);
         self.model.charging = charging;
         for a in self.model.battery_sample(Some(pct), charging) {
@@ -700,6 +710,13 @@ impl IslandView {
             changed = true;
         }
         changed |= self.drain_assistant(cx);
+        if self.model.charging && self.model.battery_pct.is_some() {
+            let step = (now * 3.0) as i64;
+            if step != self.charge_step {
+                self.charge_step = step;
+                changed = true;
+            }
+        }
 
         let cursor = if self.model.hovered {
             let m = window.mouse_position();
@@ -823,6 +840,17 @@ impl IslandView {
         let _ = window;
         cx.notify();
     }
+}
+
+/// Battery fill fraction. Charging sweeps from the current level to full in
+/// four steps, then restarts.
+fn battery_fill_level(pct: u8, charging: bool, step: i64) -> f32 {
+    let base = f32::from(pct.min(100)) / 100.0;
+    if !charging || pct >= 100 {
+        return base;
+    }
+    let phase = step.rem_euclid(5) as f32 / 4.0;
+    base + (1.0 - base) * phase
 }
 
 /// Two monochrome eyes drawn from an `EyeFrame`.
@@ -1105,8 +1133,63 @@ impl IslandView {
     fn battery_text(&self) -> String {
         self.model
             .battery_pct
-            .map(|p| format!("{}{p}%", if self.model.charging { "+" } else { "" }))
+            .map(|p| format!("{p}%"))
             .unwrap_or_else(|| "AC".to_string())
+    }
+
+    /// Battery glyph + percentage, always visible. While charging the fill
+    /// sweeps up from the current level and a bolt is shown.
+    fn battery_element(&self, scale: f32) -> gpui::Div {
+        let Some(pct) = self.model.battery_pct else {
+            return div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .child(label("⚡", 10.0 * scale, 0.65))
+                .child(mono("AC", 11.0 * scale, 0.65));
+        };
+        let level = battery_fill_level(pct, self.model.charging, self.charge_step);
+        let w = 22.0 * scale;
+        let h = 11.0 * scale;
+        let inner = (w - 4.0) * level;
+        let low = pct <= 20 && !self.model.charging;
+        let body = div()
+            .w(px(w))
+            .h(px(h))
+            .p(px(1.5))
+            .rounded(px(3.0 * scale))
+            .border_1()
+            .border_color(ink(if low { 1.0 } else { 0.6 }))
+            .child(
+                div()
+                    .h_full()
+                    .w(px(inner.max(1.5)))
+                    .rounded(px(1.5 * scale))
+                    .bg(ink(if low { 1.0 } else { 0.9 })),
+            );
+        let nub = div()
+            .w(px(2.0 * scale))
+            .h(px(4.0 * scale))
+            .rounded(px(1.0))
+            .bg(ink(0.6));
+        let mut row = div().flex().flex_row().items_center().gap(px(5.0));
+        if self.model.charging {
+            row = row.child(label("⚡", 10.0 * scale, 1.0));
+        }
+        row.child(mono(
+            self.battery_text(),
+            11.0 * scale,
+            if low { 1.0 } else { 0.75 },
+        ))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(body)
+                .child(nub),
+        )
     }
 
     fn render_pill(&self, peek: bool) -> gpui::Div {
@@ -1139,7 +1222,7 @@ impl IslandView {
                     .items_center()
                     .gap(px(8.0))
                     .child(self.privacy_dots())
-                    .child(mono(self.battery_text(), 11.0, 0.65)),
+                    .child(self.battery_element(if peek { 1.15 } else { 1.0 })),
             )
     }
 
@@ -1203,7 +1286,8 @@ impl IslandView {
                             .child(prompt_line),
                     ),
             )
-            .child(mono(self.model.clock_label(), 13.0, 0.8));
+            .child(mono(self.model.clock_label(), 13.0, 0.8))
+            .child(self.battery_element(1.1));
 
         let mut answer = div().flex().flex_col().gap(px(6.0));
         let show_answer =
@@ -1826,6 +1910,7 @@ mod tests {
                 );
                 v.battery_preview(55, false);
                 v.battery_preview(49, false);
+                assert_eq!(v.battery_text(), "49%");
                 assert!(matches!(
                     v.live.shown(v.now()).map(|l| &l.kind),
                     Some(LiveKind::Toast { title, .. }) if title == "BATTERY 49%"
@@ -1835,5 +1920,14 @@ mod tests {
                 assert_eq!(v.model.shape(now + 10.0), IslandShape::Slit);
             });
         });
+    }
+
+    #[test]
+    fn battery_fill_sweeps_only_while_charging() {
+        assert_eq!(super::battery_fill_level(40, false, 3), 0.4);
+        assert_eq!(super::battery_fill_level(40, true, 0), 0.4);
+        assert_eq!(super::battery_fill_level(40, true, 4), 1.0);
+        assert!(super::battery_fill_level(40, true, 2) > 0.4);
+        assert_eq!(super::battery_fill_level(100, true, 2), 1.0);
     }
 }

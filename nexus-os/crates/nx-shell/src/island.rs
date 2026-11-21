@@ -321,7 +321,20 @@ fn sample_battery() -> (Option<u8>, bool) {
         }
         (None, false)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        let mut s = SYSTEM_POWER_STATUS::default();
+        if unsafe { GetSystemPowerStatus(&mut s) }.is_err() {
+            return (None, false);
+        }
+        // BatteryFlag 128 = no system battery, 255 = unknown.
+        let has_battery =
+            s.BatteryFlag != 128 && s.BatteryFlag != 255 && s.BatteryLifePercent <= 100;
+        let pct = has_battery.then_some(s.BatteryLifePercent);
+        (pct, s.ACLineStatus == 1)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         (None, false)
     }
