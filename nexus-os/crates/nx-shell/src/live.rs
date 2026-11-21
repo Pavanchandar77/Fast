@@ -114,6 +114,9 @@ pub struct LiveState {
     pub items: Vec<Live>,
     pub focus: bool,
     pub reminders: Vec<(f64, String)>,
+    /// A just-arrived pop-up shown in the pill until the given time, even if
+    /// a higher-priority activity (e.g. an ongoing call) is running.
+    pub spotlight: Option<(u64, f64)>,
     next_id: u64,
 }
 
@@ -212,6 +215,19 @@ impl LiveState {
                 .cmp(&b.kind.priority())
                 .then(a.created.total_cmp(&b.created))
         })
+    }
+
+    /// What the compact pill shows at `now`: a fresh pop-up while its peek
+    /// lasts, otherwise the highest-priority activity.
+    pub fn shown(&self, now: f64) -> Option<&Live> {
+        if let Some((id, until)) = self.spotlight {
+            if now < until {
+                if let Some(l) = self.items.iter().find(|l| l.id == id) {
+                    return Some(l);
+                }
+            }
+        }
+        self.top()
     }
 
     /// All items, highest priority first.
@@ -395,5 +411,40 @@ mod tests {
         assert_eq!(fmt_clock(3725.0), "1:02:05");
         assert_eq!(fmt_rate(2_500_000.0), "2.5 MB/s");
         assert_eq!(fmt_rate(1500.0), "2 KB/s");
+    }
+
+    #[test]
+    fn fresh_popup_is_shown_over_ongoing_call_then_yields() {
+        let mut s = LiveState::default();
+        s.push(
+            LiveKind::Call {
+                app: "Zoom".into(),
+                mic: true,
+                cam: false,
+                since: 0.0,
+            },
+            0.0,
+            None,
+        );
+        let id = s
+            .push(
+                LiveKind::Toast {
+                    glyph: "x",
+                    title: "MSG".into(),
+                    body: String::new(),
+                },
+                1.0,
+                Some(5.0),
+            )
+            .expect("pushed");
+        s.spotlight = Some((id, 4.0));
+        assert!(matches!(
+            s.shown(2.0).map(|l| &l.kind),
+            Some(LiveKind::Toast { .. })
+        ));
+        assert!(matches!(
+            s.shown(4.5).map(|l| &l.kind),
+            Some(LiveKind::Call { .. })
+        ));
     }
 }

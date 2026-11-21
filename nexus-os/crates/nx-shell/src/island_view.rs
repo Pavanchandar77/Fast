@@ -195,8 +195,11 @@ impl IslandView {
     /// go right back to the resting pill / slit).
     pub fn notify_live(&mut self, kind: LiveKind, ttl: Option<f64>, peek: f64) {
         let now = self.now();
-        if self.live.push(kind, now, ttl).is_some() && peek > 0.0 {
-            self.model.peek(now, peek);
+        if let Some(id) = self.live.push(kind, now, ttl) {
+            if peek > 0.0 {
+                self.live.spotlight = Some((id, now + peek));
+                self.model.peek(now, peek);
+            }
         }
     }
 
@@ -1108,7 +1111,7 @@ impl IslandView {
 
     fn render_pill(&self, peek: bool) -> gpui::Div {
         let frame = self.eyes.frame(self.now() as f32);
-        let top = self.live.top().map(|l| l.kind.clone());
+        let top = self.live.shown(self.now()).map(|l| l.kind.clone());
         let center: gpui::Div = match (&top, &self.now_playing) {
             (Some(k), _) => self.activity_compact(k, peek),
             (None, Some(np)) => div()
@@ -1811,10 +1814,20 @@ mod tests {
             let entity = cx.new(|cx| IslandView::new(IslandModel::new(), cx));
             entity.update(cx, |v, _| {
                 v.set_fullscreen(true);
+                v.notify_live(
+                    LiveKind::Call {
+                        app: "Zoom".into(),
+                        mic: true,
+                        cam: true,
+                        since: 0.0,
+                    },
+                    None,
+                    0.0,
+                );
                 v.battery_preview(55, false);
                 v.battery_preview(49, false);
                 assert!(matches!(
-                    v.live.top().map(|l| &l.kind),
+                    v.live.shown(v.now()).map(|l| &l.kind),
                     Some(LiveKind::Toast { title, .. }) if title == "BATTERY 49%"
                 ));
                 let now = v.now();
