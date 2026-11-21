@@ -95,7 +95,14 @@ mod imp {
         let notices = Arc::new(nx_compat::NoticeQueue::new());
         let engine = nx_compat::SelfHealingEngine::new(store, notices.clone());
         let win_platform = os_core::platform::Win32Platform::new();
-        if let Ok(mut journal) = nexus_journal::Journal::open(&journal_path) {
+        // The live journal at `journal_path` is already open and exclusively
+        // locked by `recovery::bootstrap`; opening it again here blocked
+        // forever on the lock and the UI never appeared. Every mutation the
+        // self-check applies goes through `Win32Platform`, which already
+        // commits it to the live journal, so the self-check only needs a
+        // scratch journal for its own rollback bookkeeping.
+        let scratch_path = journal_path.with_file_name("selfcheck.nxjr");
+        if let Ok(mut journal) = nexus_journal::Journal::open(&scratch_path) {
             let build = nx_compat::detect_build();
             info!(
                 "Nexus-OS Compat: Windows build detected: {}",
@@ -120,6 +127,11 @@ mod imp {
                     warn!("Resilience startup self-check non-fatal error: {e}");
                 }
             }
+            drop(journal);
+            let _ = std::fs::remove_file(&scratch_path);
+            let mut lock = scratch_path.into_os_string();
+            lock.push(".lock");
+            let _ = std::fs::remove_file(lock);
         }
 
         // 0d. Mid-session Explorer.exe and DWM restart watcher

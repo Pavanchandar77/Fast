@@ -30,7 +30,12 @@ fn main() {
         nums.get(2).copied().unwrap_or(0),
     );
     let rc = out.join("nexus.rc");
-    let icon_path = icon.canonicalize().unwrap_or(icon).display().to_string().replace('\\', "/");
+    let icon_path = icon
+        .canonicalize()
+        .unwrap_or(icon)
+        .display()
+        .to_string()
+        .replace('\\', "/");
     // gpui embeds its own manifest only when the build host is Windows; when
     // cross-compiling, add ours (PerMonitorV2 DPI, Common Controls 6, Win10+).
     let manifest = manifest.join("../../packaging/windows/nexus.manifest.xml");

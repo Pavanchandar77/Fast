@@ -47,6 +47,8 @@ VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 
 !define MUI_ICON   "nexus.ico"
 !define MUI_UNICON "nexus.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP   "wizard.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "wizard.bmp"
 !define MUI_ABORTWARNING
 !define MUI_COMPONENTSPAGE_SMALLDESC
 

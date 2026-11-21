@@ -9,6 +9,41 @@ management behind a single configurable session daemon.
 > components modify Windows processes, windows, power behavior, and networking.
 > Use it only on a system where those changes are acceptable.
 
+## Install on Windows
+
+No Rust, no toolchains, no extra downloads.
+
+1. Download **`Nexus-Setup-0.1.0-preview.exe`** from the
+   [latest release](https://github.com/Pavanchandar77/Fast/releases/latest)
+   (about 400 MB; it includes the offline assistant model).
+2. Double-click it. Windows SmartScreen may say *"Windows protected your PC"*
+   because the installer is not code-signed yet: click **More info**, then
+   **Run anyway**.
+3. Click through the installer and leave **Launch Nexus** ticked.
+
+What it does:
+
+- Installs for your user only, with no admin prompt, to
+  `%LOCALAPPDATA%\Programs\Nexus`.
+- Adds Nexus to the Start Menu, optionally to the desktop, and optionally
+  starts it when you sign in (off by default).
+- Nexus runs as a normal app on top of Windows. It does **not** replace
+  `explorer.exe` or change Winlogon. While it runs it hides the Windows
+  taskbar (its dock and Dynamic Island take over) and puts it back when it
+  quits.
+- Quit Nexus with **Ctrl+Alt+Shift+Esc**. If Nexus was ever force-closed and
+  the taskbar stays hidden, run **Start > Nexus > Restore Windows desktop**.
+- Uninstall from **Settings > Apps > Installed apps > Nexus**. Settings and
+  assistant history in `%LOCALAPPDATA%\Nexus` and `%LOCALAPPDATA%\nexus-os`
+  are kept.
+
+Requirements: 64-bit Windows 10 (1709 or newer) or Windows 11, and a GPU with
+DirectX 11. The bundled assistant model is Qwen3-0.6B (Apache-2.0); see
+`THIRD-PARTY-NOTICES.txt` in the install folder.
+
+To build the installer yourself on Linux, see
+[`nexus-os/packaging/windows`](nexus-os/packaging/windows/README.md).
+
 ## Features
 
 - Tiling window compositor with spring-based animations and GPU rendering
