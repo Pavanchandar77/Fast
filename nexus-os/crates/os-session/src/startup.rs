@@ -321,7 +321,8 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     let island_w = 680.0;
     let island_h = nx_shell::COLLAPSED_HEIGHT;
     let island_x = sx + ((sw - island_w) * 0.5).max(0.0);
-    let island_y = sy + 10.0;
+    // The island hugs the top edge so the fullscreen slit can sit flush.
+    let island_y = sy;
 
     let dock_w = 960.0;
     let dock_h = 96.0;
@@ -359,7 +360,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 ),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
-                    cx.new(|_cx| IslandView::new(island_model))
+                    cx.new(|cx| IslandView::new(island_model, cx))
                 },
             )
             .ok();
@@ -457,7 +458,25 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     }
 
     install_shell_launch(&windows, cx);
+    install_island_hooks(&windows, cx);
     windows
+}
+
+/// Let the island assistant open Spotlight with a query.
+fn install_island_hooks(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
+    let spotlight = windows.spotlight_window;
+    cx.set_global(nx_shell::IslandHooks::new(move |query, cx| {
+        if let Some(handle) = spotlight {
+            let _ = handle.update(cx, |view, window, cx| {
+                if !view.model.is_open() {
+                    view.toggle();
+                }
+                view.model.query = query.to_string();
+                apply_spotlight_visibility(window, true);
+                cx.notify();
+            });
+        }
+    }));
 }
 
 fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
@@ -494,9 +513,22 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
     }));
 }
 
-/// Toggle the GPUI Spotlight window in response to `HotkeyAction::CommandBar`.
-///
-/// Returns true when Spotlight is open afterwards.
+/// Open (or close) the island's assistant prompt — Alt+Space / `shell:assistant`.
+pub fn toggle_island_assistant(handle: gpui::WindowHandle<IslandView>, cx: &mut gpui::App) -> bool {
+    handle
+        .update(cx, |view, window, cx| {
+            if view.model.expanded {
+                view.set_expanded(false);
+            } else {
+                view.open_prompt(window);
+            }
+            cx.notify();
+            view.model.expanded
+        })
+        .unwrap_or(false)
+}
+
+/// Expand or collapse the island (click-equivalent; hover never expands).
 pub fn set_island_expanded(
     handle: gpui::WindowHandle<IslandView>,
     expanded: bool,
@@ -504,13 +536,11 @@ pub fn set_island_expanded(
 ) -> bool {
     handle
         .update(cx, |view, window, cx| {
-            view.set_expanded(expanded);
-            let height = if expanded {
-                nx_shell::EXPANDED_HEIGHT
+            if expanded {
+                view.open_prompt(window);
             } else {
-                nx_shell::COLLAPSED_HEIGHT
-            };
-            window.resize(gpui::size(gpui::px(680.0), gpui::px(height)));
+                view.set_expanded(false);
+            }
             cx.notify();
             view.model.expanded
         })

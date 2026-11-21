@@ -431,6 +431,7 @@ impl Default for KeybindingsConfig {
         bindings.insert("Shift+4".into(), "move_to_workspace:4".into());
         bindings.insert("Shift+5".into(), "move_to_workspace:5".into());
         bindings.insert("Space".into(), "shell:command_bar".into());
+        bindings.insert("Shift+Space".into(), "shell:assistant".into());
 
         Self {
             mod_key: "Super".into(),

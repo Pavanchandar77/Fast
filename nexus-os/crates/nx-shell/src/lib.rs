@@ -8,8 +8,11 @@ pub mod expose;
 pub mod gpui_views;
 pub mod host;
 pub mod island;
+pub mod island_view;
+pub mod live;
 pub mod menu_bar;
 pub mod scheduler;
+pub mod sensors;
 pub mod spotlight;
 pub mod squircle;
 pub mod util;
@@ -26,19 +29,24 @@ pub use expose::{
     ExposeWindow, ThumbnailSlot,
 };
 pub use gpui_views::{
-    request_shell_launch, DockView, IslandView, MenuBarView, MissionControlView, ShellLaunch,
-    SpotlightView,
+    request_shell_launch, DockView, MenuBarView, MissionControlView, ShellLaunch, SpotlightView,
 };
 pub use host::{
     apply_backdrop, dwm_flush, register_thumbnail, unregister_thumbnail, update_thumbnail,
     LiveThumbnailManager,
 };
-pub use island::{IslandModel, COLLAPSED_HEIGHT, EXPANDED_HEIGHT};
+pub use island::{
+    BatteryAlert, IslandModel, IslandShape, COLLAPSED_HEIGHT, EXPANDED_HEIGHT, ISLAND_WIDTH,
+    PEEK_HEIGHT, SLIT_HEIGHT,
+};
+pub use island_view::{eyes_element, IslandHooks, IslandView};
+pub use live::{HudKind, LiveKind, LiveState};
 pub use menu_bar::{
     bar_height, hit_menu_bar, layout_menu_bar, BarSlot, ClipboardWidget, MeasuredSlot, MenuAction,
     MenuBarLayout, MenuBarModel, MenuEntry, PlacedSlot, StatusKind, StatusWidget, VolumeWidget,
 };
 pub use scheduler::{present_pace, FrameScheduler, PresentMode, PresentPace};
+pub use sensors::NowPlaying;
 pub use spotlight::{
     engine_from_paths, eval_calculator, fuzzy_score, layout_spotlight, ProviderKind, Spotlight,
     SpotlightHit, SpotlightLayout,

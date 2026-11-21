@@ -24,6 +24,7 @@ mod imp {
     enum SessionUiEvent {
         FailSafeQuit,
         ToggleSpotlight,
+        ToggleAssistant,
     }
 
     #[allow(dead_code)]
@@ -212,6 +213,7 @@ mod imp {
             .detach();
 
             let spotlight = windows.spotlight_window;
+            let island = windows.island_window;
             if let Err(err) = std::thread::Builder::new()
                 .name("nexus-compositor-loop".into())
                 .spawn(move || compositor.run(ui_tx, running))
@@ -234,6 +236,13 @@ mod imp {
                             let _ = cx.update(|cx| {
                                 if let Some(handle) = spotlight {
                                     os_session::startup::toggle_gpui_spotlight(handle, cx);
+                                }
+                            });
+                        }
+                        SessionUiEvent::ToggleAssistant => {
+                            let _ = cx.update(|cx| {
+                                if let Some(handle) = island {
+                                    os_session::startup::toggle_island_assistant(handle, cx);
                                 }
                             });
                         }
@@ -334,6 +343,10 @@ mod imp {
                         HotkeyAction::CommandBar => {
                             info!("Hotkey: Toggle GPUI SpotlightView");
                             let _ = ui_tx.send(SessionUiEvent::ToggleSpotlight);
+                        }
+                        HotkeyAction::Custom(ref name) if name == "shell:assistant" => {
+                            info!("Hotkey: Toggle island assistant");
+                            let _ = ui_tx.send(SessionUiEvent::ToggleAssistant);
                         }
                         other => {
                             self.wm.write().handle_hotkey(other);
