@@ -14,6 +14,7 @@ pub mod icon;
 pub mod input;
 pub mod layout;
 pub mod material;
+pub mod motion;
 pub mod platform;
 pub mod sdf;
 pub mod spring;

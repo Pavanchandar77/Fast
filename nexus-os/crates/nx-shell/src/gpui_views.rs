@@ -123,6 +123,12 @@ impl Render for MenuBarView {
 pub struct DockView {
     pub model: DockModel,
     pub hovered_index: Option<usize>,
+    /// Per-icon magnification springs, so icons swell and settle instead of
+    /// snapping between sizes.
+    mag_springs: Vec<nx_ui::Spring>,
+    /// When each icon last started a launch bounce, for the running-dot pulse.
+    attention: Vec<Option<std::time::Instant>>,
+    last_frame: Option<std::time::Instant>,
 }
 
 impl DockView {
@@ -130,18 +136,89 @@ impl DockView {
         Self {
             model,
             hovered_index: None,
+            mag_springs: Vec::new(),
+            attention: Vec::new(),
+            last_frame: None,
         }
+    }
+
+    /// Launch feedback: the icon hops and its running dot pulses.
+    pub fn launch_bounce(&mut self, index: usize) {
+        self.model.bounce_index(index);
+    }
+
+    /// Step the dock springs. Returns true while anything is still moving.
+    fn step_motion(&mut self, count: usize) -> bool {
+        let now = std::time::Instant::now();
+        let dt = self
+            .last_frame
+            .map(|t| (now - t).as_secs_f32())
+            .unwrap_or(1.0 / 120.0)
+            .min(0.05);
+        self.mag_springs.resize_with(count, || {
+            let mut s = nx_ui::Spring::new(1.0, nx_ui::SpringConfig::macos(0.24, 0.78));
+            s.config.rest_pos = 0.002;
+            s.config.rest_vel = 0.02;
+            s
+        });
+        self.attention.resize(count, None);
+        let gap = self.model.mag.gap;
+        let base = self.model.mag.rest;
+        for (idx, spring) in self.mag_springs.iter_mut().enumerate() {
+            let target = match self.hovered_index {
+                Some(h) => magnification_target(
+                    h as f32 * (base + gap),
+                    idx as f32 * (base + gap),
+                    self.model.mag,
+                ),
+                None => 1.0,
+            };
+            spring.set_target(target);
+            spring.step(dt);
+        }
+        self.model.step(dt);
+        for (idx, slot) in self.attention.iter_mut().enumerate() {
+            let bouncing = self.model.motion_bounce(idx).abs() > 0.5;
+            match (*slot, bouncing) {
+                (None, true) => *slot = Some(now),
+                (Some(t), false) if (now - t).as_secs_f32() > 1.2 => *slot = None,
+                _ => {}
+            }
+        }
+        let moving = self.mag_springs.iter().any(|s| !s.settled())
+            || self.model.animating()
+            || self.attention.iter().any(|a| a.is_some());
+        self.last_frame = moving.then_some(now);
+        moving
     }
 }
 
 impl Render for DockView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_of(cx);
         let is_horizontal = self.model.placement.edge.is_horizontal();
         let base_size = self.model.mag.rest;
         let gap = self.model.mag.gap;
         let pad = self.model.mag.padding;
         let items = self.model.items().to_vec();
+        if self.step_motion(items.len()) {
+            window.request_animation_frame();
+        }
+        let scales: Vec<f32> = self.mag_springs.iter().map(|s| s.position).collect();
+        let bounces: Vec<f32> = (0..items.len())
+            .map(|i| self.model.motion_bounce(i))
+            .collect();
+        let pulse_clock = std::time::Instant::now();
+        let dots: Vec<f32> = self
+            .attention
+            .iter()
+            .map(|a| match a {
+                Some(t) => {
+                    nx_ui::motion::running_dot_pulse(0.0, Some((pulse_clock - *t).as_secs_f32()))
+                }
+                None => 1.0,
+            })
+            .collect();
 
         let shelf = div()
             .id("dock-shelf")
@@ -164,13 +241,9 @@ impl Render for DockView {
                 }
             }))
             .children(items.into_iter().enumerate().map(|(idx, item)| {
-                let scale = if let Some(hovered) = self.hovered_index {
-                    let ptr_axis = hovered as f32 * (base_size + gap);
-                    let icon_axis = idx as f32 * (base_size + gap);
-                    magnification_target(ptr_axis, icon_axis, self.model.mag)
-                } else {
-                    1.0
-                };
+                let scale = scales.get(idx).copied().unwrap_or(1.0).max(0.5);
+                let hop = bounces.get(idx).copied().unwrap_or(0.0);
+                let dot_alpha = dots.get(idx).copied().unwrap_or(1.0);
                 let icon_size = base_size * scale;
                 let _label = &item.label;
                 let before_trash = item.id == "trash";
@@ -192,6 +265,8 @@ impl Render for DockView {
                     .child(
                         div()
                             .id(("dock-icon", idx))
+                            .relative()
+                            .top(px(hop))
                             .flex()
                             .flex_col()
                             .items_center()
@@ -232,7 +307,11 @@ impl Render for DockView {
                                     .w(px(4.0))
                                     .h(px(4.0))
                                     .rounded(px(2.0))
-                                    .when(item.running, |d| d.bg(theme.text_primary_hsla()))
+                                    .when(item.running, |d| {
+                                        let mut c = theme.text_primary_hsla();
+                                        c.a *= dot_alpha;
+                                        d.bg(c)
+                                    })
                                     .when(!item.running, |d| {
                                         d.bg(Hsla::from(nx_ui::Color::TRANSPARENT))
                                     }),

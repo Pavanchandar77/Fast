@@ -1,6 +1,8 @@
 //! Nexus-OS shell: Dynamic Island, dock, Mission Control, Spotlight, vsync frame scheduler.
 
 pub mod backdrop;
+#[cfg(windows)]
+pub mod capture;
 pub mod clock;
 pub mod dock;
 pub mod error;
@@ -11,6 +13,7 @@ pub mod island;
 pub mod island_view;
 pub mod live;
 pub mod menu_bar;
+pub mod motion_overlay;
 pub mod scheduler;
 pub mod sensors;
 pub mod spotlight;
@@ -45,6 +48,7 @@ pub use menu_bar::{
     bar_height, hit_menu_bar, layout_menu_bar, BarSlot, ClipboardWidget, MeasuredSlot, MenuAction,
     MenuBarLayout, MenuBarModel, MenuEntry, PlacedSlot, StatusKind, StatusWidget, VolumeWidget,
 };
+pub use motion_overlay::{dock_icon_rect, MotionOverlayView, OverlayEvent, Snapshot};
 pub use scheduler::{present_pace, FrameScheduler, PresentMode, PresentPace};
 pub use sensors::NowPlaying;
 pub use spotlight::{

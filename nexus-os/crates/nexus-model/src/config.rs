@@ -68,6 +68,31 @@ pub struct CompositorConfig {
     pub dock: DockConfig,
     #[serde(default)]
     pub command_bar: CommandBarConfig,
+    #[serde(default)]
+    pub motion: MotionConfig,
+}
+
+/// Signature window motion (bloom, dust, ink genie, magnetic snap, carousel).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MotionConfig {
+    /// Replace every effect with a short crossfade. Windows' own "Animation
+    /// effects" switch being off has the same result.
+    pub reduce_motion: bool,
+    /// Global speed multiplier, 0.25 to 4.0.
+    pub speed: f32,
+    /// Animate other apps' windows from snapshots, not only Nexus windows.
+    pub animate_foreign_windows: bool,
+}
+
+impl Default for MotionConfig {
+    fn default() -> Self {
+        Self {
+            reduce_motion: false,
+            speed: 1.0,
+            animate_foreign_windows: true,
+        }
+    }
 }
 
 impl Default for CompositorConfig {
@@ -84,6 +109,7 @@ impl Default for CompositorConfig {
             top_bar: TopBarConfig::default(),
             dock: DockConfig::default(),
             command_bar: CommandBarConfig::default(),
+            motion: MotionConfig::default(),
         }
     }
 }

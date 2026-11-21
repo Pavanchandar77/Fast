@@ -19,6 +19,11 @@ master_ratio = 0.55
 force_disable_dwm_transitions = true
 suppress_native_taskbar = true
 
+[compositor.motion]
+reduce_motion = false             # Crossfades only; also forced on when Windows animations are off
+speed = 1.0                       # 0.25 - 4.0
+animate_foreign_windows = true    # Bloom/dust/ink other apps' windows from snapshots
+
 [compositor.spring]
 stiffness = 280.0                 # Spring tension (k)
 damping = 26.0                    # Damping coefficient (c)

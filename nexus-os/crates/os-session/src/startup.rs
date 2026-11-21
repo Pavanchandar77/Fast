@@ -14,9 +14,10 @@ use nx_privacy::shield::PrivacyShield;
 use nx_privacy_dash::{DashboardViewModel, PrivacyDashboardView};
 use nx_shell::{
     DockModel, DockPlacement, DockView, ExposeModel, IslandModel, IslandView, MenuBarModel,
-    MissionControlView, ShellLaunch, Spotlight, SpotlightView,
+    MissionControlView, MotionOverlayView, ShellLaunch, Spotlight, SpotlightView,
 };
 use nx_ui::geom::Rect;
+use nx_ui::motion::MotionPrefs;
 use nx_ui::theme::Theme;
 use nx_ui::WINDOW_FRAME_INSET;
 use nx_wm::MonitorId;
@@ -287,6 +288,11 @@ pub struct GpuiSessionWindows {
     pub expose_window: Option<gpui::WindowHandle<MissionControlView>>,
     pub explorer_window: Option<gpui::WindowHandle<ExplorerView>>,
     pub privacy_dashboard_window: Option<gpui::WindowHandle<PrivacyDashboardView>>,
+    /// Full-screen, click-through surface that paints window motion.
+    pub motion_window: Option<gpui::WindowHandle<MotionOverlayView>>,
+    /// Screen rects the motion effects launch from and pour into.
+    pub dock_rect: Rect,
+    pub island_rect: Rect,
 }
 
 /// Open all user-facing GPUI windows adhering to macOS design tokens, Mica/Acrylic backdrops,
@@ -304,6 +310,9 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         expose_window: None,
         explorer_window: None,
         privacy_dashboard_window: None,
+        motion_window: None,
+        dock_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+        island_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
     };
 
     let screen = cx
@@ -344,6 +353,9 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         (explorer_x + explorer_w + 28.0).min((sx + sw - privacy_w - 24.0).max(sx + 24.0));
     let privacy_y = sy + 120.0;
     let privacy_h = 680.0_f32.min((dock_y - privacy_y - 16.0).max(420.0));
+
+    windows.dock_rect = Rect::new(dock_x, dock_y, dock_w, dock_h);
+    windows.island_rect = Rect::new(island_x, island_y, island_w, island_h);
 
     if let Some(shell) = &handle.shell {
         let island_model = shell.island.clone();
@@ -457,6 +469,24 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             .ok();
     }
 
+    // Opened last so it stacks above every other Nexus surface.
+    let work = Rect::new(sx, sy, sw, sh);
+    let mut motion_opts = theme.shell_window_options(
+        gpui::Bounds {
+            origin: gpui::point(gpui::px(sx), gpui::px(sy)),
+            size: gpui::size(gpui::px(sw), gpui::px(sh)),
+        },
+        false,
+        true,
+        true,
+    );
+    motion_opts.focus = false;
+    windows.motion_window = cx
+        .open_window(motion_opts, move |_window, cx| {
+            cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
+        })
+        .ok();
+
     install_shell_launch(&windows, cx);
     install_island_hooks(&windows, cx);
     windows
@@ -526,6 +556,52 @@ pub fn toggle_island_assistant(handle: gpui::WindowHandle<IslandView>, cx: &mut 
             view.model.expanded
         })
         .unwrap_or(false)
+}
+
+
+/// Resolve motion preferences from the config switch and, on Windows, the
+/// OS "Animation effects" accessibility setting.
+pub fn motion_prefs(user_reduce: bool, speed: f32) -> MotionPrefs {
+    #[cfg(windows)]
+    let os_on = nx_shell::capture::os_animations_enabled();
+    #[cfg(not(windows))]
+    let os_on = true;
+    MotionPrefs::resolve(user_reduce, os_on, speed)
+}
+
+/// Run `f` against the motion overlay, if it opened.
+pub fn with_motion(
+    windows: &GpuiSessionWindows,
+    cx: &mut gpui::App,
+    f: impl FnOnce(&mut MotionOverlayView),
+) {
+    if let Some(handle) = windows.motion_window {
+        let _ = handle.update(cx, |view, _window, cx| {
+            f(view);
+            cx.notify();
+        });
+    }
+}
+
+/// Screen rect of the dock icon for `app_id`, or the island when the app
+/// is not in the dock (assistant launches, background apps).
+pub fn motion_anchor(windows: &GpuiSessionWindows, cx: &gpui::App, app_id: &str) -> Rect {
+    let Some(dock) = windows.dock_window else {
+        return windows.island_rect;
+    };
+    let Ok(view) = dock.read(cx) else {
+        return windows.island_rect;
+    };
+    let items = view.model.items();
+    match items
+        .iter()
+        .position(|item| item.id.eq_ignore_ascii_case(app_id))
+    {
+        Some(index) => {
+            nx_shell::dock_icon_rect(windows.dock_rect, items.len(), index, view.model.mag)
+        }
+        None => windows.island_rect,
+    }
 }
 
 /// Expand or collapse the island (click-equivalent; hover never expands).
@@ -685,7 +761,47 @@ mod tests {
             assert!(windows.expose_window.is_some());
             assert!(windows.explorer_window.is_some());
             assert!(windows.privacy_dashboard_window.is_some());
+            assert!(windows.motion_window.is_some());
+            assert!(windows.dock_rect.w > 0.0 && windows.island_rect.w > 0.0);
         });
+    }
+
+    #[gpui::test]
+    fn test_motion_overlay_plays_and_hands_back(cx: &mut gpui::TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+
+        let mut session = start_session();
+        let handed_back = Rc::new(Cell::new(false));
+        let flag = handed_back.clone();
+        cx.update(|cx| {
+            let windows = open_gpui_windows(cx, &mut session);
+            let anchor = motion_anchor(&windows, cx, "explorer");
+            assert!(anchor.w > 0.0);
+            let snap = Arc::new(nx_shell::Snapshot::placeholder(64, 48));
+            let rect = Rect::new(100.0, 100.0, 640.0, 480.0);
+            with_motion(&windows, cx, move |o| {
+                assert!(o.open(
+                    7,
+                    snap,
+                    rect,
+                    anchor,
+                    Some(Box::new(move |_cx| flag.set(true))),
+                ));
+                assert!(o.is_animating());
+            });
+        });
+        // Drive frames until the bloom settles and the done hook fires.
+        for _ in 0..120 {
+            cx.run_until_parked();
+            cx.update(|cx| cx.refresh_windows());
+            std::thread::sleep(std::time::Duration::from_millis(8));
+            if handed_back.get() {
+                break;
+            }
+        }
+        assert!(handed_back.get(), "real window is handed back after bloom");
     }
 
     #[gpui::test]
