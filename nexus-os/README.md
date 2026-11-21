@@ -14,7 +14,7 @@ management behind a single configurable session daemon.
 No Rust, no toolchains, no extra downloads.
 
 1. Download **`Nexus-Setup-0.1.0-preview.exe`** from the
-   [latest release](https://github.com/Pavanchandar77/Fast/releases/latest)
+   [v0.1.0-preview release](https://github.com/Pavanchandar77/Fast/releases/tag/v0.1.0-preview)
    (about 400 MB; it includes the offline assistant model).
 2. Double-click it. Windows SmartScreen may say *"Windows protected your PC"*
    because the installer is not code-signed yet: click **More info**, then
