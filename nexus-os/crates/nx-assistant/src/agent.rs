@@ -429,6 +429,28 @@ impl Worker {
     }
 }
 
+fn settings_path() -> std::path::PathBuf {
+    audit::data_dir().join("assistant.json")
+}
+
+/// Privacy → Assistant web access. Default on; persisted in the data dir so
+/// the Privacy dashboard and the island share one switch.
+pub fn network_enabled() -> bool {
+    std::fs::read_to_string(settings_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("web").and_then(|w| w.as_bool()))
+        .unwrap_or(true)
+}
+
+pub fn set_network_enabled(on: bool) {
+    let p = settings_path();
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(p, serde_json::json!({ "web": on }).to_string());
+}
+
 pub fn default_city() -> String {
     std::env::var("NEXUS_CITY").unwrap_or_else(|_| "New Delhi".to_string())
 }

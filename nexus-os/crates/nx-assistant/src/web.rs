@@ -259,9 +259,73 @@ pub fn weather(city: &str) -> Result<WeatherNow, AssistantError> {
     })
 }
 
+/// Parse LRC synced lyrics into (seconds, line).
+pub fn parse_lrc(text: &str) -> Vec<(f32, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut rest = line.trim();
+        let mut stamps = Vec::new();
+        while let Some(r) = rest.strip_prefix('[') {
+            let Some((stamp, after)) = r.split_once(']') else {
+                break;
+            };
+            if let Some((m, s)) = stamp.split_once(':') {
+                if let (Ok(m), Ok(s)) = (m.parse::<f32>(), s.parse::<f32>()) {
+                    stamps.push(m * 60.0 + s);
+                }
+            }
+            rest = after;
+        }
+        for t in stamps {
+            out.push((t, rest.trim().to_string()));
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+/// Synced lyrics from LRCLIB (no key). Network: caller must check the toggle.
+pub fn lyrics(artist: &str, title: &str) -> Result<Vec<(f32, String)>, AssistantError> {
+    let body = agent()
+        .get(&format!(
+            "https://lrclib.net/api/get?artist_name={}&track_name={}",
+            url_encode(artist),
+            url_encode(title)
+        ))
+        .call()
+        .map_err(|e| AssistantError::Network(e.to_string()))?
+        .into_string()
+        .map_err(|e| AssistantError::Network(e.to_string()))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| AssistantError::Network(e.to_string()))?;
+    let synced = v
+        .get("syncedLyrics")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default();
+    Ok(parse_lrc(synced))
+}
+
+/// The lyric line active at `pos` seconds.
+pub fn lyric_at(lines: &[(f32, String)], pos: f32) -> Option<&str> {
+    lines
+        .iter()
+        .rev()
+        .find(|(t, l)| *t <= pos && !l.is_empty())
+        .map(|(_, l)| l.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lrc_parses_and_picks_current_line() {
+        let l = parse_lrc("[00:01.00]one\n[00:05.50][01:00.00]two\n[ti:x]");
+        assert_eq!(l.len(), 3);
+        assert_eq!(lyric_at(&l, 0.5), None);
+        assert_eq!(lyric_at(&l, 6.0), Some("two"));
+        assert_eq!(lyric_at(&l, 2.0), Some("one"));
+    }
 
     #[test]
     fn parses_ddg_results_and_decodes_redirects() {
