@@ -28,6 +28,8 @@ use nx_ui::Rect;
 pub const BANDS: usize = 48;
 /// Vertical slices per snapshot for the tilted switcher cards.
 pub const SLICES: usize = 24;
+/// Overlap between handing the real window back and removing the snapshot.
+pub const HANDOFF_SECS: f32 = 0.12;
 /// Window corner radius used by every effect, matching the shell chrome.
 pub const CORNER: f32 = 14.0;
 
@@ -171,6 +173,9 @@ struct WinFx {
     dust: Option<DustField>,
     done: Option<Done>,
     last_phase: Phase,
+    /// After an open/restore hands the real window back, keep painting the
+    /// final frame briefly so the swap never flashes the desktop.
+    linger: Option<f32>,
 }
 
 struct Ripple {
@@ -314,6 +319,7 @@ impl MotionOverlayView {
             dust: None,
             done: None,
             last_phase,
+            linger: None,
         });
         self.windows.last_mut().expect("just pushed")
     }
@@ -411,6 +417,7 @@ impl MotionOverlayView {
                 dust: None,
                 done: None,
                 last_phase,
+                linger: None,
             });
         }
         self.command(key, snap, rect, icon, true, Command::Restore, done)
@@ -486,6 +493,11 @@ impl MotionOverlayView {
         target
     }
 
+    /// Current rect of the lifted proxy window, if a proxy drag is active.
+    pub fn drag_proxy_rect(&self) -> Option<Rect> {
+        self.drag.as_ref()?.proxy.as_ref().map(|p| p.1)
+    }
+
     /// Show the 3D card switcher with `cards`, focused on `start`.
     pub fn switcher_show(&mut self, cards: Vec<(Arc<Snapshot>, String)>, start: usize) {
         if cards.is_empty() {
@@ -550,7 +562,15 @@ impl MotionOverlayView {
             }
         }
         let mut keep = Vec::with_capacity(self.windows.len());
-        for w in self.windows.drain(..) {
+        for mut w in self.windows.drain(..) {
+            if w.motion.phase() == Phase::Shown && w.motion.frame().kind == EffectKind::None {
+                let left = w.linger.get_or_insert(HANDOFF_SECS);
+                *left -= dt;
+                if *left > 0.0 {
+                    keep.push(w);
+                    continue;
+                }
+            }
             if w.motion.frame().kind == EffectKind::None {
                 if let Some(d) = w.done {
                     self.pending_done.push(d);
@@ -639,6 +659,12 @@ impl MotionOverlayView {
         let rect = self.local(w.rect);
         let origin = self.origin;
         match frame.kind {
+            EffectKind::None if w.linger.is_some() => Some(
+                layer(1.0, move |win| {
+                    let _ = win.paint_image(rect, corners(CORNER), snap.image.clone(), 0, false);
+                })
+                .into_any_element(),
+            ),
             EffectKind::None => None,
             EffectKind::Fade => Some(
                 layer(frame.visibility.clamp(0.0, 1.0), move |win| {

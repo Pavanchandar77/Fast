@@ -10,7 +10,8 @@ use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVE
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PostThreadMessageW, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE,
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MOVESIZEEND, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART,
+    EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
     WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
@@ -24,6 +25,10 @@ pub enum WindowEvent {
     WindowCloaked(WindowHandle),
     WindowUncloaked(WindowHandle),
     MoveSizeEnd(WindowHandle),
+    /// The user grabbed a window's title bar or border.
+    MoveSizeStart(WindowHandle),
+    MinimizeStart(WindowHandle),
+    MinimizeEnd(WindowHandle),
 }
 
 #[derive(Clone, Copy)]
@@ -54,7 +59,8 @@ impl WinEventListener {
 
             let events_to_hook = [
                 (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
-                (EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND),
+                (EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND),
+                (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
                 (EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE),
                 (EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
             ];
@@ -137,6 +143,9 @@ impl WinEventListener {
             EVENT_OBJECT_CLOAKED => Some(WindowEvent::WindowCloaked(handle)),
             EVENT_OBJECT_UNCLOAKED => Some(WindowEvent::WindowUncloaked(handle)),
             EVENT_SYSTEM_MOVESIZEEND => Some(WindowEvent::MoveSizeEnd(handle)),
+            EVENT_SYSTEM_MOVESIZESTART => Some(WindowEvent::MoveSizeStart(handle)),
+            EVENT_SYSTEM_MINIMIZESTART => Some(WindowEvent::MinimizeStart(handle)),
+            EVENT_SYSTEM_MINIMIZEEND => Some(WindowEvent::MinimizeEnd(handle)),
             _ => None,
         };
 

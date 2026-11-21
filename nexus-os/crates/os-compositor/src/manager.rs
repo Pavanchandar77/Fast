@@ -365,6 +365,17 @@ impl WindowManager {
                 self.apply_plan(plan);
                 self.retile_workspace(self.active_workspace);
             }
+            WindowEvent::MinimizeStart(hwnd) => {
+                if let Some(win) = self.windows.get_mut(&hwnd) {
+                    win.is_minimized = true;
+                }
+            }
+            WindowEvent::MinimizeEnd(hwnd) => {
+                if let Some(win) = self.windows.get_mut(&hwnd) {
+                    win.is_minimized = false;
+                }
+            }
+            WindowEvent::MoveSizeStart(_) => {}
             WindowEvent::MoveSizeEnd(hwnd) => {
                 if let Some(win) = self.windows.get_mut(&hwnd) {
                     if let Ok(rect) = hwnd.rect() {

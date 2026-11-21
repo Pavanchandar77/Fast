@@ -4534,6 +4534,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "gpui",
+ "image",
  "nx-assistant",
  "nx-compat",
  "nx-fs",
@@ -4543,6 +4544,7 @@ dependencies = [
  "nx-ui",
  "nx-wm",
  "proptest",
+ "raw-window-handle",
  "thiserror 1.0.69",
  "windows 0.58.0",
 ]

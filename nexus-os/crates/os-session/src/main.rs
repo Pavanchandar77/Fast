@@ -25,6 +25,7 @@ mod imp {
         FailSafeQuit,
         ToggleSpotlight,
         ToggleAssistant,
+        Motion(os_session::motion_bridge::UiMotion),
     }
 
     #[allow(dead_code)]
@@ -159,7 +160,7 @@ mod imp {
 
         // 6. Enumerate and ingest all existing desktop windows into the compositor
         info!("Scanning initial desktop surface hierarchy...");
-        enumerate_existing_windows(wm.clone());
+        let existing = enumerate_existing_windows(wm.clone());
 
         // Elevate the current foreground window immediately
         unsafe {
@@ -178,7 +179,15 @@ mod imp {
             }
         }
 
+        let motion_cfg = config_arc.read().compositor.motion;
+        let mut motion =
+            os_session::motion_bridge::MotionBridge::new(motion_cfg.animate_foreign_windows);
+        for handle in existing {
+            motion.adopt(handle);
+        }
+
         let compositor = CompositorLoop {
+            motion,
             _keyboard_hook: keyboard_hook,
             hotkey_rx,
             _win_event_listener: win_event_listener,
@@ -214,6 +223,20 @@ mod imp {
 
             let spotlight = windows.spotlight_window;
             let island = windows.island_window;
+            let motion_windows = windows.clone();
+            let peek_flag = std::rc::Rc::new(std::cell::Cell::new(None::<bool>));
+            {
+                let peek_flag = peek_flag.clone();
+                let prefs =
+                    os_session::startup::motion_prefs(motion_cfg.reduce_motion, motion_cfg.speed);
+                os_session::startup::with_motion(&windows, cx, move |o| {
+                    o.prefs = prefs;
+                    o.on_event(move |ev, _cx| {
+                        let nx_shell::OverlayEvent::Peek(on) = ev;
+                        peek_flag.set(Some(on));
+                    });
+                });
+            }
             if let Err(err) = std::thread::Builder::new()
                 .name("nexus-compositor-loop".into())
                 .spawn(move || compositor.run(ui_tx, running))
@@ -221,6 +244,7 @@ mod imp {
                 warn!("failed to spawn compositor loop thread: {err}");
             }
 
+            let mut motion_state = os_session::motion_bridge::UiMotionState::default();
             cx.spawn(async move |cx| loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(8))
@@ -231,6 +255,16 @@ mod imp {
                         SessionUiEvent::FailSafeQuit => {
                             let _ = cx.update(|cx| cx.quit());
                             quit = true;
+                        }
+                        SessionUiEvent::Motion(msg) => {
+                            let _ = cx.update(|cx| {
+                                os_session::motion_bridge::apply(
+                                    msg,
+                                    &mut motion_state,
+                                    &motion_windows,
+                                    cx,
+                                );
+                            });
                         }
                         SessionUiEvent::ToggleSpotlight => {
                             let _ = cx.update(|cx| {
@@ -251,6 +285,10 @@ mod imp {
                 if quit {
                     break;
                 }
+                if let Some(on) = peek_flag.take() {
+                    motion_state.set_peek(on);
+                }
+                let _ = cx.update(|cx| motion_state.tick(&motion_windows, cx));
             })
             .detach();
         });
@@ -259,6 +297,7 @@ mod imp {
     }
 
     struct CompositorLoop {
+        motion: os_session::motion_bridge::MotionBridge,
         _keyboard_hook: GlobalKeyboardHook,
         hotkey_rx: crossbeam_channel::Receiver<HotkeyAction>,
         _win_event_listener: WinEventListener,
@@ -273,7 +312,11 @@ mod imp {
     }
 
     impl CompositorLoop {
-        fn run(self, ui_tx: crossbeam_channel::Sender<SessionUiEvent>, running: Arc<AtomicBool>) {
+        fn run(
+            mut self,
+            ui_tx: crossbeam_channel::Sender<SessionUiEvent>,
+            running: Arc<AtomicBool>,
+        ) {
             // Create the focus-border overlay on this thread so the HWND has
             // the compositor loop's thread affinity.
             info!("Initializing Single Shared GPU Context (DX12 / Vulkan)...");
@@ -326,6 +369,10 @@ mod imp {
                         }
                         _ => {}
                     }
+                    let floating = self.compositor_config.read().layout == "floating";
+                    for msg in self.motion.on_window_event(&event, floating) {
+                        let _ = ui_tx.send(SessionUiEvent::Motion(msg));
+                    }
                     self.wm.write().handle_event(event);
                 }
 
@@ -339,6 +386,13 @@ mod imp {
                         HotkeyAction::Terminal => {
                             info!("Hotkey: Launching terminal...");
                             let _ = std::process::Command::new("powershell.exe").spawn();
+                        }
+                        HotkeyAction::Custom(ref name) if name == "motion:switcher" => {
+                            let _ = ui_tx.send(SessionUiEvent::Motion(self.motion.switcher()));
+                        }
+                        HotkeyAction::Custom(ref name) if name == "motion:mission_control" => {
+                            let _ =
+                                ui_tx.send(SessionUiEvent::Motion(self.motion.mission_control()));
                         }
                         HotkeyAction::CommandBar => {
                             info!("Hotkey: Toggle GPUI SpotlightView");
@@ -365,6 +419,10 @@ mod imp {
                     let active_ws = self.wm.read().active_workspace();
                     *self.config_arc.write() = new_cfg;
                     self.wm.write().retile_workspace(active_ws);
+                }
+
+                for msg in self.motion.tick() {
+                    let _ = ui_tx.send(SessionUiEvent::Motion(msg));
                 }
 
                 // Step Spring Physics solver and reposition windows at 120Hz
@@ -413,12 +471,16 @@ mod imp {
         local
     }
 
-    fn enumerate_existing_windows(wm: Arc<RwLock<WindowManager>>) {
+    fn enumerate_existing_windows(wm: Arc<RwLock<WindowManager>>) -> Vec<WindowHandle> {
         struct EnumContext {
             wm: Arc<RwLock<WindowManager>>,
+            found: Vec<WindowHandle>,
         }
 
-        let mut context = EnumContext { wm };
+        let mut context = EnumContext {
+            wm,
+            found: Vec::new(),
+        };
 
         unsafe extern "system" fn enum_proc(
             hwnd: HWND,
@@ -428,6 +490,7 @@ mod imp {
             let handle = WindowHandle::new(hwnd);
             if handle.is_manageable() {
                 ctx.wm.write().register_window(handle);
+                ctx.found.push(handle);
             }
             TRUE
         }
@@ -438,6 +501,7 @@ mod imp {
                 LPARAM(&mut context as *mut EnumContext as isize),
             );
         }
+        context.found
     }
 }
 

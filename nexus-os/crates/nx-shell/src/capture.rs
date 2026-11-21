@@ -172,7 +172,7 @@ pub fn make_click_through(raw: isize) {
 
 fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let handle = window.window_handle().ok()?;
+    let handle = HasWindowHandle::window_handle(window).ok()?;
     match handle.as_raw() {
         RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
         _ => None,

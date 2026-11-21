@@ -281,6 +281,7 @@ fn forced_or<T>(
 }
 
 /// Represents handles to the opened GPUI windows in the session.
+#[derive(Clone)]
 pub struct GpuiSessionWindows {
     pub island_window: Option<gpui::WindowHandle<IslandView>>,
     pub dock_window: Option<gpui::WindowHandle<DockView>>,
@@ -557,7 +558,6 @@ pub fn toggle_island_assistant(handle: gpui::WindowHandle<IslandView>, cx: &mut 
         })
         .unwrap_or(false)
 }
-
 
 /// Resolve motion preferences from the config switch and, on Windows, the
 /// OS "Animation effects" accessibility setting.
