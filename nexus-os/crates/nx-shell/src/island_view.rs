@@ -6,7 +6,9 @@
 //! short peeks for notifications/pop-ups that retract on their own, and the
 //! click-opened control center. Hover only highlights.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -18,10 +20,11 @@ use gpui::{
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window,
 };
 use nx_assistant::web::SearchHit;
-use nx_assistant::{AgentEvent, Assistant, Effect, EyeFrame, Eyes, Mood, Phase, Stats, Tool};
+use nx_assistant::{AgentEvent, Assistant, Effect, EyeFrame, Eyes, Mood, Phase, Tool};
 use nx_privacy_dash::clipboard::SensitivePatternDetector;
 use nx_ui::gpui_theme::{mono_font_family, sf_font_family};
 use nx_ui::theme::Theme;
+use nx_ui::{glyph_icon, GlyphIcon};
 
 use crate::island::{BatteryAlert, IslandModel, IslandShape, ISLAND_WIDTH};
 use crate::live::{fmt_clock, fmt_rate, HudKind, LiveKind, LiveState, Spring1};
@@ -96,7 +99,6 @@ struct AssistantUi {
     phase: Option<Phase>,
     progress: f32,
     sources: Vec<SearchHit>,
-    stats: Option<Stats>,
     via: Option<&'static str>,
     confirm: Option<String>,
     error: Option<String>,
@@ -133,7 +135,10 @@ pub struct IslandView {
     clip_last: Option<String>,
     detector: Option<SensitivePatternDetector>,
     pub shelf: Vec<PathBuf>,
-    build_line: Option<String>,
+    vol_bounds: Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    lux_bounds: Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    dragging: Option<&'static str>,
+    last_applied: u8,
     /// Simulated battery (preview/demo) that host sampling must not clobber.
     battery_override: Option<(u8, bool)>,
     charge_step: i64,
@@ -174,7 +179,10 @@ impl IslandView {
             clip_last: None,
             detector: None,
             shelf: Vec::new(),
-            build_line: None,
+            vol_bounds: Rc::new(Cell::new(None)),
+            lux_bounds: Rc::new(Cell::new(None)),
+            dragging: None,
+            last_applied: 255,
             battery_override: None,
             charge_step: 0,
         }
@@ -409,14 +417,13 @@ impl IslandView {
                     message,
                     effects,
                     sources,
-                    stats,
                     via,
+                    ..
                 } => {
                     self.ai.busy = false;
                     self.ai.phase = None;
                     self.ai.reply = message;
                     self.ai.sources = sources;
-                    self.ai.stats = stats;
                     self.ai.via = Some(via.label());
                     self.ai.confirm = None;
                     self.live
@@ -601,7 +608,6 @@ impl IslandView {
                 probes_total,
             } => {
                 let compat = format!("Nexus compat {probes_ok}/{probes_total} OK");
-                self.build_line = Some(format!("WINDOWS {version} · {compat}"));
                 if let Some(prev) = previous {
                     self.notify_live(
                         LiveKind::Update {
@@ -942,6 +948,39 @@ fn bar(ratio: f32, w: f32, h: f32) -> gpui::Div {
             .rounded(px(h))
             .bg(WHITE),
     )
+}
+
+const SLIDER_HEIGHT: f32 = 44.0;
+
+/// Fill width for a pill slider: never narrower than the pill's height so
+/// the rounded cap stays round.
+fn slider_fill_width(ratio: f32, width: f32, h: f32) -> f32 {
+    (width * ratio.clamp(0.0, 1.0)).max(h).min(width.max(h))
+}
+
+/// Level for a pointer at `x` over a track starting at `left`.
+fn slider_ratio_at(x: f32, left: f32, width: f32) -> f32 {
+    if width <= 0.0 {
+        return 0.0;
+    }
+    ((x - left) / width).clamp(0.0, 1.0)
+}
+
+/// Round monochrome icon button (Control Center style).
+fn icon_toggle(id: &'static str, icon: GlyphIcon, on: bool) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_none()
+        .size(px(52.0))
+        .rounded_full()
+        .when(on, |d| d.bg(WHITE))
+        .when(!on, |d| d.bg(ink(0.14)))
+        .hover(|s| s.opacity(0.85))
+        .cursor_pointer()
+        .child(glyph_icon(icon, if on { black() } else { ink(0.85) }, 22.0))
 }
 
 fn chip(
@@ -1293,11 +1332,8 @@ impl IslandView {
         let show_answer =
             ai.busy || !ai.reply.is_empty() || ai.error.is_some() || ai.confirm.is_some();
         if show_answer {
-            if !ai.asked.is_empty() {
-                answer = answer.child(mono(format!("› {}", ai.asked), 11.0, 0.5));
-            }
             if let Some(b) = busy_label.filter(|_| ai.busy && ai.confirm.is_none()) {
-                answer = answer.child(label(b, 11.0, 0.7));
+                answer = answer.child(label(b, 14.0, 0.55));
             }
             if let Some(err) = &ai.error {
                 answer = answer.child(label(format!("× {err}"), 13.0, 1.0));
@@ -1358,24 +1394,6 @@ impl IslandView {
                             .border_color(ink(0.2))
                             .child(mono(format!("[{}] {host}", i + 1), 10.0, 0.75))
                     }),
-                ));
-            }
-            if let Some(s) = &ai.stats {
-                let net = if ai.sources.is_empty() {
-                    "on-device"
-                } else {
-                    "on-device · web via DuckDuckGo"
-                };
-                answer = answer.child(mono(
-                    format!(
-                        "QWEN3-0.6B · {} · {:.0} tok/s · {:.1}s · {}",
-                        ai.via.unwrap_or("local model").to_uppercase(),
-                        s.tokens_per_sec,
-                        s.total_secs,
-                        net.to_uppercase()
-                    ),
-                    9.5,
-                    0.4,
                 ));
             }
         }
@@ -1519,44 +1537,64 @@ impl IslandView {
             0.7,
         ));
 
-        let vol = self.model.volume;
+        let vol = if self.model.muted {
+            0.0
+        } else {
+            self.model.volume
+        };
         let lux = self.model.brightness;
         let meters = div()
             .flex()
             .flex_row()
-            .gap(px(14.0))
-            .child(self.meter_row("VOL", if self.model.muted { 0.0 } else { vol }, "vol", cx))
-            .child(self.meter_row("LUX", lux, "lux", cx));
+            .gap(px(12.0))
+            .child(self.slider(
+                "vol",
+                vol,
+                if self.model.muted || vol <= 0.0 {
+                    GlyphIcon::SpeakerMuted
+                } else {
+                    GlyphIcon::Speaker
+                },
+                self.vol_bounds.clone(),
+                cx,
+            ))
+            .child(self.slider("lux", lux, GlyphIcon::Sun, self.lux_bounds.clone(), cx));
 
         let net_on = self.network.load(Ordering::SeqCst);
         let toggles = div()
             .flex()
             .flex_row()
-            .gap(px(8.0))
+            .justify_between()
             .child(
-                chip("t-wifi", "WI-FI", self.model.wifi).on_click(cx.listener(|this, _, _, cx| {
-                    this.model.wifi = !this.model.wifi;
-                    this.run_tool(Tool::SetWifi {
-                        on: this.model.wifi,
-                    });
-                    cx.notify();
-                })),
-            )
-            .child(
-                chip("t-bt", "BLUETOOTH", self.model.bluetooth).on_click(cx.listener(
+                icon_toggle("t-wifi", GlyphIcon::Wifi, self.model.wifi).on_click(cx.listener(
                     |this, _, _, cx| {
-                        this.model.bluetooth = !this.model.bluetooth;
-                        this.run_tool(Tool::SetBluetooth {
-                            on: this.model.bluetooth,
+                        this.model.wifi = !this.model.wifi;
+                        this.run_tool(Tool::SetWifi {
+                            on: this.model.wifi,
                         });
                         cx.notify();
                     },
                 )),
             )
             .child(
-                chip(
+                icon_toggle("t-bt", GlyphIcon::Bluetooth, self.model.bluetooth).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.model.bluetooth = !this.model.bluetooth;
+                        this.run_tool(Tool::SetBluetooth {
+                            on: this.model.bluetooth,
+                        });
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                icon_toggle(
                     "t-mute",
-                    if self.model.muted { "MUTED" } else { "AUDIO" },
+                    if self.model.muted {
+                        GlyphIcon::SpeakerMuted
+                    } else {
+                        GlyphIcon::Speaker
+                    },
                     !self.model.muted,
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1569,7 +1607,7 @@ impl IslandView {
                 })),
             )
             .child(
-                chip("t-focus", "FOCUS", self.live.focus).on_click(cx.listener(
+                icon_toggle("t-focus", GlyphIcon::Moon, self.live.focus).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.live.focus = !this.live.focus;
                         cx.notify();
@@ -1577,13 +1615,13 @@ impl IslandView {
                 )),
             )
             .child(
-                chip("t-web", if net_on { "WEB ON" } else { "WEB OFF" }, net_on).on_click(
-                    cx.listener(|this, _, _, cx| {
+                icon_toggle("t-web", GlyphIcon::Globe, net_on).on_click(cx.listener(
+                    |this, _, _, cx| {
                         let on = !this.network.load(Ordering::SeqCst);
                         this.set_network(on);
                         cx.notify();
-                    }),
-                ),
+                    },
+                )),
             );
 
         let cpu = self.model.cpu;
@@ -1591,21 +1629,22 @@ impl IslandView {
         let sys = div()
             .flex()
             .flex_row()
-            .gap(px(14.0))
+            .gap(px(10.0))
             .items_center()
-            .child(label("CPU", 10.0, 0.55))
-            .child(bar(cpu, 200.0, 6.0))
+            .child(glyph_icon(GlyphIcon::Cpu, ink(0.6), 16.0))
+            .child(bar(cpu, 210.0, 6.0))
             .child(mono(
                 format!("{:>3}%", (cpu * 100.0).round() as u8),
                 11.0,
-                0.8,
+                0.7,
             ))
-            .child(label("RAM", 10.0, 0.55))
-            .child(bar(ram, 200.0, 6.0))
+            .child(div().w(px(14.0)))
+            .child(glyph_icon(GlyphIcon::Memory, ink(0.6), 16.0))
+            .child(bar(ram, 210.0, 6.0))
             .child(mono(
                 format!("{:>3}%", (ram * 100.0).round() as u8),
                 11.0,
-                0.8,
+                0.7,
             ));
 
         let shelf_items: Vec<(usize, PathBuf)> = self.shelf.iter().cloned().enumerate().collect();
@@ -1614,11 +1653,7 @@ impl IslandView {
             .flex_col()
             .gap(px(6.0))
             .flex_1()
-            .child(label(
-                format!("SHELF · {} · DROP FILES HERE", self.shelf.len()),
-                10.0,
-                0.45,
-            ))
+            .child(glyph_icon(GlyphIcon::Tray, ink(0.5), 16.0))
             .child(div().flex().flex_row().flex_wrap().gap(px(6.0)).children(
                 shelf_items.into_iter().map(|(i, p)| {
                     let name = p
@@ -1646,7 +1681,7 @@ impl IslandView {
             .flex_col()
             .gap(px(4.0))
             .flex_1()
-            .child(label("CLIPBOARD", 10.0, 0.45))
+            .child(glyph_icon(GlyphIcon::Clipboard, ink(0.5), 16.0))
             .children(self.clip.iter().take(3).enumerate().map(|(i, c)| {
                 let text = c.clone();
                 div()
@@ -1677,8 +1712,8 @@ impl IslandView {
         body = body
             .child(glance)
             .child(sep())
-            .child(meters)
             .child(toggles)
+            .child(meters)
             .child(sys)
             .child(sep())
             .child(
@@ -1689,9 +1724,6 @@ impl IslandView {
                     .child(shelf)
                     .child(clip),
             );
-        if let Some(b) = &self.build_line {
-            body = body.child(mono(b.clone(), 9.5, 0.35));
-        }
         let _ = theme;
         body
     }
@@ -1700,62 +1732,117 @@ impl IslandView {
         self.playing_position()
     }
 
-    fn meter_row(
+    /// Control Center style slider: thick pill track, white fill, icon
+    /// inside on the left. Click or drag anywhere on the track.
+    fn slider(
         &self,
-        name: &'static str,
-        ratio: f32,
         id: &'static str,
+        ratio: f32,
+        icon: GlyphIcon,
+        bounds: Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let minus = cx.listener(move |this: &mut Self, _: &gpui::ClickEvent, _, cx| {
-            this.step_level(id, -0.1);
-            cx.notify();
-        });
-        let plus = cx.listener(move |this: &mut Self, _: &gpui::ClickEvent, _, cx| {
-            this.step_level(id, 0.1);
-            cx.notify();
-        });
+    ) -> gpui::Stateful<gpui::Div> {
+        let h = SLIDER_HEIGHT;
+        let width = bounds
+            .get()
+            .map(|b| f32::from(b.size.width))
+            .unwrap_or(300.0);
+        let fill_w = slider_fill_width(ratio, width, h);
+        let icon_on_fill = fill_w >= 40.0;
+        let track_bounds = bounds.clone();
         div()
-            .flex()
-            .flex_row()
+            .id(id)
+            .relative()
             .flex_1()
-            .items_center()
-            .gap(px(8.0))
-            .child(label(name, 10.0, 0.55))
+            .h(px(h))
+            .rounded(px(h / 2.0))
+            .bg(ink(0.16))
+            .cursor_pointer()
             .child(
-                chip(if id == "vol" { "vol-" } else { "lux-" }, "−", false)
-                    .w(px(30.0))
-                    .flex_none()
-                    .on_click(minus),
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .h_full()
+                    .w(px(fill_w))
+                    .rounded(px(h / 2.0))
+                    .bg(WHITE),
             )
-            .child(bar(ratio, 170.0, 8.0))
             .child(
-                chip(if id == "vol" { "vol+" } else { "lux+" }, "+", false)
-                    .w(px(30.0))
-                    .flex_none()
-                    .on_click(plus),
+                div()
+                    .absolute()
+                    .left(px(13.0))
+                    .top(px((h - 20.0) / 2.0))
+                    .child(glyph_icon(
+                        icon,
+                        if icon_on_fill { black() } else { WHITE },
+                        20.0,
+                    )),
             )
-            .child(mono(
-                format!("{:>3}", (ratio * 100.0).round() as u8),
-                11.0,
-                0.8,
-            ))
+            .child(
+                gpui::canvas(move |b, _, _| track_bounds.set(Some(b)), |_, _, _, _| {})
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .size_full(),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                    this.dragging = Some(id);
+                    this.slide_to(id, f32::from(ev.position.x), true);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, _, cx| {
+                if this.dragging == Some(id) && ev.pressed_button == Some(gpui::MouseButton::Left) {
+                    this.slide_to(id, f32::from(ev.position.x), false);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, ev: &gpui::MouseUpEvent, _, cx| {
+                    if this.dragging == Some(id) {
+                        this.slide_to(id, f32::from(ev.position.x), true);
+                        this.dragging = None;
+                        cx.notify();
+                    }
+                }),
+            )
     }
 
-    fn step_level(&mut self, id: &str, delta: f32) {
-        if id == "vol" {
-            self.model.volume = (self.model.volume + delta).clamp(0.0, 1.0);
-            self.model.muted = false;
-            self.run_tool(Tool::SetVolume {
-                level: (self.model.volume * 100.0).round() as u8,
-            });
-            self.hud(HudKind::Volume);
+    fn slide_to(&mut self, id: &str, x: f32, commit: bool) {
+        let bounds = if id == "vol" {
+            self.vol_bounds.get()
         } else {
-            self.model.brightness = (self.model.brightness + delta).clamp(0.0, 1.0);
-            self.run_tool(Tool::SetBrightness {
-                level: (self.model.brightness * 100.0).round() as u8,
-            });
-            self.hud(HudKind::Brightness);
+            self.lux_bounds.get()
+        };
+        let Some(b) = bounds else {
+            return;
+        };
+        let ratio = slider_ratio_at(x, f32::from(b.origin.x), f32::from(b.size.width));
+        self.set_level(id, ratio, commit);
+    }
+
+    /// Apply a level. While dragging, the system is only touched every few
+    /// percent; `commit` always applies.
+    fn set_level(&mut self, id: &str, ratio: f32, commit: bool) {
+        let pct = (ratio * 100.0).round() as u8;
+        let apply = self.last_applied != pct && (commit || self.last_applied.abs_diff(pct) >= 4);
+        if id == "vol" {
+            self.model.volume = ratio;
+            self.model.muted = false;
+            if apply {
+                self.last_applied = pct;
+                self.run_tool(Tool::SetVolume { level: pct });
+            }
+        } else {
+            self.model.brightness = ratio;
+            if apply {
+                self.last_applied = pct;
+                self.run_tool(Tool::SetBrightness { level: pct });
+            }
         }
     }
 }
@@ -1929,5 +2016,15 @@ mod tests {
         assert_eq!(super::battery_fill_level(40, true, 4), 1.0);
         assert!(super::battery_fill_level(40, true, 2) > 0.4);
         assert_eq!(super::battery_fill_level(100, true, 2), 1.0);
+    }
+
+    #[test]
+    fn slider_maps_pointer_and_keeps_round_cap() {
+        assert_eq!(super::slider_ratio_at(150.0, 100.0, 200.0), 0.25);
+        assert_eq!(super::slider_ratio_at(50.0, 100.0, 200.0), 0.0);
+        assert_eq!(super::slider_ratio_at(400.0, 100.0, 200.0), 1.0);
+        assert_eq!(super::slider_fill_width(0.0, 300.0, 44.0), 44.0);
+        assert_eq!(super::slider_fill_width(0.5, 300.0, 44.0), 150.0);
+        assert_eq!(super::slider_fill_width(1.0, 300.0, 44.0), 300.0);
     }
 }

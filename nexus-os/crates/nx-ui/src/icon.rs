@@ -13,6 +13,17 @@ pub enum GlyphIcon {
     Terminal,
     Gear,
     Trash,
+    Wifi,
+    Bluetooth,
+    Speaker,
+    SpeakerMuted,
+    Moon,
+    Globe,
+    Sun,
+    Cpu,
+    Memory,
+    Tray,
+    Clipboard,
 }
 
 impl GlyphIcon {
@@ -66,6 +77,64 @@ fn fill(window: &mut Window, color: Hsla, build: impl FnOnce(&mut PathBuilder)) 
     if let Ok(built) = path.build() {
         window.paint_path(built, color);
     }
+}
+
+fn scale_r(b: Bounds<Pixels>, r: f32) -> Pixels {
+    px(r * f32::from(b.size.width) / 24.0)
+}
+
+/// Full circle centred at (cx, cy) with radius r (icon units).
+fn circle_path(p: &mut PathBuilder, b: Bounds<Pixels>, cx: f32, cy: f32, r: f32) {
+    let rr = scale_r(b, r);
+    p.move_to(map(b, cx + r, cy));
+    p.arc_to(point(rr, rr), px(0.0), true, true, map(b, cx - r, cy));
+    p.arc_to(point(rr, rr), px(0.0), true, true, map(b, cx + r, cy));
+}
+
+/// Arc on a circle centred at (cx, cy) from angle a0 to a1 (degrees,
+/// clockwise on screen).
+fn arc_path(p: &mut PathBuilder, b: Bounds<Pixels>, cx: f32, cy: f32, r: f32, a0: f32, a1: f32) {
+    let (s0, c0) = a0.to_radians().sin_cos();
+    let (s1, c1) = a1.to_radians().sin_cos();
+    let rr = scale_r(b, r);
+    p.move_to(map(b, cx + r * c0, cy + r * s0));
+    p.arc_to(
+        point(rr, rr),
+        px(0.0),
+        (a1 - a0).abs() > 180.0,
+        true,
+        map(b, cx + r * c1, cy + r * s1),
+    );
+}
+
+fn polyline(p: &mut PathBuilder, b: Bounds<Pixels>, pts: &[(f32, f32)], close: bool) {
+    if let Some((x, y)) = pts.first() {
+        p.move_to(map(b, *x, *y));
+    }
+    for (x, y) in pts.iter().skip(1) {
+        p.line_to(map(b, *x, *y));
+    }
+    if close {
+        p.close();
+    }
+}
+
+fn speaker_body(window: &mut Window, b: Bounds<Pixels>, color: Hsla) {
+    fill(window, color, |p| {
+        polyline(
+            p,
+            b,
+            &[
+                (3.5, 9.5),
+                (7.5, 9.5),
+                (12.5, 5.0),
+                (12.5, 19.0),
+                (7.5, 14.5),
+                (3.5, 14.5),
+            ],
+            true,
+        );
+    });
 }
 
 fn paint_glyph(window: &mut Window, b: Bounds<Pixels>, kind: GlyphIcon, color: Hsla) {
@@ -168,6 +237,198 @@ fn paint_glyph(window: &mut Window, b: Bounds<Pixels>, kind: GlyphIcon, color: H
                 p.line_to(map(b, 11.0, 16.2));
                 p.move_to(map(b, 13.0, 10.0));
                 p.line_to(map(b, 13.0, 16.2));
+            });
+        }
+        GlyphIcon::Wifi => {
+            for r in [3.6, 7.2, 10.8] {
+                stroke(window, color, sw * 1.1, |p| {
+                    arc_path(p, b, 12.0, 19.5, r, -135.0, -45.0);
+                });
+            }
+            fill(window, color, |p| circle_path(p, b, 12.0, 19.5, 1.5));
+        }
+        GlyphIcon::Bluetooth => {
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[
+                        (6.5, 7.5),
+                        (17.0, 16.5),
+                        (12.0, 21.0),
+                        (12.0, 3.0),
+                        (17.0, 7.5),
+                        (6.5, 16.5),
+                    ],
+                    false,
+                );
+            });
+        }
+        GlyphIcon::Speaker => {
+            speaker_body(window, b, color);
+            for r in [3.5, 7.0] {
+                stroke(window, color, sw, |p| {
+                    arc_path(p, b, 13.5, 12.0, r, -50.0, 50.0);
+                });
+            }
+        }
+        GlyphIcon::SpeakerMuted => {
+            speaker_body(window, b, color);
+            stroke(window, color, sw, |p| {
+                p.move_to(map(b, 15.5, 9.5));
+                p.line_to(map(b, 20.5, 14.5));
+                p.move_to(map(b, 20.5, 9.5));
+                p.line_to(map(b, 15.5, 14.5));
+            });
+        }
+        GlyphIcon::Moon => {
+            let big = scale_r(b, 8.8);
+            let small = scale_r(b, 8.0);
+            fill(window, color, |p| {
+                p.move_to(map(b, 15.0, 3.0));
+                p.arc_to(point(big, big), px(0.0), true, false, map(b, 21.0, 16.7));
+                p.arc_to(point(small, small), px(0.0), false, true, map(b, 15.0, 3.0));
+            });
+        }
+        GlyphIcon::Globe => {
+            stroke(window, color, sw, |p| circle_path(p, b, 12.0, 12.0, 8.5));
+            let rx = scale_r(b, 3.8);
+            let ry = scale_r(b, 8.5);
+            stroke(window, color, sw * 0.85, |p| {
+                p.move_to(map(b, 12.0, 3.5));
+                p.arc_to(point(rx, ry), px(0.0), false, true, map(b, 12.0, 20.5));
+                p.arc_to(point(rx, ry), px(0.0), false, true, map(b, 12.0, 3.5));
+            });
+            stroke(window, color, sw * 0.85, |p| {
+                p.move_to(map(b, 3.5, 12.0));
+                p.line_to(map(b, 20.5, 12.0));
+                p.move_to(map(b, 5.2, 7.8));
+                p.line_to(map(b, 18.8, 7.8));
+                p.move_to(map(b, 5.2, 16.2));
+                p.line_to(map(b, 18.8, 16.2));
+            });
+        }
+        GlyphIcon::Sun => {
+            fill(window, color, |p| circle_path(p, b, 12.0, 12.0, 4.2));
+            for i in 0..8 {
+                let a = (i as f32) * std::f32::consts::PI / 4.0;
+                let (sin, cos) = a.sin_cos();
+                stroke(window, color, sw, |p| {
+                    p.move_to(map(b, 12.0 + cos * 6.6, 12.0 + sin * 6.6));
+                    p.line_to(map(b, 12.0 + cos * 9.2, 12.0 + sin * 9.2));
+                });
+            }
+        }
+        GlyphIcon::Cpu => {
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[(6.5, 6.5), (17.5, 6.5), (17.5, 17.5), (6.5, 17.5)],
+                    true,
+                );
+            });
+            fill(window, color, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[(9.8, 9.8), (14.2, 9.8), (14.2, 14.2), (9.8, 14.2)],
+                    true,
+                );
+            });
+            stroke(window, color, sw * 0.8, |p| {
+                for v in [9.5, 12.0, 14.5] {
+                    p.move_to(map(b, v, 3.5));
+                    p.line_to(map(b, v, 6.5));
+                    p.move_to(map(b, v, 17.5));
+                    p.line_to(map(b, v, 20.5));
+                    p.move_to(map(b, 3.5, v));
+                    p.line_to(map(b, 6.5, v));
+                    p.move_to(map(b, 17.5, v));
+                    p.line_to(map(b, 20.5, v));
+                }
+            });
+        }
+        GlyphIcon::Memory => {
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[(3.0, 7.5), (21.0, 7.5), (21.0, 15.5), (3.0, 15.5)],
+                    true,
+                );
+            });
+            for x in [5.5, 10.0, 14.5] {
+                fill(window, color, |p| {
+                    polyline(
+                        p,
+                        b,
+                        &[(x, 9.8), (x + 3.5, 9.8), (x + 3.5, 13.2), (x, 13.2)],
+                        true,
+                    );
+                });
+            }
+            stroke(window, color, sw * 0.8, |p| {
+                for x in [6.0, 9.0, 12.0, 15.0, 18.0] {
+                    p.move_to(map(b, x, 15.5));
+                    p.line_to(map(b, x, 18.5));
+                }
+            });
+        }
+        GlyphIcon::Tray => {
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[
+                        (3.5, 13.0),
+                        (6.0, 5.5),
+                        (18.0, 5.5),
+                        (20.5, 13.0),
+                        (20.5, 19.0),
+                        (3.5, 19.0),
+                    ],
+                    true,
+                );
+            });
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[
+                        (3.5, 13.0),
+                        (8.5, 13.0),
+                        (10.0, 15.5),
+                        (14.0, 15.5),
+                        (15.5, 13.0),
+                        (20.5, 13.0),
+                    ],
+                    false,
+                );
+            });
+        }
+        GlyphIcon::Clipboard => {
+            stroke(window, color, sw, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[(5.5, 5.0), (18.5, 5.0), (18.5, 21.0), (5.5, 21.0)],
+                    true,
+                );
+            });
+            fill(window, color, |p| {
+                polyline(
+                    p,
+                    b,
+                    &[(9.0, 3.0), (15.0, 3.0), (15.0, 7.0), (9.0, 7.0)],
+                    true,
+                );
+            });
+            stroke(window, color, sw * 0.8, |p| {
+                p.move_to(map(b, 8.5, 11.5));
+                p.line_to(map(b, 15.5, 11.5));
+                p.move_to(map(b, 8.5, 15.5));
+                p.line_to(map(b, 13.5, 15.5));
             });
         }
     }
