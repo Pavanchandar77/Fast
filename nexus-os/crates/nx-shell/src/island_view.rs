@@ -1431,7 +1431,7 @@ impl IslandView {
                                 .flex_row()
                                 .gap(px(6.0))
                                 .child(
-                                    chip("np-prev", "⏮", false)
+                                    chip("np-prev", "◂◂", false)
                                         .w(px(40.0))
                                         .flex_none()
                                         .on_click(cx.listener(|_, _, _, _| {
@@ -1439,7 +1439,7 @@ impl IslandView {
                                         })),
                                 )
                                 .child(
-                                    chip("np-play", if np.playing { "❚❚" } else { "▶" }, true)
+                                    chip("np-play", if np.playing { "❚❚" } else { "▸" }, true)
                                         .w(px(48.0))
                                         .flex_none()
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1455,7 +1455,7 @@ impl IslandView {
                                         })),
                                 )
                                 .child(
-                                    chip("np-next", "⏭", false)
+                                    chip("np-next", "▸▸", false)
                                         .w(px(40.0))
                                         .flex_none()
                                         .on_click(cx.listener(|_, _, _, _| {

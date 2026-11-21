@@ -292,8 +292,16 @@ pub fn spawn_media(network: Arc<AtomicBool>) -> Receiver<SlowEvent> {
         .name("nexus-island-media".into())
         .spawn(move || {
             let mut last_track = String::new();
+            let mut had_session = false;
             loop {
                 let np = platform::now_playing();
+                // Only report "nothing playing" once, on the transition; this
+                // keeps idle hosts quiet and leaves injected state alone.
+                if np.is_none() && !had_session {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    continue;
+                }
+                had_session = np.is_some();
                 if let Some(n) = &np {
                     let key = format!("{}\u{1}{}", n.artist, n.title);
                     if key != last_track {
