@@ -30,7 +30,7 @@ pub use host::{
     apply_backdrop, dwm_flush, register_thumbnail, unregister_thumbnail, update_thumbnail,
     LiveThumbnailManager,
 };
-pub use island::IslandModel;
+pub use island::{IslandModel, COLLAPSED_HEIGHT, EXPANDED_HEIGHT};
 pub use menu_bar::{
     bar_height, hit_menu_bar, layout_menu_bar, BarSlot, ClipboardWidget, MeasuredSlot, MenuAction,
     MenuBarLayout, MenuBarModel, MenuEntry, PlacedSlot, StatusKind, StatusWidget, VolumeWidget,

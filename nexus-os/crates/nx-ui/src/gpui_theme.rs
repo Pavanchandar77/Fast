@@ -172,7 +172,12 @@ impl Theme {
 
     /// Creates standard GPUI `WindowOptions` for blurred surfaces (dock, Spotlight, etc).
     pub fn blurred_window_options(&self, bounds: Bounds<Pixels>) -> WindowOptions {
-        self.shell_window_options(bounds, true, false, true)
+        self.app_window_options(bounds)
+    }
+
+    /// Opened app windows: transparent, client decorations, no OS titlebar.
+    pub fn app_window_options(&self, bounds: Bounds<Pixels>) -> WindowOptions {
+        self.shell_window_options(bounds, false, false, true)
     }
 
     /// Shell chrome (island, dock, spotlight): no system titlebar, client decorations,
@@ -184,25 +189,24 @@ impl Theme {
         popup: bool,
         show: bool,
     ) -> WindowOptions {
-        let appearance = if blurred {
-            WindowBackgroundAppearance::Blurred
-        } else {
-            WindowBackgroundAppearance::Transparent
-        };
+        // Always Transparent so we can draw a rounded body and let the desktop
+        // show through the corners. The `blurred` flag is kept for callers but
+        // no longer fills an opaque/blurred hard rectangle.
+        let _ = blurred;
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_background: appearance,
+            window_background: WindowBackgroundAppearance::Transparent,
             titlebar: None,
             focus: !popup,
             show,
             kind: if popup {
                 WindowKind::PopUp
             } else {
-                WindowKind::Normal
+                WindowKind::Floating
             },
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
+            is_movable: !popup,
+            is_resizable: !popup,
+            is_minimizable: !popup,
             window_decorations: Some(WindowDecorations::Client),
             ..Default::default()
         }
@@ -244,6 +248,34 @@ pub fn window_chrome(theme: &Theme, scale: f32) -> impl IntoElement {
         .child(glyph("×"))
         .child(glyph("–"))
         .child(glyph("□"))
+}
+
+/// Inset around the rounded window body so the hairline and shadow can paint
+/// on a transparent frame. Corners of the OS window stay see-through.
+pub const WINDOW_FRAME_INSET: f32 = 10.0;
+
+/// Wrap an app or palette surface in a rounded, bordered, shadowed body sitting
+/// on a fully transparent frame.
+pub fn rounded_window_frame(theme: &Theme, child: impl IntoElement) -> impl IntoElement {
+    div()
+        .w_full()
+        .h_full()
+        .bg(Hsla::from(Color::TRANSPARENT))
+        .p(px(WINDOW_FRAME_INSET))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .h_full()
+                .bg(theme.window_bg_hsla())
+                .border_1()
+                .border_color(theme.separator_hsla())
+                .rounded(px(theme.radii.window))
+                .shadow_lg()
+                .overflow_hidden()
+                .child(child),
+        )
 }
 
 /// Extension trait on GPUI `Styled` elements for rapid theme application.
@@ -344,7 +376,12 @@ mod tests {
         let theme = Theme::dark(Accent::Blue);
         let bounds = Bounds::new(point(px(100.0), px(100.0)), size(px(800.0), px(600.0)));
         let opts = theme.blurred_window_options(bounds);
-        assert_eq!(opts.window_background, WindowBackgroundAppearance::Blurred);
+        assert_eq!(
+            opts.window_background,
+            WindowBackgroundAppearance::Transparent
+        );
+        assert_eq!(opts.window_decorations, Some(WindowDecorations::Client));
+        assert!(opts.titlebar.is_none());
         assert!(opts.window_bounds.is_some());
 
         let solid_opts = theme.window_options(bounds);

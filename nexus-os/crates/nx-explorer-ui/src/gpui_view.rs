@@ -4,8 +4,7 @@ use gpui::prelude::*;
 use gpui::{
     div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
 };
-use nx_fs::EntryKind;
-use nx_ui::gpui_theme::{sf_font_family, window_chrome};
+use nx_ui::gpui_theme::{rounded_window_frame, sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
 
 use crate::view_model::ExplorerWindow;
@@ -71,8 +70,8 @@ impl Render for ExplorerView {
                     if let Some(entry) = pane.row(i) {
                         items.push(FileRowSnapshot {
                             name: entry.display_name.clone(),
-                            is_dir: matches!(entry.kind, EntryKind::Dir),
-                            size_formatted: if matches!(entry.kind, EntryKind::Dir) {
+                            is_dir: entry.is_folder(),
+                            size_formatted: if entry.is_folder() {
                                 "--".to_string()
                             } else {
                                 format_bytes(entry.size)
@@ -93,291 +92,302 @@ impl Render for ExplorerView {
         let selected_count = items_snapshot.iter().filter(|i| i.is_selected).count();
         let items_rc = std::rc::Rc::new(items_snapshot);
 
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .h_full()
-            .bg(Hsla::from(theme.palette.window_bg))
-            .font_family(sf_font_family())
-            .text_size(px(13.0))
-            .text_color(theme.text_primary_hsla())
-            .overflow_hidden()
-            // 1. Top Unified Toolbar
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .h(px(52.0))
-                    .px(px(16.0))
-                    .bg(Hsla::from(theme.palette.sidebar_bg))
-                    .border_b_1()
-                    .border_color(Hsla::from(theme.palette.separator))
-                    // Left: Traffic lights and navigation buttons
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(12.0))
-                            .child(window_chrome(&theme, 1.0))
-                            // Nav buttons (Back, Forward)
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(4.0))
-                                    .child(
-                                        div()
-                                            .px(px(8.0))
-                                            .py(px(4.0))
-                                            .rounded(px(theme.radii.xs))
-                                            .hover(|s| s.bg(theme.hover_hsla()))
-                                            .child("◀"),
-                                    )
-                                    .child(
-                                        div()
-                                            .px(px(8.0))
-                                            .py(px(4.0))
-                                            .rounded(px(theme.radii.xs))
-                                            .hover(|s| s.bg(theme.hover_hsla()))
-                                            .child("▶"),
-                                    ),
-                            )
-                            // Breadcrumb Path display
-                            .child(
-                                div()
-                                    .px(px(12.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.sm))
-                                    .bg(Hsla::from(theme.palette.fill))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.text_primary_hsla())
-                                    .child(path_str),
-                            ),
-                    )
-                    // Right: Search & View mode switcher
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .px(px(12.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.xs))
-                                    .bg(Hsla::from(theme.palette.fill))
-                                    .text_color(theme.text_secondary_hsla())
-                                    .child("SEARCH"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .rounded(px(theme.radii.xs))
-                                    .border_1()
-                                    .border_color(Hsla::from(theme.palette.separator))
-                                    .child(
-                                        div()
-                                            .px(px(8.0))
-                                            .py(px(2.0))
-                                            .bg(theme.selection_hsla())
-                                            .child("≡"),
-                                    )
-                                    .child(div().px(px(8.0)).py(px(2.0)).child("⊞")),
-                            ),
-                    ),
-            )
-            // 2. Middle Split: Sidebar + Main File Content
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .overflow_hidden()
-                    // Sidebar
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w(px(200.0))
-                            .h_full()
-                            .bg(Hsla::from(theme.palette.sidebar_bg))
-                            .border_r_1()
-                            .border_color(Hsla::from(theme.palette.separator))
-                            .p(px(12.0))
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_secondary_hsla())
-                                    .child("FAVORITES"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.xs))
-                                    .bg(theme.selection_hsla())
-                                    .child("Home"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.xs))
-                                    .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("Documents"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.xs))
-                                    .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("Downloads"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(theme.radii.xs))
-                                    .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("Desktop"),
-                            ),
-                    )
-                    // File table area (Virtualized uniform_list)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .h_full()
-                            .bg(Hsla::from(theme.palette.content_bg))
-                            // Table Header Row
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .h(px(26.0))
-                                    .px(px(16.0))
-                                    .bg(Hsla::from(theme.palette.window_bg))
-                                    .border_b_1()
-                                    .border_color(Hsla::from(theme.palette.separator))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text_secondary_hsla())
-                                    .child(div().w(px(320.0)).child("Name"))
-                                    .child(div().w(px(120.0)).child("Size"))
-                                    .child(div().w(px(100.0)).child("Kind")),
-                            )
-                            // File rows. uniform_list stays in tests for the 100k case;
-                            // a flex column is reliable for real window layout.
-                            .child(
-                                div()
-                                    .id("explorer-file-list")
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .w_full()
-                                    .h_full()
-                                    .overflow_y_scroll()
-                                    .children(items_rc.iter().enumerate().map(|(idx, item)| {
-                                        let is_alt = idx % 2 == 1;
-                                        let is_selected = item.is_selected;
-                                        let mark = if item.is_dir { "DIR" } else { "DOC" };
-                                        let kind_str =
-                                            if item.is_dir { "Folder" } else { "Document" };
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .h(px(28.0))
-                                            .px(px(16.0))
-                                            .when(is_selected, |d| d.bg(theme.selection_hsla()))
-                                            .when(!is_selected && is_alt, |d| {
-                                                d.bg(Hsla::from(theme.palette.row_alt))
-                                            })
-                                            .hover(|s| s.bg(theme.hover_hsla()))
-                                            .child(
+        rounded_window_frame(
+            &theme,
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .h_full()
+                .bg(Hsla::from(theme.palette.window_bg))
+                .font_family(sf_font_family())
+                .text_size(px(13.0))
+                .text_color(theme.text_primary_hsla())
+                .overflow_hidden()
+                // 1. Top Unified Toolbar
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .h(px(52.0))
+                        .px(px(16.0))
+                        .bg(Hsla::from(theme.palette.sidebar_bg))
+                        .border_b_1()
+                        .border_color(Hsla::from(theme.palette.separator))
+                        // Left: Traffic lights and navigation buttons
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(12.0))
+                                .child(window_chrome(&theme, 1.0))
+                                // Nav buttons (Back, Forward)
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(4.0))
+                                        .child(
+                                            div()
+                                                .px(px(8.0))
+                                                .py(px(4.0))
+                                                .rounded(px(theme.radii.xs))
+                                                .hover(|s| s.bg(theme.hover_hsla()))
+                                                .child("◀"),
+                                        )
+                                        .child(
+                                            div()
+                                                .px(px(8.0))
+                                                .py(px(4.0))
+                                                .rounded(px(theme.radii.xs))
+                                                .hover(|s| s.bg(theme.hover_hsla()))
+                                                .child("▶"),
+                                        ),
+                                )
+                                // Breadcrumb Path display
+                                .child(
+                                    div()
+                                        .px(px(12.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.sm))
+                                        .bg(Hsla::from(theme.palette.fill))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text_primary_hsla())
+                                        .child(path_str),
+                                ),
+                        )
+                        // Right: Search & View mode switcher
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(10.0))
+                                .child(
+                                    div()
+                                        .px(px(12.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .bg(Hsla::from(theme.palette.fill))
+                                        .text_color(theme.text_secondary_hsla())
+                                        .child("SEARCH"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .rounded(px(theme.radii.xs))
+                                        .border_1()
+                                        .border_color(Hsla::from(theme.palette.separator))
+                                        .child(
+                                            div()
+                                                .px(px(8.0))
+                                                .py(px(2.0))
+                                                .bg(theme.selection_hsla())
+                                                .child("≡"),
+                                        )
+                                        .child(div().px(px(8.0)).py(px(2.0)).child("⊞")),
+                                ),
+                        ),
+                )
+                // 2. Middle Split: Sidebar + Main File Content
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .overflow_hidden()
+                        // Sidebar
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w(px(200.0))
+                                .h_full()
+                                .bg(Hsla::from(theme.palette.sidebar_bg))
+                                .border_r_1()
+                                .border_color(Hsla::from(theme.palette.separator))
+                                .p(px(12.0))
+                                .gap(px(4.0))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_size(px(11.0))
+                                        .text_color(theme.text_secondary_hsla())
+                                        .child("FAVORITES"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .bg(theme.selection_hsla())
+                                        .child("Home"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .hover(|s| s.bg(theme.hover_hsla()))
+                                        .child("Documents"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .hover(|s| s.bg(theme.hover_hsla()))
+                                        .child("Downloads"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .rounded(px(theme.radii.xs))
+                                        .hover(|s| s.bg(theme.hover_hsla()))
+                                        .child("Desktop"),
+                                ),
+                        )
+                        // File table area (Virtualized uniform_list)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .h_full()
+                                .bg(Hsla::from(theme.palette.content_bg))
+                                // Table Header Row
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .h(px(26.0))
+                                        .px(px(16.0))
+                                        .bg(Hsla::from(theme.palette.window_bg))
+                                        .border_b_1()
+                                        .border_color(Hsla::from(theme.palette.separator))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text_secondary_hsla())
+                                        .child(div().w(px(320.0)).child("Name"))
+                                        .child(div().w(px(120.0)).child("Size"))
+                                        .child(div().w(px(100.0)).child("Kind")),
+                                )
+                                // File rows. uniform_list stays in tests for the 100k case;
+                                // a flex column is reliable for real window layout.
+                                .child(
+                                    div()
+                                        .id("explorer-file-list")
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .w_full()
+                                        .h_full()
+                                        .overflow_y_scroll()
+                                        .children(items_rc.iter().enumerate().map(
+                                            |(idx, item)| {
+                                                let is_alt = idx % 2 == 1;
+                                                let is_selected = item.is_selected;
+                                                let mark = if item.is_dir { "DIR" } else { "DOC" };
+                                                let kind_str =
+                                                    if item.is_dir { "Folder" } else { "Document" };
                                                 div()
                                                     .flex()
                                                     .flex_row()
                                                     .items_center()
-                                                    .gap(px(10.0))
-                                                    .w(px(320.0))
+                                                    .h(px(28.0))
+                                                    .px(px(16.0))
+                                                    .when(is_selected, |d| {
+                                                        d.bg(theme.selection_hsla())
+                                                    })
+                                                    .when(!is_selected && is_alt, |d| {
+                                                        d.bg(Hsla::from(theme.palette.row_alt))
+                                                    })
+                                                    .hover(|s| s.bg(theme.hover_hsla()))
                                                     .child(
                                                         div()
-                                                            .w(px(28.0))
-                                                            .font_family(sf_font_family())
-                                                            .font_weight(FontWeight::BOLD)
-                                                            .text_size(px(9.0))
-                                                            .text_color(theme.text_secondary_hsla())
-                                                            .child(mark),
+                                                            .flex()
+                                                            .flex_row()
+                                                            .items_center()
+                                                            .gap(px(10.0))
+                                                            .w(px(320.0))
+                                                            .child(
+                                                                div()
+                                                                    .w(px(28.0))
+                                                                    .font_family(sf_font_family())
+                                                                    .font_weight(FontWeight::BOLD)
+                                                                    .text_size(px(9.0))
+                                                                    .text_color(
+                                                                        theme.text_secondary_hsla(),
+                                                                    )
+                                                                    .child(mark),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_color(
+                                                                        theme.text_primary_hsla(),
+                                                                    )
+                                                                    .font_weight(if item.is_dir {
+                                                                        FontWeight::MEDIUM
+                                                                    } else {
+                                                                        FontWeight::NORMAL
+                                                                    })
+                                                                    .child(item.name.clone()),
+                                                            ),
                                                     )
                                                     .child(
                                                         div()
-                                                            .text_color(theme.text_primary_hsla())
-                                                            .font_weight(if item.is_dir {
-                                                                FontWeight::MEDIUM
-                                                            } else {
-                                                                FontWeight::NORMAL
-                                                            })
-                                                            .child(item.name.clone()),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w(px(120.0))
-                                                    .text_color(theme.text_secondary_hsla())
-                                                    .child(item.size_formatted.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w(px(100.0))
-                                                    .text_color(theme.text_secondary_hsla())
-                                                    .child(kind_str),
-                                            )
-                                    })),
-                            ),
-                    ),
-            )
-            // 3. Bottom Status Bar
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .h(px(24.0))
-                    .px(px(16.0))
-                    .bg(Hsla::from(theme.palette.sidebar_bg))
-                    .border_t_1()
-                    .border_color(Hsla::from(theme.palette.separator))
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary_hsla())
-                    .child(format!(
-                        "{} items, {} selected",
-                        total_items, selected_count
-                    ))
-                    .child("Nexus-OS VFS"),
-            )
+                                                            .w(px(120.0))
+                                                            .text_color(theme.text_secondary_hsla())
+                                                            .child(item.size_formatted.clone()),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(100.0))
+                                                            .text_color(theme.text_secondary_hsla())
+                                                            .child(kind_str),
+                                                    )
+                                            },
+                                        )),
+                                ),
+                        ),
+                )
+                // 3. Bottom Status Bar
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .h(px(24.0))
+                        .px(px(16.0))
+                        .bg(Hsla::from(theme.palette.sidebar_bg))
+                        .border_t_1()
+                        .border_color(Hsla::from(theme.palette.separator))
+                        .text_size(px(11.0))
+                        .text_color(theme.text_secondary_hsla())
+                        .child(format!(
+                            "{} items, {} selected",
+                            total_items, selected_count
+                        ))
+                        .child("Nexus-OS VFS"),
+                ),
+        )
     }
 }
 

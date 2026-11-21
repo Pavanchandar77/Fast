@@ -318,7 +318,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     let sh = f32::from(screen.size.height);
 
     let island_w = 680.0;
-    let island_h = 52.0;
+    let island_h = nx_shell::COLLAPSED_HEIGHT;
     let island_x = sx + ((sw - island_w) * 0.5).max(0.0);
     let island_y = sy + 10.0;
 
@@ -356,7 +356,10 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     true,
                     true,
                 ),
-                move |_window, cx| cx.new(|_cx| IslandView::new(island_model)),
+                move |window, cx| {
+                    apply_rounded_native_corners(window);
+                    cx.new(|_cx| IslandView::new(island_model))
+                },
             )
             .ok();
 
@@ -372,7 +375,10 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     true,
                     true,
                 ),
-                move |_window, cx| cx.new(|_cx| DockView::new(dock_model)),
+                move |window, cx| {
+                    apply_rounded_native_corners(window);
+                    cx.new(|_cx| DockView::new(dock_model))
+                },
             )
             .ok();
 
@@ -391,6 +397,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         spotlight_opts.focus = false;
         windows.spotlight_window = cx
             .open_window(spotlight_opts, move |window, cx| {
+                apply_rounded_native_corners(window);
                 // Linux ignores WindowOptions.show; park minimized until toggled.
                 hide_auxiliary_window(window);
                 cx.new(|_cx| SpotlightView::new(spotlight_model))
@@ -410,6 +417,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         expose_opts.focus = false;
         windows.expose_window = cx
             .open_window(expose_opts, move |window, cx| {
+                apply_rounded_native_corners(window);
                 hide_auxiliary_window(window);
                 cx.new(|_cx| MissionControlView::new(expose_model))
             })
@@ -423,7 +431,10 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     origin: gpui::point(gpui::px(explorer_x), gpui::px(explorer_y)),
                     size: gpui::size(gpui::px(explorer_w), gpui::px(explorer_h)),
                 }),
-                move |_window, cx| cx.new(|_cx| ExplorerView::new(explorer.window)),
+                move |window, cx| {
+                    apply_rounded_native_corners(window);
+                    cx.new(|_cx| ExplorerView::new(explorer.window))
+                },
             )
             .ok();
     }
@@ -436,7 +447,10 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     origin: gpui::point(gpui::px(privacy_x), gpui::px(privacy_y)),
                     size: gpui::size(gpui::px(privacy_w), gpui::px(privacy_h)),
                 }),
-                move |_window, cx| cx.new(|_cx| PrivacyDashboardView::new(dash_vm)),
+                move |window, cx| {
+                    apply_rounded_native_corners(window);
+                    cx.new(|_cx| PrivacyDashboardView::new(dash_vm))
+                },
             )
             .ok();
     }
@@ -455,7 +469,11 @@ pub fn set_island_expanded(
     handle
         .update(cx, |view, window, cx| {
             view.set_expanded(expanded);
-            let height = if expanded { 308.0 } else { 52.0 };
+            let height = if expanded {
+                nx_shell::EXPANDED_HEIGHT
+            } else {
+                nx_shell::COLLAPSED_HEIGHT
+            };
             window.resize(gpui::size(gpui::px(680.0), gpui::px(height)));
             cx.notify();
             view.model.expanded
@@ -478,6 +496,29 @@ pub fn toggle_gpui_spotlight(
             open
         })
         .unwrap_or(false)
+}
+
+fn apply_rounded_native_corners(window: &mut gpui::Window) {
+    #[cfg(windows)]
+    {
+        use nx_ui::platform::{apply_hwnd, BackdropRequest, CornerPreference, SystemBackdrop};
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        if let Ok(handle) = window.window_handle() {
+            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                let hwnd = win32.hwnd.get();
+                let _ = apply_hwnd(
+                    hwnd,
+                    BackdropRequest {
+                        kind: SystemBackdrop::None,
+                        dark: true,
+                        corners: CornerPreference::Round,
+                    },
+                );
+            }
+        }
+    }
+    let _ = window;
 }
 
 /// Test GPUI windows panic on minimize; Linux ignores WindowOptions.show, so we

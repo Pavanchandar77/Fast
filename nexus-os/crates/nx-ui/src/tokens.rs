@@ -169,7 +169,7 @@ impl Radii {
             md: 14.0,
             lg: 18.0,
             xl: 24.0,
-            window: 20.0,
+            window: 14.0,
             pill: 999.0,
         }
     }

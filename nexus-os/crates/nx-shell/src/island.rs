@@ -8,6 +8,12 @@
 use crate::clock::ClockSample;
 
 /// Live control-center state for the Dynamic Island.
+/// Collapsed pill window height (including transparent padding).
+pub const COLLAPSED_HEIGHT: f32 = 52.0;
+/// Expanded control-center height, sized to the body plus padding so
+/// alerts and meters are not clipped and no empty slab hangs below.
+pub const EXPANDED_HEIGHT: f32 = 336.0;
+
 #[derive(Clone, Debug)]
 pub struct IslandModel {
     pub expanded: bool,

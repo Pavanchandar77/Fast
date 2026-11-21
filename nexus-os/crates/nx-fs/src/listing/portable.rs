@@ -33,8 +33,15 @@ pub(crate) fn list(
             EntryKind::Other
         };
         let mut e = DirEntry::new(item.file_name(), kind, 0);
+        // Always follow the target path (not lstat) so a symlink-to-dir
+        // is classified as a folder. DirEntry::metadata() is not reliable here.
+        if kind == EntryKind::Symlink {
+            if let Ok(md) = std::fs::metadata(item.path()) {
+                e.target_is_dir = md.is_dir();
+            }
+        }
         if opts.with_metadata {
-            if let Ok(md) = item.metadata() {
+            if let Ok(md) = std::fs::metadata(item.path()).or_else(|_| item.metadata()) {
                 if kind == EntryKind::File {
                     e.size = md.len();
                 }

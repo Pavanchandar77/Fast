@@ -10,6 +10,7 @@ use gpui::{
 };
 use nx_ui::gpui_theme::{mono_font_family, sf_font_family, window_chrome, ThemeStyledExt};
 use nx_ui::theme::Theme;
+use nx_ui::{glyph_icon, GlyphIcon};
 
 use crate::dock::{magnification_target, DockModel};
 use crate::expose::ExposeModel;
@@ -111,7 +112,11 @@ impl IslandView {
     }
 
     fn apply_size(&self, window: &mut Window) {
-        let height = if self.model.expanded { 308.0 } else { 52.0 };
+        let height = if self.model.expanded {
+            crate::island::EXPANDED_HEIGHT
+        } else {
+            crate::island::COLLAPSED_HEIGHT
+        };
         window.resize(size(px(680.0), px(height)));
     }
 
@@ -435,6 +440,7 @@ impl Render for IslandView {
             .h_full()
             .px(px(8.0))
             .pt(px(6.0))
+            .pb(px(8.0))
             .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                 this.model.hover(*hovered);
                 this.apply_size(window);
@@ -444,6 +450,7 @@ impl Render for IslandView {
                 div()
                     .flex()
                     .flex_col()
+                    .flex_none()
                     .w(px(if expanded { 664.0 } else { 280.0 }))
                     .rounded(px(if expanded {
                         theme.radii.xl + 8.0
@@ -474,23 +481,6 @@ impl DockView {
             model,
             hovered_index: None,
         }
-    }
-}
-
-fn dock_monogram(id: &str, label: &str) -> String {
-    if id == "trash" {
-        return "TR".to_string();
-    }
-    let letters: String = label
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .take(2)
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    if letters.is_empty() {
-        "•".into()
-    } else {
-        letters
     }
 }
 
@@ -532,7 +522,7 @@ impl Render for DockView {
                     1.0
                 };
                 let icon_size = base_size * scale;
-                let monogram = dock_monogram(&item.id, &item.label);
+                let _label = &item.label;
                 let before_trash = item.id == "trash";
 
                 div()
@@ -573,11 +563,11 @@ impl Render for DockView {
                                     .rounded(px(theme.radii.lg * scale.clamp(0.8, 1.4)))
                                     .shadow_sm()
                                     .hover(|s| s.bg(theme.selection_hsla()))
-                                    .font_family(sf_font_family())
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_size(px(13.0 * scale))
-                                    .text_color(theme.text_primary_hsla())
-                                    .child(monogram),
+                                    .child(glyph_icon(
+                                        GlyphIcon::for_dock_id(&item.id),
+                                        theme.text_primary_hsla(),
+                                        (icon_size * 0.52).clamp(14.0, 36.0),
+                                    )),
                             )
                             .child(
                                 div()

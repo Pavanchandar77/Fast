@@ -28,7 +28,9 @@ pub use color::Color;
 pub use error::{Error, Result};
 pub use geom::{CornerRadii, Insets, Point, Rect, Size};
 pub use gpui_theme::{
-    mono_font_family, sf_font_family, step_spring, upper_label, window_chrome, ThemeStyledExt,
+    mono_font_family, rounded_window_frame, sf_font_family, step_spring, upper_label,
+    window_chrome, ThemeStyledExt, WINDOW_FRAME_INSET,
 };
+pub use icon::{glyph_icon, GlyphIcon};
 pub use spring::{Spring, SpringConfig};
 pub use theme::{Accent, Theme, ThemeMode};

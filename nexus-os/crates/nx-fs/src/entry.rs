@@ -75,6 +75,8 @@ pub struct DirEntry {
     pub modified: Option<SystemTime>,
     pub created: Option<SystemTime>,
     pub attributes: Attributes,
+    /// For symlinks and junctions, whether the resolved target is a directory.
+    pub target_is_dir: bool,
 }
 
 impl DirEntry {
@@ -93,6 +95,7 @@ impl DirEntry {
             modified: None,
             created: None,
             attributes,
+            target_is_dir: false,
         }
     }
 
@@ -108,6 +111,12 @@ impl DirEntry {
     /// Hidden or system entries are filtered unless "show hidden" is on.
     pub fn is_hidden(&self) -> bool {
         self.attributes.hidden() || self.attributes.system()
+    }
+
+    /// True when this entry should be shown and opened as a folder.
+    /// Follows symlink/junction metadata rather than treating every link as a file.
+    pub fn is_folder(&self) -> bool {
+        matches!(self.kind, EntryKind::Dir | EntryKind::Junction) || self.target_is_dir
     }
 }
 
@@ -155,5 +164,29 @@ mod tests {
         assert_eq!(f.extension(), "jpg");
         assert!(Attributes(Attributes::OFFLINE).is_cloud_placeholder());
         assert!(EntryKind::Junction.is_link());
+    }
+
+    #[test]
+    fn symlink_to_directory_is_a_folder() {
+        let root =
+            std::env::temp_dir().join(format!("nexus-symlink-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("real-dir")).unwrap();
+        let link = root.join("alias-dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("real-dir"), &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(root.join("real-dir"), &link).unwrap();
+        let entries = crate::listing::list_dir(&root).expect("list");
+        let alias = entries
+            .iter()
+            .find(|e| e.display_name == "alias-dir")
+            .expect("alias");
+        assert!(alias.kind.is_link() || alias.kind == EntryKind::Dir);
+        assert!(
+            alias.is_folder(),
+            "symlink to a directory must display as a folder"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

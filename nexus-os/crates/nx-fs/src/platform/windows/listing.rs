@@ -96,7 +96,13 @@ pub(crate) fn list(
         if cancel.is_cancelled() {
             return Err(FsError::Cancelled);
         }
-        if let Some(e) = entry_from(&data) {
+        if let Some(mut e) = entry_from(&data) {
+            if e.kind.is_link() {
+                let path = dir.join(&e.name);
+                e.target_is_dir = std::fs::metadata(&path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false);
+            }
             if out.push(e) == ControlFlow::Break(()) {
                 return Err(FsError::Cancelled);
             }

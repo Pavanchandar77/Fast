@@ -9,7 +9,7 @@ use gpui::prelude::*;
 use gpui::{
     div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
 };
-use nx_ui::gpui_theme::{sf_font_family, window_chrome};
+use nx_ui::gpui_theme::{rounded_window_frame, sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
 
 use crate::consent_store::CapabilityKind;
@@ -839,22 +839,25 @@ impl Render for PrivacyDashboardView {
             Theme::stealth()
         };
 
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .h_full()
-            .bg(theme.window_bg_hsla())
-            .font_family(sf_font_family())
-            .child(self.render_header(&theme))
-            .child(self.render_tabs(&theme))
-            .child(match self.view_model.active_tab {
-                DashboardTab::Overview => self.render_overview(&theme).into_any_element(),
-                DashboardTab::Permissions => self.render_permissions(&theme).into_any_element(),
-                DashboardTab::Network => self.render_network(&theme).into_any_element(),
-                DashboardTab::Clipboard => self.render_clipboard(&theme).into_any_element(),
-                DashboardTab::AuditLog => self.render_audit_log(&theme).into_any_element(),
-            })
+        rounded_window_frame(
+            &theme,
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .h_full()
+                .bg(theme.window_bg_hsla())
+                .font_family(sf_font_family())
+                .child(self.render_header(&theme))
+                .child(self.render_tabs(&theme))
+                .child(match self.view_model.active_tab {
+                    DashboardTab::Overview => self.render_overview(&theme).into_any_element(),
+                    DashboardTab::Permissions => self.render_permissions(&theme).into_any_element(),
+                    DashboardTab::Network => self.render_network(&theme).into_any_element(),
+                    DashboardTab::Clipboard => self.render_clipboard(&theme).into_any_element(),
+                    DashboardTab::AuditLog => self.render_audit_log(&theme).into_any_element(),
+                }),
+        )
     }
 }
 
