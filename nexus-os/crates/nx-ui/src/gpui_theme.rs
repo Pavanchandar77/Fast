@@ -250,13 +250,19 @@ pub fn window_chrome(theme: &Theme, scale: f32) -> impl IntoElement {
         .child(glyph("□"))
 }
 
-/// Inset around the rounded window body so the hairline and shadow can paint
-/// on a transparent frame. Corners of the OS window stay see-through.
-pub const WINDOW_FRAME_INSET: f32 = 10.0;
+/// Inset around the rounded window body so the hairline and soft shadow can
+/// paint on a transparent frame. Must be large enough that a ~22px corner
+/// plus `shadow_lg` (offset 10 / blur 15) are not clipped by the OS window.
+pub const WINDOW_FRAME_INSET: f32 = 20.0;
 
-/// Wrap an app or palette surface in a rounded, bordered, shadowed body sitting
-/// on a fully transparent frame.
+/// Wrap an app surface in a rounded, bordered, shadowed body sitting on a
+/// fully transparent frame. An inner clip layer also carries the corner
+/// radius: GPUI's `overflow_hidden` masks to a rectangle, so child fills
+/// (title bar, sidebar, footer) must be rounded or they will square off
+/// the corners of the body.
 pub fn rounded_window_frame(theme: &Theme, child: impl IntoElement) -> impl IntoElement {
+    let radius = theme.radii.window;
+    let inner = (radius - 1.0).max(0.0);
     div()
         .w_full()
         .h_full()
@@ -271,10 +277,19 @@ pub fn rounded_window_frame(theme: &Theme, child: impl IntoElement) -> impl Into
                 .bg(theme.window_bg_hsla())
                 .border_1()
                 .border_color(theme.separator_hsla())
-                .rounded(px(theme.radii.window))
+                .rounded(px(radius))
                 .shadow_lg()
                 .overflow_hidden()
-                .child(child),
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .h_full()
+                        .rounded(px(inner))
+                        .overflow_hidden()
+                        .child(child),
+                ),
         )
 }
 

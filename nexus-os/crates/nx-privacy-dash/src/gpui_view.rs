@@ -131,6 +131,8 @@ impl PrivacyDashboardView {
             .bg(theme.window_bg_hsla())
             .border_b_1()
             .border_color(theme.separator_hsla())
+            .rounded_t(px(theme.radii.window))
+            .overflow_hidden()
             // Title & Window Controls
             .child(
                 div()
@@ -216,7 +218,7 @@ impl PrivacyDashboardView {
             )
     }
 
-    fn render_tabs(&self, theme: &Theme) -> impl IntoElement {
+    fn render_tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.view_model.active_tab;
 
         div()
@@ -232,18 +234,10 @@ impl PrivacyDashboardView {
             .border_color(theme.separator_hsla())
             .children(DashboardTab::all().into_iter().map(|tab| {
                 let is_active = tab == active_tab;
-                let bg_color = if is_active {
-                    theme.accent_hsla()
-                } else {
-                    Hsla::from(nx_ui::Color::TRANSPARENT)
-                };
-                let text_color = if is_active {
-                    theme.text_primary_hsla()
-                } else {
-                    theme.text_secondary_hsla()
-                };
+                let (bg_color, text_color) = selected_tab_style(theme, is_active);
 
                 div()
+                    .id(("privacy-tab", tab as u32))
                     .px(px(14.0 * theme.scale))
                     .py(px(6.0 * theme.scale))
                     .rounded(theme.corner_radius_px(6.0))
@@ -256,6 +250,10 @@ impl PrivacyDashboardView {
                     })
                     .text_size(px(12.5 * theme.scale))
                     .text_color(text_color)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_tab(tab);
+                        cx.notify();
+                    }))
                     .child(tab.title())
             }))
     }
@@ -831,6 +829,19 @@ impl PrivacyDashboardView {
     }
 }
 
+/// Selected Overview (and other) tabs use the inverted pill: light fill,
+/// dark ink. Using `accent` + `text_primary` is white-on-white in stealth.
+pub fn selected_tab_style(theme: &Theme, is_active: bool) -> (Hsla, Hsla) {
+    if is_active {
+        (theme.inverted_hsla(), theme.on_inverted_hsla())
+    } else {
+        (
+            Hsla::from(nx_ui::Color::TRANSPARENT),
+            theme.text_secondary_hsla(),
+        )
+    }
+}
+
 impl Render for PrivacyDashboardView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = if cx.has_global::<Theme>() {
@@ -846,10 +857,10 @@ impl Render for PrivacyDashboardView {
                 .flex_col()
                 .w_full()
                 .h_full()
-                .bg(theme.window_bg_hsla())
+                .overflow_hidden()
                 .font_family(sf_font_family())
                 .child(self.render_header(&theme))
-                .child(self.render_tabs(&theme))
+                .child(self.render_tabs(&theme, cx))
                 .child(match self.view_model.active_tab {
                     DashboardTab::Overview => self.render_overview(&theme).into_any_element(),
                     DashboardTab::Permissions => self.render_permissions(&theme).into_any_element(),
@@ -928,5 +939,24 @@ mod tests {
                 assert_eq!(this.view_model.audit_log.len(), 1);
             });
         });
+    }
+
+    #[test]
+    fn selected_overview_tab_uses_dark_ink_on_inverted_pill() {
+        let theme = Theme::stealth();
+        let (bg, fg) = selected_tab_style(&theme, true);
+        assert!(
+            bg.l > 0.6,
+            "selected pill must be inverted/light, got l={}",
+            bg.l
+        );
+        assert!(
+            fg.l < 0.3,
+            "selected tab label must be dark ink, got l={}",
+            fg.l
+        );
+        let (idle_bg, idle_fg) = selected_tab_style(&theme, false);
+        assert!(idle_bg.a < 0.05);
+        assert!(idle_fg.l > fg.l);
     }
 }

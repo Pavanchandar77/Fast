@@ -1,6 +1,7 @@
 //! GPUI views for the Nexus shell: Dynamic Island, macOS-style Dock,
 //! Mission Control, and Spotlight.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::prelude::*;
@@ -23,6 +24,35 @@ fn theme_of(cx: &App) -> Theme {
         *cx.global::<Theme>()
     } else {
         Theme::stealth()
+    }
+}
+
+/// Host-installed callback so Spotlight and the dock can launch or focus an
+/// app without depending on the session crate.
+type ShellLaunchFn = Arc<dyn Fn(&str, &mut App)>;
+
+#[derive(Default)]
+pub struct ShellLaunch {
+    handler: Option<ShellLaunchFn>,
+}
+
+impl gpui::Global for ShellLaunch {}
+
+impl ShellLaunch {
+    pub fn new(handler: impl Fn(&str, &mut App) + 'static) -> Self {
+        Self {
+            handler: Some(Arc::new(handler)),
+        }
+    }
+}
+
+/// Fire the host launch hook, if the session installed one.
+pub fn request_shell_launch(cx: &mut App, id: &str) {
+    let handler = cx
+        .try_global::<ShellLaunch>()
+        .and_then(|sink| sink.handler.clone());
+    if let Some(handler) = handler {
+        handler(id, cx);
     }
 }
 
@@ -550,6 +580,14 @@ impl Render for DockView {
                                 this.hovered_index = if *hovered { Some(idx) } else { None };
                                 cx.notify();
                             }))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let id = this.model.items().get(idx).map(|item| item.id.clone());
+                                if let Some(id) = id {
+                                    let _ = this.model.activate_index(idx);
+                                    cx.defer(move |cx| request_shell_launch(cx, &id));
+                                }
+                                cx.notify();
+                            }))
                             .child(
                                 div()
                                     .flex()
@@ -721,6 +759,26 @@ impl SpotlightView {
         }
         self.model.is_open()
     }
+
+    /// Record a launch for the highlighted row, close the palette, and return
+    /// the hit id so the host can focus or open the matching window.
+    pub fn activate_selected(&mut self) -> Option<String> {
+        let hits = self.model.query_str(&self.model.query);
+        if hits.is_empty() {
+            self.model.close_palette();
+            return None;
+        }
+        let idx = self.selected.min(hits.len() - 1);
+        let id = hits[idx].id.clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(1)
+            .max(1);
+        self.model.activate(&id, now);
+        self.model.close_palette();
+        Some(id)
+    }
 }
 
 fn kind_tag(kind: ProviderKind) -> &'static str {
@@ -765,7 +823,7 @@ impl Render for SpotlightView {
             .bg(Hsla::from(theme.palette.menu_bg))
             .border_1()
             .border_color(Hsla::from(theme.palette.separator))
-            .rounded(px(theme.radii.xl + 4.0))
+            .rounded(px(20.0))
             .shadow_lg()
             .overflow_hidden()
             .font_family(sf_font_family())
@@ -782,7 +840,11 @@ impl Render for SpotlightView {
                     "down" | "arrowdown" => {
                         this.selected = this.selected.saturating_add(1);
                     }
-                    "enter" => {}
+                    "enter" | "return" => {
+                        if let Some(id) = this.activate_selected() {
+                            cx.defer(move |cx| request_shell_launch(cx, &id));
+                        }
+                    }
                     "escape" => {
                         this.model.close_palette();
                     }
@@ -818,6 +880,8 @@ impl Render for SpotlightView {
                     .gap(px(14.0))
                     .border_b_1()
                     .border_color(Hsla::from(theme.palette.separator))
+                    .rounded_t(px(20.0))
+                    .overflow_hidden()
                     .child(
                         div()
                             .flex()
@@ -859,6 +923,7 @@ impl Render for SpotlightView {
                     .children(hits.into_iter().enumerate().map(|(idx, hit)| {
                         let is_selected = idx == selected;
                         div()
+                            .id(("spotlight-hit", idx))
                             .flex()
                             .flex_row()
                             .items_center()
@@ -871,6 +936,13 @@ impl Render for SpotlightView {
                                     .text_color(theme.on_inverted_hsla())
                             })
                             .when(!is_selected, |d| d.hover(|s| s.bg(theme.hover_hsla())))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.selected = idx;
+                                if let Some(id) = this.activate_selected() {
+                                    cx.defer(move |cx| request_shell_launch(cx, &id));
+                                }
+                                cx.notify();
+                            }))
                             .child(
                                 div()
                                     .flex()
@@ -971,7 +1043,7 @@ impl Render for SpotlightView {
             .h_full()
             .items_start()
             .justify_center()
-            .pt(px(16.0))
+            .p(px(20.0))
             .child(card)
     }
 }
@@ -1014,6 +1086,22 @@ mod tests {
             let entity = cx.new(|_cx| SpotlightView::new(model));
             let view = entity.read(cx);
             assert_eq!(view.model.query, "calc");
+        });
+    }
+
+    #[gpui::test]
+    fn test_spotlight_enter_activates_selected_and_closes(cx: &mut TestAppContext) {
+        let model = Spotlight::with_builtins();
+        cx.update(|cx| {
+            let entity = cx.new(|_cx| SpotlightView::new(model));
+            entity.update(cx, |this, _cx| {
+                assert!(this.toggle());
+                this.model.query = "explorer".to_string();
+                this.selected = 0;
+                let id = this.activate_selected().expect("explorer hit");
+                assert_eq!(id, "explorer");
+                assert!(!this.model.is_open());
+            });
         });
     }
 

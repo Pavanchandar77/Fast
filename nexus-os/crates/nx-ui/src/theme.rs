@@ -418,6 +418,6 @@ mod tests {
                 .contrast_ratio(theme.palette.window_bg)
                 >= 7.0
         );
-        assert!(theme.radii.window >= 12.0);
+        assert!(theme.radii.window >= 20.0);
     }
 }

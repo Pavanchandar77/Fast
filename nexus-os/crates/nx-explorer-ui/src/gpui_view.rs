@@ -99,7 +99,6 @@ impl Render for ExplorerView {
                 .flex_col()
                 .w_full()
                 .h_full()
-                .bg(Hsla::from(theme.palette.window_bg))
                 .font_family(sf_font_family())
                 .text_size(px(13.0))
                 .text_color(theme.text_primary_hsla())
@@ -116,6 +115,8 @@ impl Render for ExplorerView {
                         .bg(Hsla::from(theme.palette.sidebar_bg))
                         .border_b_1()
                         .border_color(Hsla::from(theme.palette.separator))
+                        .rounded_t(px(theme.radii.window))
+                        .overflow_hidden()
                         // Left: Traffic lights and navigation buttons
                         .child(
                             div()
@@ -379,6 +380,8 @@ impl Render for ExplorerView {
                         .bg(Hsla::from(theme.palette.sidebar_bg))
                         .border_t_1()
                         .border_color(Hsla::from(theme.palette.separator))
+                        .rounded_b(px(theme.radii.window))
+                        .overflow_hidden()
                         .text_size(px(11.0))
                         .text_color(theme.text_secondary_hsla())
                         .child(format!(

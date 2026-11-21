@@ -14,10 +14,11 @@ use nx_privacy::shield::PrivacyShield;
 use nx_privacy_dash::{DashboardViewModel, PrivacyDashboardView};
 use nx_shell::{
     DockModel, DockPlacement, DockView, ExposeModel, IslandModel, IslandView, MenuBarModel,
-    MissionControlView, Spotlight, SpotlightView,
+    MissionControlView, ShellLaunch, Spotlight, SpotlightView,
 };
 use nx_ui::geom::Rect;
 use nx_ui::theme::Theme;
+use nx_ui::WINDOW_FRAME_INSET;
 use nx_wm::MonitorId;
 use tracing::{error, info, warn};
 
@@ -455,7 +456,42 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             .ok();
     }
 
+    install_shell_launch(&windows, cx);
     windows
+}
+
+fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
+    let explorer = windows.explorer_window;
+    let privacy = windows.privacy_dashboard_window;
+    let spotlight = windows.spotlight_window;
+    cx.set_global(ShellLaunch::new(move |id, cx| {
+        match id {
+            "explorer" | "finder" => {
+                if let Some(handle) = explorer {
+                    let _ = handle.update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    });
+                }
+            }
+            "privacy" => {
+                if let Some(handle) = privacy {
+                    let _ = handle.update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    });
+                }
+            }
+            _ => {}
+        }
+        if let Some(handle) = spotlight {
+            let _ = handle.update(cx, |view, window, cx| {
+                if view.model.is_open() {
+                    view.model.close_palette();
+                }
+                apply_spotlight_visibility(window, false);
+                cx.notify();
+            });
+        }
+    }));
 }
 
 /// Toggle the GPUI Spotlight window in response to `HotkeyAction::CommandBar`.
@@ -499,6 +535,7 @@ pub fn toggle_gpui_spotlight(
 }
 
 fn apply_rounded_native_corners(window: &mut gpui::Window) {
+    window.set_client_inset(gpui::px(WINDOW_FRAME_INSET));
     #[cfg(windows)]
     {
         use nx_ui::platform::{apply_hwnd, BackdropRequest, CornerPreference, SystemBackdrop};
