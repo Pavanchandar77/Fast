@@ -584,23 +584,16 @@ Await ($r.SetStateAsync('{state}')) ([Windows.Devices.Radios.RadioAccessStatus])
             Shield::Microphone => "microphone",
             Shield::Location => "location",
         };
-        let key = format!(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{cap}"
+        // Registry writes go through the never-brick journal (Platform
+        // trait), so they are recorded and can be rolled back.
+        use nexus_model::platform::{Platform, RegistryValueData};
+        let subkey = format!(
+            r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{cap}"
         );
-        run(
-            "reg.exe",
-            &[
-                "add",
-                &key,
-                "/v",
-                "Value",
-                "/t",
-                "REG_SZ",
-                "/d",
-                if on { "Deny" } else { "Allow" },
-                "/f",
-            ],
-        )
+        let value = RegistryValueData::Sz(if on { "Deny" } else { "Allow" }.to_string());
+        os_core::platform::Win32Platform::new()
+            .set_registry_value("HKCU", &subkey, "Value", value)
+            .map_err(|e| AssistantError::Action(format!("privacy shield: {e}")))
     }
 
     /// The window the user was in before the island took focus.

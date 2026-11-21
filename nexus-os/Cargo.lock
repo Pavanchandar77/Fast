@@ -4408,6 +4408,8 @@ version = "0.1.0"
 dependencies = [
  "candle-core",
  "candle-transformers",
+ "nexus-model",
+ "os-core",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
