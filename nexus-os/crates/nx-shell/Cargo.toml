@@ -16,10 +16,11 @@ nx-privacy-dash = { path = "../nx-privacy-dash" }
 nx-power = { path = "../nx-power" }
 nx-governor-policy = { path = "../nx-governor-policy" }
 nx-fs = { path = "../nx-fs" }
+nx-assistant = { path = "../nx-assistant" }
 thiserror = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true }
+windows = { workspace = true, features = ["Win32_System_Registry", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Globalization", "Win32_System_Time", "Win32_UI_TextServices", "Media_Control", "Foundation", "Foundation_Collections"] }
 
 [dev-dependencies]
 proptest = "1.5"

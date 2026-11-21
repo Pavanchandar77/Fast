@@ -7,18 +7,67 @@
 
 use crate::clock::ClockSample;
 
-/// Live control-center state for the Dynamic Island.
 /// Collapsed pill window height (including transparent padding).
-pub const COLLAPSED_HEIGHT: f32 = 52.0;
-/// Expanded control-center height, sized to the body plus padding so
-/// alerts and meters are not clipped and no empty slab hangs below.
-pub const EXPANDED_HEIGHT: f32 = 336.0;
+pub const COLLAPSED_HEIGHT: f32 = 60.0;
+/// Expanded control-center window height (assistant + activities + controls).
+pub const EXPANDED_HEIGHT: f32 = 720.0;
+/// Fullscreen slit window height: a few px of pill hugging the top edge.
+pub const SLIT_HEIGHT: f32 = 14.0;
+/// Peek (notification / pop-up) window height.
+pub const PEEK_HEIGHT: f32 = 92.0;
+/// Island window width.
+pub const ISLAND_WIDTH: f32 = 680.0;
+
+/// What the island is showing right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IslandShape {
+    /// Fullscreen app in front: a thin slit at the very top edge.
+    Slit,
+    /// Normal resting pill.
+    Pill,
+    /// A notification / pop-up briefly expanded; retracts on its own.
+    Peek,
+    /// Click-opened control center + assistant.
+    Expanded,
+}
+
+impl IslandShape {
+    pub fn window_height(self) -> f32 {
+        match self {
+            IslandShape::Slit => SLIT_HEIGHT,
+            IslandShape::Pill => COLLAPSED_HEIGHT,
+            IslandShape::Peek => PEEK_HEIGHT,
+            IslandShape::Expanded => EXPANDED_HEIGHT,
+        }
+    }
+}
+
+/// Battery notices that peek the island.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatteryAlert {
+    /// Dropped below 50 / 20 / 10 percent.
+    Below(u8),
+    /// At or below 5 percent.
+    Critical,
+    Plugged,
+    Unplugged,
+}
+
+pub const BATTERY_THRESHOLDS: [u8; 3] = [50, 20, 10];
+pub const BATTERY_CRITICAL: u8 = 5;
 
 #[derive(Clone, Debug)]
 pub struct IslandModel {
+    /// Click-opened control center. Hover never expands.
     pub expanded: bool,
-    /// Click pins the island open until clicked again.
-    pub pinned: bool,
+    /// Pointer is over the island (drives only a subtle highlight).
+    pub hovered: bool,
+    /// A fullscreen app is in front: rest as a slit instead of a pill.
+    pub fullscreen: bool,
+    /// Seconds (view clock) until which a peek is shown.
+    pub peek_until: Option<f64>,
+    last_battery: Option<u8>,
+    last_charging: Option<bool>,
     pub clock: ClockSample,
     pub hour24: bool,
     pub volume: f32,
@@ -46,7 +95,11 @@ impl IslandModel {
     pub fn new() -> Self {
         let mut model = Self {
             expanded: false,
-            pinned: false,
+            hovered: false,
+            fullscreen: false,
+            peek_until: None,
+            last_battery: None,
+            last_charging: None,
             clock: ClockSample::now_local(),
             hour24: true,
             volume: 0.62,
@@ -73,21 +126,82 @@ impl IslandModel {
 
     pub fn set_expanded(&mut self, expanded: bool) {
         self.expanded = expanded;
-        if !expanded {
-            self.pinned = false;
+    }
+
+    /// Click toggles the control center (the only way to expand).
+    pub fn click(&mut self) {
+        self.expanded = !self.expanded;
+        if self.expanded {
+            self.peek_until = None;
         }
     }
 
-    pub fn toggle_pin(&mut self) {
-        self.pinned = !self.pinned;
-        self.expanded = self.pinned || self.expanded;
+    /// Esc or a click outside the island returns to the resting shape.
+    pub fn dismiss(&mut self) {
+        self.expanded = false;
     }
 
+    /// Hover only highlights; it never changes the shape.
     pub fn hover(&mut self, inside: bool) {
-        if self.pinned {
-            return;
+        self.hovered = inside;
+    }
+
+    pub fn set_fullscreen(&mut self, on: bool) {
+        self.fullscreen = on;
+    }
+
+    /// Briefly expand for a notification / pop-up, then retract.
+    pub fn peek(&mut self, now: f64, secs: f64) {
+        let until = now + secs;
+        self.peek_until = Some(self.peek_until.map_or(until, |u| u.max(until)));
+    }
+
+    pub fn shape(&self, now: f64) -> IslandShape {
+        if self.expanded {
+            IslandShape::Expanded
+        } else if self.peek_until.is_some_and(|u| now < u) {
+            IslandShape::Peek
+        } else if self.fullscreen {
+            IslandShape::Slit
+        } else {
+            IslandShape::Pill
         }
-        self.expanded = inside;
+    }
+
+    /// Feed a battery sample; returns alerts that should peek the island.
+    /// Each threshold fires once per downward crossing (not while it stays
+    /// below), never while charging; plug/unplug fire on change.
+    pub fn battery_sample(&mut self, pct: Option<u8>, charging: bool) -> Vec<BatteryAlert> {
+        let mut out = Vec::new();
+        let Some(cur) = pct else {
+            return out;
+        };
+        if let Some(was) = self.last_charging {
+            if was != charging {
+                out.push(if charging {
+                    BatteryAlert::Plugged
+                } else {
+                    BatteryAlert::Unplugged
+                });
+            }
+        }
+        if let Some(prev) = self.last_battery {
+            if !charging && cur < prev {
+                if cur <= BATTERY_CRITICAL && prev > BATTERY_CRITICAL {
+                    out.push(BatteryAlert::Critical);
+                } else if let Some(t) = BATTERY_THRESHOLDS
+                    .iter()
+                    .copied()
+                    .filter(|t| cur < *t && prev >= *t)
+                    .min()
+                {
+                    out.push(BatteryAlert::Below(t));
+                }
+            }
+        }
+        self.last_battery = Some(cur);
+        self.last_charging = Some(charging);
+        out
     }
 
     /// Refresh clock, CPU, RAM, and battery from the host.
@@ -221,24 +335,96 @@ mod tests {
     fn new_island_starts_collapsed() {
         let model = IslandModel::new();
         assert!(!model.expanded);
-        assert!(!model.pinned);
         assert!(model.hour24);
+        assert_eq!(model.shape(0.0), IslandShape::Pill);
     }
 
     #[test]
-    fn hover_expands_and_collapses_unless_pinned() {
-        let mut model = IslandModel::new();
-        model.hover(true);
-        assert!(model.expanded);
-        model.hover(false);
-        assert!(!model.expanded);
-        model.toggle_pin();
-        assert!(model.pinned && model.expanded);
-        model.hover(false);
-        assert!(model.expanded);
-        model.toggle_pin();
-        model.set_expanded(false);
-        assert!(!model.expanded && !model.pinned);
+    fn hover_never_expands_only_click_does() {
+        let mut m = IslandModel::new();
+        m.hover(true);
+        assert!(m.hovered);
+        assert_eq!(m.shape(0.0), IslandShape::Pill);
+        m.click();
+        assert_eq!(m.shape(0.0), IslandShape::Expanded);
+        m.hover(false);
+        assert_eq!(m.shape(0.0), IslandShape::Expanded);
+        m.click();
+        assert_eq!(m.shape(0.0), IslandShape::Pill);
+    }
+
+    #[test]
+    fn fullscreen_rests_as_slit_and_click_expands_then_dismiss_returns() {
+        let mut m = IslandModel::new();
+        m.set_fullscreen(true);
+        assert_eq!(m.shape(0.0), IslandShape::Slit);
+        m.hover(true);
+        assert_eq!(m.shape(0.0), IslandShape::Slit);
+        m.click();
+        assert_eq!(m.shape(0.0), IslandShape::Expanded);
+        m.dismiss();
+        assert_eq!(m.shape(0.0), IslandShape::Slit);
+        m.set_fullscreen(false);
+        assert_eq!(m.shape(0.0), IslandShape::Pill);
+    }
+
+    #[test]
+    fn peeks_expand_then_retract_to_resting_shape() {
+        let mut m = IslandModel::new();
+        m.set_fullscreen(true);
+        m.peek(10.0, 3.0);
+        assert_eq!(m.shape(11.0), IslandShape::Peek);
+        assert_eq!(m.shape(13.5), IslandShape::Slit);
+        m.set_fullscreen(false);
+        m.peek(20.0, 2.0);
+        assert_eq!(m.shape(21.0), IslandShape::Peek);
+        assert_eq!(m.shape(22.5), IslandShape::Pill);
+        assert_eq!(IslandShape::Slit.window_height(), SLIT_HEIGHT);
+        const { assert!(SLIT_HEIGHT < 16.0) };
+    }
+
+    #[test]
+    fn battery_thresholds_fire_once_per_crossing() {
+        let mut m = IslandModel::new();
+        let mut fired = Vec::new();
+        for pct in [
+            60u8, 55, 51, 50, 49, 48, 30, 21, 20, 19, 15, 11, 10, 9, 6, 5, 4, 3,
+        ] {
+            fired.extend(m.battery_sample(Some(pct), false));
+        }
+        assert_eq!(
+            fired,
+            vec![
+                BatteryAlert::Below(50),
+                BatteryAlert::Below(20),
+                BatteryAlert::Below(10),
+                BatteryAlert::Critical
+            ]
+        );
+        // Charge back over 50 (plug event only), unplug, drop again: fires again.
+        let mut again = m.battery_sample(Some(3), true);
+        again.extend(m.battery_sample(Some(52), true));
+        again.extend(m.battery_sample(Some(52), false));
+        again.extend(m.battery_sample(Some(49), false));
+        assert_eq!(
+            again,
+            vec![
+                BatteryAlert::Plugged,
+                BatteryAlert::Unplugged,
+                BatteryAlert::Below(50)
+            ]
+        );
+    }
+
+    #[test]
+    fn big_battery_drop_reports_the_lowest_threshold_once() {
+        let mut m = IslandModel::new();
+        m.battery_sample(Some(60), false);
+        assert_eq!(
+            m.battery_sample(Some(15), false),
+            vec![BatteryAlert::Below(20)]
+        );
+        assert!(m.battery_sample(Some(15), false).is_empty());
     }
 
     #[test]

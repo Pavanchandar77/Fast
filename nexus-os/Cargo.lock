@@ -4534,6 +4534,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "gpui",
+ "nx-assistant",
  "nx-compat",
  "nx-fs",
  "nx-governor-policy",
