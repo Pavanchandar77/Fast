@@ -1,3 +1,6 @@
+// Release builds are a normal GUI app: no console window behind Nexus.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 #[cfg(windows)]
 mod imp {
     use os_compositor::hooks::WinEventListener;
@@ -34,6 +37,21 @@ mod imp {
     impl gpui::Global for LiveSession {}
 
     pub fn run() -> anyhow::Result<()> {
+        // `nexus-os.exe --restore`: put back anything a killed session left
+        // changed (e.g. the hidden taskbar) and exit. Used by the uninstaller
+        // and the "Restore Windows desktop" Start Menu shortcut.
+        if std::env::args().any(|arg| arg == "--restore") {
+            os_core::recovery::restore_journal_file()?;
+            return Ok(());
+        }
+
+        // One session per user: a second launch (shortcut + sign-in entry)
+        // must not attach a second set of hooks.
+        let _single_instance = match acquire_single_instance() {
+            Some(guard) => guard,
+            None => return Ok(()),
+        };
+
         // Restore journaled mutations on panic before anything else runs.
         os_core::recovery::install_panic_hook();
 
@@ -452,11 +470,46 @@ mod imp {
         }
     }
 
+    /// Holds the per-user session mutex for the life of the process.
+    struct SingleInstance(windows::Win32::Foundation::HANDLE);
+
+    impl Drop for SingleInstance {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+
+    fn acquire_single_instance() -> Option<SingleInstance> {
+        use windows::core::w;
+        use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+        use windows::Win32::System::Threading::CreateMutexW;
+        unsafe {
+            // If the mutex cannot be created at all, run anyway rather than
+            // refusing to start.
+            let Ok(handle) = CreateMutexW(None, true, w!("Local\\NexusOS.Session")) else {
+                return Some(SingleInstance(windows::Win32::Foundation::HANDLE::default()));
+            };
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+                return None;
+            }
+            Some(SingleInstance(handle))
+        }
+    }
+
     fn find_config_path() -> PathBuf {
         let local = PathBuf::from("config/system.toml");
         if local.exists() {
             return local;
         }
+
+        // Installed builds ship `config\system.toml` next to nexus-os.exe; the
+        // sign-in Run key starts us with an unrelated working directory.
+        let beside_exe = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.join("config").join("system.toml")));
 
         if let Some(user_profile) = std::env::var_os("USERPROFILE") {
             let user_cfg = PathBuf::from(user_profile)
@@ -465,6 +518,12 @@ mod imp {
                 .join("system.toml");
             if user_cfg.exists() {
                 return user_cfg;
+            }
+        }
+
+        if let Some(installed) = beside_exe {
+            if installed.exists() {
+                return installed;
             }
         }
 

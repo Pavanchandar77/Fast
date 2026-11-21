@@ -21,7 +21,19 @@ pub fn model_path() -> PathBuf {
     if let Some(p) = std::env::var_os("NEXUS_MODEL") {
         return PathBuf::from(p);
     }
+    // The Windows installer bundles the model in `<install dir>\models`.
+    if let Some(bundled) = bundled_model_path() {
+        if bundled.exists() {
+            return bundled;
+        }
+    }
     models_dir().join(MODEL_FILE)
+}
+
+/// `models\<MODEL_FILE>` beside the running executable, if it can be resolved.
+pub fn bundled_model_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("models").join(MODEL_FILE))
 }
 
 pub fn is_installed() -> bool {

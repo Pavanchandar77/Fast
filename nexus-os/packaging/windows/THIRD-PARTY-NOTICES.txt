@@ -1,0 +1,23 @@
+Nexus third-party notices
+=========================
+
+Nexus itself is licensed MIT OR Apache-2.0 (see the Fast repository).
+
+On-device assistant model
+-------------------------
+File:     models\Qwen3-0.6B-Q4_K_M.gguf
+Model:    Qwen3-0.6B by the Qwen team, Alibaba Cloud
+          https://huggingface.co/Qwen/Qwen3-0.6B
+Format:   GGUF Q4_K_M quantization (unsloth/Qwen3-0.6B-GGUF)
+          https://huggingface.co/unsloth/Qwen3-0.6B-GGUF
+License:  Apache License 2.0, full text in QWEN3-LICENSE.txt
+
+The model runs fully offline on your PC. It is redistributed unmodified
+(apart from the quantization published by its uploader) under the terms of
+the Apache License 2.0.
+
+Rust crates
+-----------
+nexus-os.exe statically links open-source Rust crates (gpui, candle, windows-rs,
+and others) under MIT / Apache-2.0 / BSD-style licenses. See Cargo.lock in the
+repository for the full list.
