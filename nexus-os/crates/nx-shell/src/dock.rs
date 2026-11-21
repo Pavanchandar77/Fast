@@ -352,6 +352,27 @@ impl DockModel {
         self.retarget();
     }
 
+    /// Default shelf when the host has not yet published running apps:
+    /// Explorer, Spotlight, Privacy, Terminal, Settings, then Trash.
+    pub fn pin_defaults(&mut self) {
+        for (id, label) in [
+            ("explorer", "Explorer"),
+            ("spotlight", "Spotlight"),
+            ("privacy", "Privacy"),
+            ("terminal", "Terminal"),
+            ("settings", "Settings"),
+            ("trash", "Trash"),
+        ] {
+            self.pin(id, label);
+        }
+    }
+
+    pub fn set_running(&mut self, id: &str, running: bool) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.running = running;
+        }
+    }
+
     pub fn unpin(&mut self, id: &str) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.pinned = false;
@@ -898,5 +919,26 @@ mod tests {
         }
         assert!(!dock.animating());
         assert!(dock.motion_bounce(0).abs() < 0.5);
+    }
+
+    #[test]
+    fn pin_defaults_includes_shelf_apps_and_trash() {
+        let mut dock = DockModel::new(placement());
+        dock.pin_defaults();
+        dock.set_running("explorer", true);
+        let ids: Vec<&str> = dock.items().iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "explorer",
+                "spotlight",
+                "privacy",
+                "terminal",
+                "settings",
+                "trash"
+            ]
+        );
+        assert!(dock.items()[0].running);
+        assert!(dock.items().last().is_some_and(|i| i.id == "trash"));
     }
 }

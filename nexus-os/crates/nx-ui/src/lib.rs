@@ -27,6 +27,8 @@ pub use anim::{
 pub use color::Color;
 pub use error::{Error, Result};
 pub use geom::{CornerRadii, Insets, Point, Rect, Size};
-pub use gpui_theme::{sf_font_family, step_spring, ThemeStyledExt};
+pub use gpui_theme::{
+    mono_font_family, sf_font_family, step_spring, upper_label, window_chrome, ThemeStyledExt,
+};
 pub use spring::{Spring, SpringConfig};
 pub use theme::{Accent, Theme, ThemeMode};

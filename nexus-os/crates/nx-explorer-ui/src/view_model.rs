@@ -22,7 +22,7 @@ use nx_explorer::pane::Location;
 use nx_explorer::{Explorer, Focus};
 use nx_ui::geom::{Rect, Size};
 use nx_ui::input::Input;
-use nx_ui::theme::{Accent, Theme, ThemeMode};
+use nx_ui::theme::{Theme, ThemeMode};
 
 use std::path::{Path, PathBuf};
 
@@ -53,7 +53,7 @@ pub struct ExplorerWindow {
 impl ExplorerWindow {
     pub fn new(home: PathBuf) -> (Self, Vec<Effect>) {
         let (explorer, initial_fx) = Explorer::new(home.clone());
-        let theme = Theme::light(Accent::Blue);
+        let theme = Theme::stealth();
         let mut toolbar = UnifiedToolbar::new();
         toolbar.set_path(&home);
 
@@ -90,6 +90,29 @@ impl ExplorerWindow {
         win.sync_status();
 
         (win, initial_fx)
+    }
+
+    /// Apply host effects locally (directory listings) so the first paint has rows.
+    pub fn fulfill_effects(&mut self, effects: Vec<nx_explorer::action::Effect>) {
+        use nx_explorer::action::{Effect, Msg};
+        for effect in effects {
+            if let Effect::ListDir { request, path, .. } = effect {
+                match nx_fs::listing::list_dir(&path) {
+                    Ok(entries) => {
+                        let _ = self.explorer.update(Msg::ListingBatch { request, entries });
+                        let _ = self.explorer.update(Msg::ListingDone { request });
+                    }
+                    Err(err) => {
+                        let _ = self.explorer.update(Msg::ListingFailed {
+                            request,
+                            error: err.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        self.sync_tabs();
+        self.sync_status();
     }
 
     pub fn set_index_manager(&mut self, manager: PersistentIndexManager) {

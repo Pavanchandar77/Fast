@@ -7,9 +7,9 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, rgb, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
+    div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
 };
-use nx_ui::gpui_theme::sf_font_family;
+use nx_ui::gpui_theme::{sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
 
 use crate::consent_store::CapabilityKind;
@@ -44,23 +44,29 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Helper to map RiskLevel to color.
+/// Map risk to monochrome tone. Critical/High invert to primary ink.
 pub fn risk_color(risk: RiskLevel) -> Hsla {
+    risk_color_on(&Theme::stealth(), risk)
+}
+
+pub fn risk_color_on(theme: &Theme, risk: RiskLevel) -> Hsla {
     match risk {
-        RiskLevel::Critical => Hsla::from(rgb(0xff3b30)), // Apple Red
-        RiskLevel::High => Hsla::from(rgb(0xff9500)),     // Apple Orange
-        RiskLevel::Medium => Hsla::from(rgb(0xffcc00)),   // Apple Yellow
-        RiskLevel::Low => Hsla::from(rgb(0x34c759)),      // Apple Green
+        RiskLevel::Critical | RiskLevel::High => theme.text_primary_hsla(),
+        RiskLevel::Medium => theme.text_secondary_hsla(),
+        RiskLevel::Low => theme.text_tertiary_hsla(),
     }
 }
 
-/// Helper to map IndicatorStatusKind to color.
+/// Map indicator status to monochrome tone.
 pub fn chip_status_color(status: IndicatorStatusKind) -> Hsla {
+    chip_status_color_on(&Theme::stealth(), status)
+}
+
+pub fn chip_status_color_on(theme: &Theme, status: IndicatorStatusKind) -> Hsla {
     match status {
-        IndicatorStatusKind::InUse => Hsla::from(rgb(0x34c759)), // Active Green
-        IndicatorStatusKind::RecentlyUsed => Hsla::from(rgb(0xff9500)), // Amber Warning
-        IndicatorStatusKind::Blocked => Hsla::from(rgb(0xff3b30)), // Blocked Red
-        IndicatorStatusKind::Idle => Hsla::from(rgb(0x8e8e93)),  // Idle Gray
+        IndicatorStatusKind::InUse | IndicatorStatusKind::Blocked => theme.text_primary_hsla(),
+        IndicatorStatusKind::RecentlyUsed => theme.text_secondary_hsla(),
+        IndicatorStatusKind::Idle => theme.text_tertiary_hsla(),
     }
 }
 
@@ -132,35 +138,7 @@ impl PrivacyDashboardView {
                     .flex_row()
                     .items_center()
                     .gap(px(14.0 * theme.scale))
-                    // Traffic lights (macOS window dots)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0 * theme.scale))
-                            .child(
-                                div()
-                                    .w(px(12.0 * theme.scale))
-                                    .h(px(12.0 * theme.scale))
-                                    .rounded_full()
-                                    .bg(Hsla::from(rgb(0xff5f56))),
-                            )
-                            .child(
-                                div()
-                                    .w(px(12.0 * theme.scale))
-                                    .h(px(12.0 * theme.scale))
-                                    .rounded_full()
-                                    .bg(Hsla::from(rgb(0xffbd2e))),
-                            )
-                            .child(
-                                div()
-                                    .w(px(12.0 * theme.scale))
-                                    .h(px(12.0 * theme.scale))
-                                    .rounded_full()
-                                    .bg(Hsla::from(rgb(0x27c93f))),
-                            ),
-                    )
+                    .child(window_chrome(theme, theme.scale))
                     // App / Hub Title
                     .child(
                         div()
@@ -172,7 +150,7 @@ impl PrivacyDashboardView {
                                     .font_weight(FontWeight::BOLD)
                                     .text_size(px(15.0 * theme.scale))
                                     .text_color(theme.text_primary_hsla())
-                                    .child("Nexus Privacy & Security Shield"),
+                                    .child("PRIVACY SHIELD"),
                             )
                             .child(
                                 div()
@@ -192,13 +170,20 @@ impl PrivacyDashboardView {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0 * theme.scale))
+                    .overflow_hidden()
                     .children(chips.into_iter().map(|chip| {
                         let status_col = chip_status_color(chip.status);
-                        let icon_sym = match chip.capability {
-                            CapabilityKind::Webcam => "📷",
-                            CapabilityKind::Microphone => "🎙️",
-                            CapabilityKind::Location => "📍",
-                            CapabilityKind::Custom(_) => "🔒",
+                        let tag = match chip.capability {
+                            CapabilityKind::Webcam => "CAM",
+                            CapabilityKind::Microphone => "MIC",
+                            CapabilityKind::Location => "LOC",
+                            CapabilityKind::Custom(_) => "SEC",
+                        };
+                        let state = match chip.status {
+                            IndicatorStatusKind::InUse => "LIVE",
+                            IndicatorStatusKind::Blocked => "BLOCKED",
+                            IndicatorStatusKind::RecentlyUsed => "RECENT",
+                            IndicatorStatusKind::Idle => "IDLE",
                         };
 
                         div()
@@ -219,14 +204,13 @@ impl PrivacyDashboardView {
                                     .rounded_full()
                                     .bg(status_col),
                             )
-                            .child(div().text_size(px(11.0 * theme.scale)).child(icon_sym))
                             .child(
                                 div()
                                     .font_family(sf_font_family())
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_size(px(11.0 * theme.scale))
                                     .text_color(theme.text_primary_hsla())
-                                    .child(chip.label),
+                                    .child(format!("{tag}  {state}")),
                             )
                     })),
             )
@@ -251,10 +235,10 @@ impl PrivacyDashboardView {
                 let bg_color = if is_active {
                     theme.accent_hsla()
                 } else {
-                    with_alpha(Hsla::from(rgb(0x000000)), 0.0)
+                    Hsla::from(nx_ui::Color::TRANSPARENT)
                 };
                 let text_color = if is_active {
-                    Hsla::from(rgb(0xffffff))
+                    theme.text_primary_hsla()
                 } else {
                     theme.text_secondary_hsla()
                 };
@@ -318,14 +302,14 @@ impl PrivacyDashboardView {
                     .children(all_switches.into_iter().map(|kind| {
                         let engaged = self.view_model.kill_switches.is_engaged(kind);
                         let badge_bg = if engaged {
-                            with_alpha(Hsla::from(rgb(0xff3b30)), 0.2)
+                            theme.inverted_hsla()
                         } else {
-                            with_alpha(Hsla::from(rgb(0x34c759)), 0.2)
+                            Hsla::from(nx_ui::Color::TRANSPARENT)
                         };
                         let badge_text = if engaged {
-                            Hsla::from(rgb(0xff3b30))
+                            theme.on_inverted_hsla()
                         } else {
-                            Hsla::from(rgb(0x34c759))
+                            theme.text_secondary_hsla()
                         };
 
                         div()
@@ -395,15 +379,21 @@ impl PrivacyDashboardView {
                                             .py(px(4.0 * theme.scale))
                                             .rounded(theme.corner_radius_px(6.0))
                                             .bg(if engaged {
-                                                Hsla::from(rgb(0xff3b30))
+                                                Hsla::from(nx_ui::Color::TRANSPARENT)
                                             } else {
-                                                theme.accent_hsla()
+                                                theme.inverted_hsla()
                                             })
+                                            .border_1()
+                                            .border_color(theme.separator_hsla())
                                             .font_family(sf_font_family())
-                                            .font_weight(FontWeight::MEDIUM)
+                                            .font_weight(FontWeight::BOLD)
                                             .text_size(px(11.0 * theme.scale))
-                                            .text_color(Hsla::from(rgb(0xffffff)))
-                                            .child(if engaged { "Disengage" } else { "Engage" }),
+                                            .text_color(if engaged {
+                                                theme.text_secondary_hsla()
+                                            } else {
+                                                theme.on_inverted_hsla()
+                                            })
+                                            .child(if engaged { "DISENGAGE" } else { "ENGAGE" }),
                                     ),
                             )
                     })),
@@ -495,13 +485,10 @@ impl PrivacyDashboardView {
                                 .children(PermissionCapability::all().into_iter().map(|cap| {
                                     let allowed = profile.is_allowed(cap);
                                     let (bg_pill, text_pill) = if allowed {
-                                        (
-                                            with_alpha(Hsla::from(rgb(0x34c759)), 0.2),
-                                            Hsla::from(rgb(0x34c759)),
-                                        )
+                                        (theme.selection_hsla(), theme.text_primary_hsla())
                                     } else {
                                         (
-                                            with_alpha(Hsla::from(rgb(0x8e8e93)), 0.15),
+                                            Hsla::from(theme.palette.fill_secondary),
                                             theme.text_tertiary_hsla(),
                                         )
                                     };
@@ -606,10 +593,10 @@ impl PrivacyDashboardView {
                                         .px(px(8.0 * theme.scale))
                                         .py(px(3.0 * theme.scale))
                                         .rounded(theme.corner_radius_px(4.0))
-                                        .bg(with_alpha(Hsla::from(rgb(0x34c759)), 0.2))
+                                        .bg(theme.selection_hsla())
                                         .font_family(sf_font_family())
                                         .text_size(px(10.5 * theme.scale))
-                                        .text_color(Hsla::from(rgb(0x34c759)))
+                                        .text_color(theme.text_primary_hsla())
                                         .child(format!("{} Allowed", sum.allowed_count)),
                                 )
                                 .child(
@@ -617,10 +604,10 @@ impl PrivacyDashboardView {
                                         .px(px(8.0 * theme.scale))
                                         .py(px(3.0 * theme.scale))
                                         .rounded(theme.corner_radius_px(4.0))
-                                        .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
+                                        .bg(theme.selection_hsla())
                                         .font_family(sf_font_family())
                                         .text_size(px(10.5 * theme.scale))
-                                        .text_color(Hsla::from(rgb(0xff3b30)))
+                                        .text_color(theme.text_primary_hsla())
                                         .child(format!("{} Blocked", sum.blocked_count)),
                                 ),
                         )
@@ -672,7 +659,7 @@ impl PrivacyDashboardView {
                     .p(px(14.0 * theme.scale))
                     .rounded(theme.corner_radius_px(8.0))
                     .bg(if is_sensitive {
-                        with_alpha(Hsla::from(rgb(0xff9500)), 0.15)
+                        theme.selection_hsla()
                     } else {
                         theme.elevated_hsla()
                     })
@@ -749,10 +736,10 @@ impl PrivacyDashboardView {
                                     .px(px(6.0 * theme.scale))
                                     .py(px(2.0 * theme.scale))
                                     .rounded(theme.corner_radius_px(4.0))
-                                    .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
+                                    .bg(theme.selection_hsla())
                                     .font_family(sf_font_family())
                                     .text_size(px(10.0 * theme.scale))
-                                    .text_color(Hsla::from(rgb(0xff3b30)))
+                                    .text_color(theme.text_primary_hsla())
                                     .child(format!("{:?}", alert.severity)),
                             )
                     })),
@@ -832,10 +819,10 @@ impl PrivacyDashboardView {
                                     .px(px(6.0 * theme.scale))
                                     .py(px(2.0 * theme.scale))
                                     .rounded(theme.corner_radius_px(4.0))
-                                    .bg(with_alpha(Hsla::from(rgb(0xff3b30)), 0.2))
+                                    .bg(theme.selection_hsla())
                                     .font_family(sf_font_family())
                                     .text_size(px(10.0 * theme.scale))
-                                    .text_color(Hsla::from(rgb(0xff3b30)))
+                                    .text_color(theme.text_primary_hsla())
                                     .child("CRITICAL"),
                             )
                         })
@@ -849,7 +836,7 @@ impl Render for PrivacyDashboardView {
         let theme = if cx.has_global::<Theme>() {
             *cx.global::<Theme>()
         } else {
-            Theme::dark(nx_ui::theme::Accent::Blue)
+            Theme::stealth()
         };
 
         div()

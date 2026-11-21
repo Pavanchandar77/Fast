@@ -1,4 +1,4 @@
-//! Nexus-OS macOS-grade shell: menu bar, dock, Mission Control, Spotlight, vsync frame scheduler.
+//! Nexus-OS shell: Dynamic Island, dock, Mission Control, Spotlight, vsync frame scheduler.
 
 pub mod backdrop;
 pub mod clock;
@@ -7,6 +7,7 @@ pub mod error;
 pub mod expose;
 pub mod gpui_views;
 pub mod host;
+pub mod island;
 pub mod menu_bar;
 pub mod scheduler;
 pub mod spotlight;
@@ -24,11 +25,12 @@ pub use expose::{
     grid_shape, layout_expose, thumbnail_slots, ExposeModel, ExposeParams, ExposeTile,
     ExposeWindow, ThumbnailSlot,
 };
-pub use gpui_views::{DockView, MenuBarView, MissionControlView, SpotlightView};
+pub use gpui_views::{DockView, IslandView, MenuBarView, MissionControlView, SpotlightView};
 pub use host::{
     apply_backdrop, dwm_flush, register_thumbnail, unregister_thumbnail, update_thumbnail,
     LiveThumbnailManager,
 };
+pub use island::IslandModel;
 pub use menu_bar::{
     bar_height, hit_menu_bar, layout_menu_bar, BarSlot, ClipboardWidget, MeasuredSlot, MenuAction,
     MenuBarLayout, MenuBarModel, MenuEntry, PlacedSlot, StatusKind, StatusWidget, VolumeWidget,

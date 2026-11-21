@@ -1,16 +1,16 @@
 //! GPUI theme and design token integration for Nexus-OS.
 //!
-//! Exposes macOS-inspired vibrancy/blur via Mica/Acrylic window backdrop options,
-//! SF-style typography scales, continuous smooth corners, and interruptible
-//! spring animations as first-class GPUI styling primitives.
+//! GPUI styling for the monochrome Nexus theme: generous rounded surfaces,
+//! UI + mono type, and shell-surface window options.
 
 use crate::color::Color;
 use crate::spring::Spring;
 use crate::theme::Theme;
 use crate::tokens::{TypeStep, Weight, CORNER_SMOOTHING};
 use gpui::{
-    px, Bounds, FontWeight, Global, Hsla, Pixels, Rgba, SharedString, Styled,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions,
+    div, px, Bounds, FontWeight, Global, Hsla, IntoElement, ParentElement, Pixels, Rgba,
+    SharedString, Styled, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowOptions,
 };
 
 impl Global for Theme {}
@@ -59,6 +59,28 @@ pub fn sf_font_family() -> SharedString {
     {
         "Inter".into()
     }
+}
+
+/// Monospace family for clock, meters, and status (dot-matrix energy).
+/// Prefers Geist Mono / IBM Plex / Cascadia, then platform classics.
+pub fn mono_font_family() -> SharedString {
+    #[cfg(target_os = "macos")]
+    {
+        "SF Mono".into()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Cascadia Mono".into()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "Geist Mono".into()
+    }
+}
+
+/// Uppercase a label for typographic hierarchy.
+pub fn upper_label(text: &str) -> String {
+    text.to_ascii_uppercase()
 }
 
 impl Theme {
@@ -148,10 +170,80 @@ impl Theme {
         }
     }
 
-    /// Creates standard GPUI `WindowOptions` for blurred surfaces (menu bar, dock, Spotlight, etc).
+    /// Creates standard GPUI `WindowOptions` for blurred surfaces (dock, Spotlight, etc).
     pub fn blurred_window_options(&self, bounds: Bounds<Pixels>) -> WindowOptions {
-        self.window_options_with_backdrop(bounds, true)
+        self.shell_window_options(bounds, true, false, true)
     }
+
+    /// Shell chrome (island, dock, spotlight): no system titlebar, client decorations,
+    /// optional popup stacking, optional visibility.
+    pub fn shell_window_options(
+        &self,
+        bounds: Bounds<Pixels>,
+        blurred: bool,
+        popup: bool,
+        show: bool,
+    ) -> WindowOptions {
+        let appearance = if blurred {
+            WindowBackgroundAppearance::Blurred
+        } else {
+            WindowBackgroundAppearance::Transparent
+        };
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_background: appearance,
+            titlebar: None,
+            focus: !popup,
+            show,
+            kind: if popup {
+                WindowKind::PopUp
+            } else {
+                WindowKind::Normal
+            },
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_decorations: Some(WindowDecorations::Client),
+            ..Default::default()
+        }
+    }
+
+    /// Inverted status fill (ENGAGED, selected, on).
+    pub fn inverted_hsla(&self) -> Hsla {
+        self.palette.text_primary.into()
+    }
+
+    /// Ink used on inverted fills.
+    pub fn on_inverted_hsla(&self) -> Hsla {
+        self.palette.window_bg.into()
+    }
+}
+
+/// Monochrome window-control cluster: close / minimize / zoom as glyphs, no traffic-light colors.
+pub fn window_chrome(theme: &Theme, scale: f32) -> impl IntoElement {
+    let glyph = |mark: &'static str| {
+        div()
+            .w(px(18.0 * scale))
+            .h(px(18.0 * scale))
+            .rounded(px(theme.radii.xs))
+            .border_1()
+            .border_color(theme.separator_hsla())
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.0 * scale))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme.text_secondary_hsla())
+            .child(mark)
+    };
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0 * scale))
+        .child(glyph("×"))
+        .child(glyph("–"))
+        .child(glyph("□"))
 }
 
 /// Extension trait on GPUI `Styled` elements for rapid theme application.
@@ -191,6 +283,20 @@ pub trait ThemeStyledExt: Styled {
         self.bg(Hsla::from(accent))
             .text_color(Hsla::from(on_accent))
             .rounded(px(theme.radii.pill))
+    }
+
+    /// Inverted status block (ENGAGED / selected).
+    fn theme_inverted_block(self, theme: &Theme) -> Self {
+        self.bg(theme.inverted_hsla())
+            .text_color(theme.on_inverted_hsla())
+            .rounded(px(theme.radii.sm))
+    }
+
+    /// Apply the mono family at a given size (clock, meters, badges).
+    fn apply_mono(self, size: f32) -> Self {
+        self.font_family(mono_font_family())
+            .text_size(px(size))
+            .font_weight(FontWeight::MEDIUM)
     }
 }
 

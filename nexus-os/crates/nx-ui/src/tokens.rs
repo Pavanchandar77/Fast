@@ -164,12 +164,12 @@ pub struct Radii {
 impl Radii {
     pub const fn unit() -> Self {
         Self {
-            xs: 4.0,
-            sm: 6.0,
-            md: 8.0,
-            lg: 10.0,
-            xl: 14.0,
-            window: 12.0,
+            xs: 6.0,
+            sm: 10.0,
+            md: 14.0,
+            lg: 18.0,
+            xl: 24.0,
+            window: 20.0,
             pill: 999.0,
         }
     }

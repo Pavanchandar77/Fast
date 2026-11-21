@@ -2,11 +2,10 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled,
-    Window,
+    div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
 };
 use nx_fs::EntryKind;
-use nx_ui::gpui_theme::sf_font_family;
+use nx_ui::gpui_theme::{sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
 
 use crate::view_model::ExplorerWindow;
@@ -55,7 +54,7 @@ impl Render for ExplorerView {
         let theme = if cx.has_global::<Theme>() {
             *cx.global::<Theme>()
         } else {
-            Theme::light(nx_ui::theme::Accent::Blue)
+            Theme::stealth()
         };
 
         // Extract active pane entries snapshot
@@ -123,15 +122,7 @@ impl Render for ExplorerView {
                             .flex_row()
                             .items_center()
                             .gap(px(12.0))
-                            // Window traffic lights
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(6.0))
-                                    .child(div().w(px(12.0)).h(px(12.0)).rounded(px(6.0)).bg(Hsla::from(nx_ui::Color::hex(0xff5f57))))
-                                    .child(div().w(px(12.0)).h(px(12.0)).rounded(px(6.0)).bg(Hsla::from(nx_ui::Color::hex(0xfebc2e))))
-                                    .child(div().w(px(12.0)).h(px(12.0)).rounded(px(6.0)).bg(Hsla::from(nx_ui::Color::hex(0x28c840)))),
-                            )
+                            .child(window_chrome(&theme, 1.0))
                             // Nav buttons (Back, Forward)
                             .child(
                                 div()
@@ -180,7 +171,7 @@ impl Render for ExplorerView {
                                     .rounded(px(theme.radii.xs))
                                     .bg(Hsla::from(theme.palette.fill))
                                     .text_color(theme.text_secondary_hsla())
-                                    .child("🔍 Search"),
+                                    .child("SEARCH"),
                             )
                             .child(
                                 div()
@@ -188,7 +179,13 @@ impl Render for ExplorerView {
                                     .rounded(px(theme.radii.xs))
                                     .border_1()
                                     .border_color(Hsla::from(theme.palette.separator))
-                                    .child(div().px(px(8.0)).py(px(2.0)).bg(theme.selection_hsla()).child("≡"))
+                                    .child(
+                                        div()
+                                            .px(px(8.0))
+                                            .py(px(2.0))
+                                            .bg(theme.selection_hsla())
+                                            .child("≡"),
+                                    )
                                     .child(div().px(px(8.0)).py(px(2.0)).child("⊞")),
                             ),
                     ),
@@ -228,7 +225,7 @@ impl Render for ExplorerView {
                                     .py(px(4.0))
                                     .rounded(px(theme.radii.xs))
                                     .bg(theme.selection_hsla())
-                                    .child("🏠 Home"),
+                                    .child("Home"),
                             )
                             .child(
                                 div()
@@ -239,7 +236,7 @@ impl Render for ExplorerView {
                                     .py(px(4.0))
                                     .rounded(px(theme.radii.xs))
                                     .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("📁 Documents"),
+                                    .child("Documents"),
                             )
                             .child(
                                 div()
@@ -250,7 +247,7 @@ impl Render for ExplorerView {
                                     .py(px(4.0))
                                     .rounded(px(theme.radii.xs))
                                     .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("⬇️ Downloads"),
+                                    .child("Downloads"),
                             )
                             .child(
                                 div()
@@ -261,7 +258,7 @@ impl Render for ExplorerView {
                                     .py(px(4.0))
                                     .rounded(px(theme.radii.xs))
                                     .hover(|s| s.bg(theme.hover_hsla()))
-                                    .child("🖥️ Desktop"),
+                                    .child("Desktop"),
                             ),
                     )
                     // File table area (Virtualized uniform_list)
@@ -290,70 +287,74 @@ impl Render for ExplorerView {
                                     .child(div().w(px(120.0)).child("Size"))
                                     .child(div().w(px(100.0)).child("Kind")),
                             )
-                            // Virtualized list for 100k+ rows via uniform_list
+                            // File rows. uniform_list stays in tests for the 100k case;
+                            // a flex column is reliable for real window layout.
                             .child(
                                 div()
+                                    .id("explorer-file-list")
+                                    .flex()
+                                    .flex_col()
                                     .flex_1()
+                                    .w_full()
                                     .h_full()
-                                    .overflow_hidden()
-                                    .child(uniform_list(
-                                        "explorer-virtual-file-list",
-                                        total_items,
-                                        move |range, _window, _cx| {
-                                            let mut rows = Vec::with_capacity(range.len());
-                                            for idx in range {
-                                                if let Some(item) = items_rc.get(idx) {
-                                                    let is_alt = idx % 2 == 1;
-                                                    let is_selected = item.is_selected;
-                                                    let icon = if item.is_dir { "📁" } else { "📄" };
-                                                    let kind_str = if item.is_dir { "Folder" } else { "Document" };
-
-                                                    rows.push(
+                                    .overflow_y_scroll()
+                                    .children(items_rc.iter().enumerate().map(|(idx, item)| {
+                                        let is_alt = idx % 2 == 1;
+                                        let is_selected = item.is_selected;
+                                        let mark = if item.is_dir { "DIR" } else { "DOC" };
+                                        let kind_str =
+                                            if item.is_dir { "Folder" } else { "Document" };
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .h(px(28.0))
+                                            .px(px(16.0))
+                                            .when(is_selected, |d| d.bg(theme.selection_hsla()))
+                                            .when(!is_selected && is_alt, |d| {
+                                                d.bg(Hsla::from(theme.palette.row_alt))
+                                            })
+                                            .hover(|s| s.bg(theme.hover_hsla()))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(px(10.0))
+                                                    .w(px(320.0))
+                                                    .child(
                                                         div()
-                                                            .flex()
-                                                            .flex_row()
-                                                            .items_center()
-                                                            .h(px(28.0))
-                                                            .px(px(16.0))
-                                                            .when(is_selected, |d| d.bg(theme.selection_hsla()))
-                                                            .when(!is_selected && is_alt, |d| d.bg(Hsla::from(theme.palette.row_alt)))
-                                                            .hover(|s| s.bg(theme.hover_hsla()))
-                                                            // Name column
-                                                            .child(
-                                                                div()
-                                                                    .flex()
-                                                                    .flex_row()
-                                                                    .items_center()
-                                                                    .gap(px(8.0))
-                                                                    .w(px(320.0))
-                                                                    .child(div().child(icon))
-                                                                    .child(
-                                                                        div()
-                                                                            .text_color(theme.text_primary_hsla())
-                                                                            .font_weight(if item.is_dir { FontWeight::MEDIUM } else { FontWeight::NORMAL })
-                                                                            .child(item.name.clone()),
-                                                                    ),
-                                                            )
-                                                            // Size column
-                                                            .child(
-                                                                div()
-                                                                    .w(px(120.0))
-                                                                    .text_color(theme.text_secondary_hsla())
-                                                                    .child(item.size_formatted.clone()),
-                                                            )
-                                                            // Kind column
-                                                            .child(
-                                                                div()
-                                                                    .w(px(100.0))
-                                                                    .text_color(theme.text_secondary_hsla())
-                                                                    .child(kind_str),
-                                                            ),
-                                                    );
-                                                }
-                                            }
-                                            rows
-                                        },
-                                    )),
+                                                            .w(px(28.0))
+                                                            .font_family(sf_font_family())
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .text_size(px(9.0))
+                                                            .text_color(theme.text_secondary_hsla())
+                                                            .child(mark),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_color(theme.text_primary_hsla())
+                                                            .font_weight(if item.is_dir {
+                                                                FontWeight::MEDIUM
+                                                            } else {
+                                                                FontWeight::NORMAL
+                                                            })
+                                                            .child(item.name.clone()),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(120.0))
+                                                    .text_color(theme.text_secondary_hsla())
+                                                    .child(item.size_formatted.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(100.0))
+                                                    .text_color(theme.text_secondary_hsla())
+                                                    .child(kind_str),
+                                            )
+                                    })),
                             ),
                     ),
             )
@@ -383,7 +384,7 @@ impl Render for ExplorerView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{uniform_list, TestAppContext};
     use std::path::PathBuf;
 
     #[test]

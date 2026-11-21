@@ -1,5 +1,5 @@
-//! Menu-bar clock. The host pushes a sample. The shell never reads the OS clock,
-//! so tests are deterministic and nothing is written down.
+//! Shell clock. Tests use a pushed [`ClockSample`] so they stay deterministic.
+//! The live island reads the local OS clock via [`ClockSample::now_local`].
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Weekday {
@@ -136,6 +136,73 @@ impl Default for ClockSample {
     }
 }
 
+impl ClockSample {
+    /// Current local wall time. Used by the Dynamic Island; tests keep using `default()`.
+    pub fn now_local() -> Self {
+        now_local_impl()
+    }
+}
+
+#[cfg(unix)]
+fn now_local_impl() -> ClockSample {
+    #[repr(C)]
+    struct Tm {
+        tm_sec: i32,
+        tm_min: i32,
+        tm_hour: i32,
+        tm_mday: i32,
+        tm_mon: i32,
+        tm_year: i32,
+        tm_wday: i32,
+        tm_yday: i32,
+        tm_isdst: i32,
+        tm_gmtoff: i64,
+        tm_zone: *const i8,
+    }
+
+    unsafe extern "C" {
+        fn time(tloc: *mut i64) -> i64;
+        fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
+    }
+
+    unsafe {
+        let mut t: i64 = 0;
+        if time(&mut t) == -1 {
+            return ClockSample::default();
+        }
+        let mut tm = std::mem::zeroed::<Tm>();
+        if localtime_r(&t, &mut tm).is_null() {
+            return ClockSample::default();
+        }
+        ClockSample::new(
+            tm.tm_hour as u8,
+            tm.tm_min as u8,
+            Weekday::from_index(tm.tm_wday as u8),
+            Month::from_index((tm.tm_mon + 1) as u8),
+            tm.tm_mday as u8,
+        )
+    }
+}
+
+#[cfg(windows)]
+fn now_local_impl() -> ClockSample {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    let st = unsafe { GetLocalTime() };
+    ClockSample::new(
+        st.wHour as u8,
+        st.wMinute as u8,
+        Weekday::from_index(st.wDayOfWeek as u8),
+        Month::from_index(st.wMonth as u8),
+        st.wDay as u8,
+    )
+}
+
+#[cfg(not(any(unix, windows)))]
+fn now_local_impl() -> ClockSample {
+    ClockSample::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +230,13 @@ mod tests {
         assert_eq!(sample.minute, 59);
         assert_eq!(sample.day, 1);
         assert_eq!(sample.month, Month::Jan);
+    }
+
+    #[test]
+    fn now_local_is_in_range() {
+        let sample = ClockSample::now_local();
+        assert!(sample.hour <= 23);
+        assert!(sample.minute <= 59);
+        assert!(sample.day >= 1 && sample.day <= 31);
     }
 }

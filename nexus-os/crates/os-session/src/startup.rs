@@ -1,7 +1,7 @@
 //! Session component startup with graceful degradation.
 //!
-//! Launching Nexus brings up nx-shell (menu bar, dock, Mission Control,
-//! Spotlight), explorer-ui, the privacy dashboard, and power features.
+//! Launching Nexus brings up the Dynamic Island, dock, Mission Control,
+//! Spotlight, explorer-ui, the privacy dashboard, and power features.
 //! One component failing logs and continues; it must never take the
 //! session down.
 
@@ -13,8 +13,8 @@ use nx_power::{AltTabSwitcher, AlwaysOnTopStore, ClipboardStore, NotesStore, Vol
 use nx_privacy::shield::PrivacyShield;
 use nx_privacy_dash::{DashboardViewModel, PrivacyDashboardView};
 use nx_shell::{
-    DockModel, DockPlacement, DockView, ExposeModel, MenuBarModel, MenuBarView, MissionControlView,
-    Spotlight, SpotlightView,
+    DockModel, DockPlacement, DockView, ExposeModel, IslandModel, IslandView, MenuBarModel,
+    MissionControlView, Spotlight, SpotlightView,
 };
 use nx_ui::geom::Rect;
 use nx_ui::theme::Theme;
@@ -61,6 +61,7 @@ pub struct ShellSession {
     pub dock: DockModel,
     pub expose: ExposeModel,
     pub spotlight: Spotlight,
+    pub island: IslandModel,
 }
 
 pub struct ExplorerSession {
@@ -167,11 +168,18 @@ fn run_guarded<T>(
 
 fn start_shell() -> Result<ShellSession, String> {
     let canvas = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+    let mut menu_bar = MenuBarModel::new();
+    menu_bar.set_clock(nx_shell::ClockSample::now_local());
+    let mut dock = DockModel::new(DockPlacement::bottom(MonitorId(1), canvas));
+    dock.pin_defaults();
+    dock.set_running("explorer", true);
+    dock.set_running("privacy", true);
     Ok(ShellSession {
-        menu_bar: MenuBarModel::new(),
-        dock: DockModel::new(DockPlacement::bottom(MonitorId(1), canvas)),
+        menu_bar,
+        dock,
         expose: ExposeModel::new(canvas),
-        spotlight: Spotlight::new(),
+        spotlight: Spotlight::with_builtins(),
+        island: IslandModel::new(),
     })
 }
 
@@ -180,7 +188,8 @@ fn start_explorer() -> Result<ExplorerSession, String> {
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let (window, _fx) = ExplorerWindow::new(home);
+    let (mut window, fx) = ExplorerWindow::new(home);
+    window.fulfill_effects(fx);
     Ok(ExplorerSession { window })
 }
 
@@ -271,7 +280,7 @@ fn forced_or<T>(
 
 /// Represents handles to the opened GPUI windows in the session.
 pub struct GpuiSessionWindows {
-    pub menu_bar_window: Option<gpui::WindowHandle<MenuBarView>>,
+    pub island_window: Option<gpui::WindowHandle<IslandView>>,
     pub dock_window: Option<gpui::WindowHandle<DockView>>,
     pub spotlight_window: Option<gpui::WindowHandle<SpotlightView>>,
     pub expose_window: Option<gpui::WindowHandle<MissionControlView>>,
@@ -282,13 +291,13 @@ pub struct GpuiSessionWindows {
 /// Open all user-facing GPUI windows adhering to macOS design tokens, Mica/Acrylic backdrops,
 /// and SF typography.
 pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> GpuiSessionWindows {
-    let theme = Theme::dark(nx_ui::theme::Accent::Blue);
+    let theme = Theme::stealth();
     if !cx.has_global::<Theme>() {
         cx.set_global(theme);
     }
 
     let mut windows = GpuiSessionWindows {
-        menu_bar_window: None,
+        island_window: None,
         dock_window: None,
         spotlight_window: None,
         expose_window: None,
@@ -296,55 +305,114 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         privacy_dashboard_window: None,
     };
 
+    let screen = cx
+        .primary_display()
+        .map(|d| d.bounds())
+        .unwrap_or(gpui::Bounds {
+            origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            size: gpui::size(gpui::px(1920.0), gpui::px(1080.0)),
+        });
+    let sx = f32::from(screen.origin.x);
+    let sy = f32::from(screen.origin.y);
+    let sw = f32::from(screen.size.width);
+    let sh = f32::from(screen.size.height);
+
+    let island_w = 680.0;
+    let island_h = 52.0;
+    let island_x = sx + ((sw - island_w) * 0.5).max(0.0);
+    let island_y = sy + 10.0;
+
+    let dock_w = 960.0;
+    let dock_h = 96.0;
+    let dock_x = sx + ((sw - dock_w) * 0.5).max(0.0);
+    let dock_y = sy + sh - dock_h - 8.0;
+
+    let spot_w = 1000.0;
+    let spot_h = 580.0;
+    let spot_x = sx + ((sw - spot_w) * 0.5).max(0.0);
+    let spot_y = sy + (sh * 0.14).max(80.0);
+
+    let explorer_w = 980.0;
+    let explorer_x = sx + 48.0;
+    let explorer_y = sy + 80.0;
+    let explorer_h = 720.0_f32.min((dock_y - explorer_y - 16.0).max(420.0));
+
+    let privacy_w = 820.0;
+    let privacy_x =
+        (explorer_x + explorer_w + 28.0).min((sx + sw - privacy_w - 24.0).max(sx + 24.0));
+    let privacy_y = sy + 120.0;
+    let privacy_h = 680.0_f32.min((dock_y - privacy_y - 16.0).max(420.0));
+
     if let Some(shell) = &handle.shell {
-        let menu_model = shell.menu_bar.clone();
-        windows.menu_bar_window = cx
+        let island_model = shell.island.clone();
+        windows.island_window = cx
             .open_window(
-                theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
-                    size: gpui::size(gpui::px(1920.0), gpui::px(28.0)),
-                }),
-                move |_window, cx| cx.new(|_cx| MenuBarView::new(menu_model)),
+                theme.shell_window_options(
+                    gpui::Bounds {
+                        origin: gpui::point(gpui::px(island_x), gpui::px(island_y)),
+                        size: gpui::size(gpui::px(island_w), gpui::px(island_h)),
+                    },
+                    false,
+                    true,
+                    true,
+                ),
+                move |_window, cx| cx.new(|_cx| IslandView::new(island_model)),
             )
             .ok();
 
         let dock_model = shell.dock.clone();
         windows.dock_window = cx
             .open_window(
-                theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(400.0), gpui::px(1000.0)),
-                    size: gpui::size(gpui::px(1120.0), gpui::px(72.0)),
-                }),
+                theme.shell_window_options(
+                    gpui::Bounds {
+                        origin: gpui::point(gpui::px(dock_x), gpui::px(dock_y)),
+                        size: gpui::size(gpui::px(dock_w), gpui::px(dock_h)),
+                    },
+                    true,
+                    true,
+                    true,
+                ),
                 move |_window, cx| cx.new(|_cx| DockView::new(dock_model)),
             )
             .ok();
 
-        let spotlight_query = shell.spotlight.query.clone();
-        let mut spotlight_opts = theme.blurred_window_options(gpui::Bounds {
-            origin: gpui::point(gpui::px(620.0), gpui::px(280.0)),
-            size: gpui::size(gpui::px(680.0), gpui::px(420.0)),
-        });
-        // Spotlight starts closed; HotkeyAction::CommandBar toggles it.
-        spotlight_opts.show = false;
+        // Spotlight starts hidden; HotkeyAction::CommandBar toggles it.
+        let mut spotlight_model = Spotlight::with_builtins();
+        spotlight_model.query = shell.spotlight.query.clone();
+        let mut spotlight_opts = theme.shell_window_options(
+            gpui::Bounds {
+                origin: gpui::point(gpui::px(spot_x), gpui::px(spot_y)),
+                size: gpui::size(gpui::px(spot_w), gpui::px(spot_h)),
+            },
+            true,
+            true,
+            false,
+        );
         spotlight_opts.focus = false;
-        spotlight_opts.kind = gpui::WindowKind::PopUp;
         windows.spotlight_window = cx
-            .open_window(spotlight_opts, move |_window, cx| {
-                let mut s = Spotlight::new();
-                s.query = spotlight_query;
-                cx.new(|_cx| SpotlightView::new(s))
+            .open_window(spotlight_opts, move |window, cx| {
+                // Linux ignores WindowOptions.show; park minimized until toggled.
+                hide_auxiliary_window(window);
+                cx.new(|_cx| SpotlightView::new(spotlight_model))
             })
             .ok();
 
         let expose_model = shell.expose.clone();
+        let mut expose_opts = theme.shell_window_options(
+            gpui::Bounds {
+                origin: gpui::point(gpui::px(sx), gpui::px(sy)),
+                size: gpui::size(gpui::px(sw), gpui::px(sh)),
+            },
+            true,
+            false,
+            false,
+        );
+        expose_opts.focus = false;
         windows.expose_window = cx
-            .open_window(
-                theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
-                    size: gpui::size(gpui::px(1920.0), gpui::px(1080.0)),
-                }),
-                move |_window, cx| cx.new(|_cx| MissionControlView::new(expose_model)),
-            )
+            .open_window(expose_opts, move |window, cx| {
+                hide_auxiliary_window(window);
+                cx.new(|_cx| MissionControlView::new(expose_model))
+            })
             .ok();
     }
 
@@ -352,8 +420,8 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         windows.explorer_window = cx
             .open_window(
                 theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(100.0), gpui::px(100.0)),
-                    size: gpui::size(gpui::px(1024.0), gpui::px(700.0)),
+                    origin: gpui::point(gpui::px(explorer_x), gpui::px(explorer_y)),
+                    size: gpui::size(gpui::px(explorer_w), gpui::px(explorer_h)),
                 }),
                 move |_window, cx| cx.new(|_cx| ExplorerView::new(explorer.window)),
             )
@@ -365,8 +433,8 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         windows.privacy_dashboard_window = cx
             .open_window(
                 theme.blurred_window_options(gpui::Bounds {
-                    origin: gpui::point(gpui::px(150.0), gpui::px(150.0)),
-                    size: gpui::size(gpui::px(960.0), gpui::px(640.0)),
+                    origin: gpui::point(gpui::px(privacy_x), gpui::px(privacy_y)),
+                    size: gpui::size(gpui::px(privacy_w), gpui::px(privacy_h)),
                 }),
                 move |_window, cx| cx.new(|_cx| PrivacyDashboardView::new(dash_vm)),
             )
@@ -379,6 +447,22 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
 /// Toggle the GPUI Spotlight window in response to `HotkeyAction::CommandBar`.
 ///
 /// Returns true when Spotlight is open afterwards.
+pub fn set_island_expanded(
+    handle: gpui::WindowHandle<IslandView>,
+    expanded: bool,
+    cx: &mut gpui::App,
+) -> bool {
+    handle
+        .update(cx, |view, window, cx| {
+            view.set_expanded(expanded);
+            let height = if expanded { 308.0 } else { 52.0 };
+            window.resize(gpui::size(gpui::px(680.0), gpui::px(height)));
+            cx.notify();
+            view.model.expanded
+        })
+        .unwrap_or(false)
+}
+
 pub fn toggle_gpui_spotlight(
     handle: gpui::WindowHandle<SpotlightView>,
     cx: &mut gpui::App,
@@ -396,17 +480,33 @@ pub fn toggle_gpui_spotlight(
         .unwrap_or(false)
 }
 
-fn apply_spotlight_visibility(_window: &gpui::Window, _visible: bool) {
+/// Test GPUI windows panic on minimize; Linux ignores WindowOptions.show, so we
+/// only park auxiliary surfaces when running a real session.
+fn hide_auxiliary_window(window: &mut gpui::Window) {
+    #[cfg(all(unix, not(test)))]
+    {
+        window.minimize_window();
+    }
+    let _ = window;
+}
+
+fn apply_spotlight_visibility(window: &mut gpui::Window, visible: bool) {
+    if visible {
+        window.resize(gpui::size(gpui::px(1000.0), gpui::px(580.0)));
+        window.activate_window();
+    } else {
+        hide_auxiliary_window(window);
+    }
     #[cfg(windows)]
     {
         use raw_window_handle::RawWindowHandle;
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNORMAL};
 
-        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(_window) {
+        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
             if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                 let hwnd = HWND(win32.hwnd.get() as *mut std::ffi::c_void);
-                let cmd = if _visible { SW_SHOWNORMAL } else { SW_HIDE };
+                let cmd = if visible { SW_SHOWNORMAL } else { SW_HIDE };
                 unsafe {
                     let _ = ShowWindow(hwnd, cmd);
                 }
@@ -471,7 +571,7 @@ mod tests {
         let mut session = start_session();
         cx.update(|cx| {
             let windows = open_gpui_windows(cx, &mut session);
-            assert!(windows.menu_bar_window.is_some());
+            assert!(windows.island_window.is_some());
             assert!(windows.dock_window.is_some());
             assert!(windows.spotlight_window.is_some());
             assert!(windows.expose_window.is_some());

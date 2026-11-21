@@ -1,4 +1,4 @@
-//! macOS-inspired light and dark themes, accent colors, and materials.
+//! Monochrome Nexus theme: off-white on graphite, generous macOS radii.
 
 use crate::color::Color;
 use crate::material::{Material, MaterialKind};
@@ -76,10 +76,11 @@ impl Accent {
                 }
             }
             Self::Graphite => {
+                // High-contrast ink: off-white on dark, charcoal on light.
                 if dark {
-                    Color::hex(0x98989d)
+                    Color::hex(0xf4f1ea)
                 } else {
-                    Color::hex(0x8e8e93)
+                    Color::hex(0x111111)
                 }
             }
         }
@@ -151,6 +152,11 @@ impl Theme {
         Self::build(ThemeMode::Dark, accent, 1.0)
     }
 
+    /// Product theme: dark monochrome graphite, no chromatic accent.
+    pub fn stealth() -> Self {
+        Self::dark(Accent::Graphite)
+    }
+
     pub fn at_scale(self, scale: f32) -> Self {
         let scale = if scale.is_finite() && scale > 0.0 {
             scale
@@ -197,24 +203,24 @@ impl Theme {
 
 fn light_parts(accent: Color, on_accent: Color) -> (Palette, Elevation, Materials) {
     let palette = Palette {
-        window_bg: Color::hex(0xf2f2f7),
-        sidebar_bg: Color::rgba(255, 255, 255, 184),
-        content_bg: Color::hex(0xffffff),
+        window_bg: Color::hex(0xf4f1ea),
+        sidebar_bg: Color::rgba(244, 241, 234, 220),
+        content_bg: Color::hex(0xfaf8f3),
         elevated: Color::hex(0xffffff),
-        text_primary: Color::hex(0x1d1d1f),
-        text_secondary: Color::hex(0x6e6e73),
-        text_tertiary: Color::hex(0x8e8e93),
-        separator: Color::rgba(0, 0, 0, 26),
-        fill: Color::hex(0xe5e5ea),
+        text_primary: Color::hex(0x111111),
+        text_secondary: Color::hex(0x5c5c59),
+        text_tertiary: Color::hex(0x8a8a86),
+        separator: Color::rgba(0, 0, 0, 28),
+        fill: Color::hex(0xe8e4db),
         fill_secondary: Color::rgba(0, 0, 0, 12),
         accent,
         on_accent,
-        selection: accent.with_alpha(0.18),
-        hover: Color::rgba(0, 0, 0, 16),
+        selection: accent.with_alpha(0.16),
+        hover: Color::rgba(0, 0, 0, 14),
         control: Color::hex(0xffffff),
         row_alt: Color::rgba(0, 0, 0, 8),
-        tooltip_bg: Color::rgba(246, 246, 246, 235),
-        menu_bg: Color::rgba(255, 255, 255, 230),
+        tooltip_bg: Color::rgba(250, 248, 243, 235),
+        menu_bg: Color::rgba(250, 248, 243, 230),
         shadow: Color::rgba(0, 0, 0, 48),
     };
     let materials = Materials {
@@ -257,25 +263,25 @@ fn light_parts(accent: Color, on_accent: Color) -> (Palette, Elevation, Material
 
 fn dark_parts(accent: Color, on_accent: Color) -> (Palette, Elevation, Materials) {
     let palette = Palette {
-        window_bg: Color::hex(0x1c1c1e),
-        sidebar_bg: Color::rgba(28, 28, 30, 200),
-        content_bg: Color::hex(0x1c1c1e),
-        elevated: Color::hex(0x2c2c2e),
-        text_primary: Color::hex(0xf5f5f7),
-        text_secondary: Color::hex(0x98989d),
-        text_tertiary: Color::hex(0x8e8e93),
-        separator: Color::rgba(255, 255, 255, 30),
-        fill: Color::hex(0x3a3a3c),
-        fill_secondary: Color::rgba(255, 255, 255, 18),
+        window_bg: Color::hex(0x0a0a0a),
+        sidebar_bg: Color::rgba(14, 14, 14, 220),
+        content_bg: Color::hex(0x0e0e0e),
+        elevated: Color::hex(0x161616),
+        text_primary: Color::hex(0xf4f1ea),
+        text_secondary: Color::hex(0x8a8a86),
+        text_tertiary: Color::hex(0x5c5c59),
+        separator: Color::rgba(244, 241, 234, 32),
+        fill: Color::hex(0x1c1c1c),
+        fill_secondary: Color::rgba(244, 241, 234, 16),
         accent,
         on_accent,
-        selection: accent.with_alpha(0.32),
-        hover: Color::rgba(255, 255, 255, 20),
-        control: Color::hex(0x2c2c2e),
-        row_alt: Color::rgba(255, 255, 255, 10),
-        tooltip_bg: Color::rgba(44, 44, 46, 235),
-        menu_bg: Color::rgba(44, 44, 46, 230),
-        shadow: Color::rgba(0, 0, 0, 180),
+        selection: accent.with_alpha(0.20),
+        hover: Color::rgba(244, 241, 234, 18),
+        control: Color::hex(0x161616),
+        row_alt: Color::rgba(244, 241, 234, 10),
+        tooltip_bg: Color::rgba(22, 22, 22, 235),
+        menu_bg: Color::rgba(12, 12, 12, 236),
+        shadow: Color::rgba(0, 0, 0, 200),
     };
     let materials = Materials {
         window: Material::solid(palette.window_bg),
@@ -383,11 +389,35 @@ mod tests {
         let theme = Theme::dark(Accent::Green).at_scale(2.0);
         assert!((theme.type_scale.body.size - 34.0).abs() < 1e-4);
         assert!((theme.spacing.s8 - 16.0).abs() < 1e-4);
-        assert!((theme.radii.md - 16.0).abs() < 1e-4);
+        assert!((theme.radii.md - 28.0).abs() < 1e-4);
         assert_eq!(
             theme.palette.accent.to_array(),
             Accent::Green.color(ThemeMode::Dark).to_array()
         );
         assert!((theme.scale - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stealth_theme_is_monochrome_graphite() {
+        let theme = Theme::stealth();
+        assert_eq!(theme.mode, ThemeMode::Dark);
+        assert_eq!(theme.accent, Accent::Graphite);
+        let a = theme.palette.accent.to_bytes();
+        let span = a[0]
+            .abs_diff(a[1])
+            .max(a[1].abs_diff(a[2]))
+            .max(a[0].abs_diff(a[2]));
+        assert!(
+            span <= 16,
+            "graphite accent should stay near-neutral, got {a:?}"
+        );
+        assert!(
+            theme
+                .palette
+                .text_primary
+                .contrast_ratio(theme.palette.window_bg)
+                >= 7.0
+        );
+        assert!(theme.radii.window >= 18.0);
     }
 }
