@@ -270,14 +270,14 @@ pub fn set_overlay_visible(window: &mut gpui::Window, visible: bool) {
 
 pub fn set_overlay_visible_raw(raw: isize, visible: bool) {
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+        SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     };
     make_click_through(raw);
     unsafe {
         if visible {
             let _ = SetWindowPos(
                 hwnd(raw),
-                HWND_TOPMOST,
+                HWND_TOP,
                 0,
                 0,
                 0,

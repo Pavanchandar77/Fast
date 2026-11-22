@@ -80,6 +80,31 @@ impl WindowHandle {
         self.pid_and_tid().0
     }
 
+    /// Keep one of Nexus's *own* shell windows (island, dock) above normal
+    /// windows. Refuses windows of other processes: changing their z-band
+    /// would need a journal entry, and a crashed session must not leave a
+    /// foreign window stuck on top.
+    pub fn set_own_topmost(&self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        };
+        if self.pid() != std::process::id() {
+            return false;
+        }
+        unsafe {
+            SetWindowPos(
+                self.0,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+            .is_ok()
+        }
+    }
+
     pub fn title(&self) -> String {
         unsafe {
             let length = GetWindowTextLengthW(self.0);
