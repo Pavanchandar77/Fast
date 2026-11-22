@@ -20,7 +20,9 @@ pub fn apply_hwnd(hwnd: isize, request: BackdropRequest) -> crate::Result<()> {
         request.system_backdrop_value() as u32,
         request.dark_mode_value() != 0,
         request.corner_value() != 0,
-        true,
+        // Never extend the DWM frame: on transparent GPUI windows it shows
+        // through as a grey/accent box around the body.
+        false,
     )
     .map_err(|err| crate::Error::Gpu(format!("safe_apply_dwm_attributes: {err}")))
 }

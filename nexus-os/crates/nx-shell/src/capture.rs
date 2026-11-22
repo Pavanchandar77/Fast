@@ -17,10 +17,10 @@ use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, GetWindowRect, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, SystemParametersInfoW, GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA,
-    SPI_GETCLIENTAREAANIMATION, SW_HIDE, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    SPI_GETCLIENTAREAANIMATION, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// `PW_RENDERFULLCONTENT`: capture DirectComposition / GPU content too.
@@ -241,8 +241,6 @@ fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
     }
 }
 
-/// Show the overlay only while an effect runs. Even if click-through were
-/// refused, input is blocked at most for the length of one animation.
 /// GPUI can show a `show: false` window after the open callback returns.
 /// Hide the fullscreen overlay again once that has happened, or it sits on
 /// top of every click and paints a dark sheet.
@@ -257,12 +255,106 @@ pub fn keep_overlay_hidden(raw: isize) {
     });
 }
 
+/// Show the overlay only while an effect runs. Even if click-through were
+/// refused, input is blocked at most for the length of one animation.
+///
+/// Must be driven from outside `render`: Windows sends no `WM_PAINT` to a
+/// hidden window, so a hidden overlay never renders again and could never
+/// re-show itself (v0.1.0 bug: effects queued forever and their window
+/// hides never lifted).
 pub fn set_overlay_visible(window: &mut gpui::Window, visible: bool) {
     if let Some(raw) = gpui_hwnd(window) {
-        make_click_through(raw);
-        unsafe {
-            let _ = ShowWindow(hwnd(raw), if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        set_overlay_visible_raw(raw, visible);
+    }
+}
+
+pub fn set_overlay_visible_raw(raw: isize, visible: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
+    make_click_through(raw);
+    unsafe {
+        if visible {
+            let _ = SetWindowPos(
+                hwnd(raw),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let _ = ShowWindow(hwnd(raw), SW_SHOWNOACTIVATE);
+        } else {
+            let _ = ShowWindow(hwnd(raw), SW_HIDE);
         }
+    }
+    tracing::debug!("motion overlay visible={visible}");
+}
+
+/// True when `raw` belongs to this process (Nexus's own GPUI windows).
+pub fn is_own_window(raw: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd(raw), Some(&mut pid));
+    }
+    pid != 0 && pid == std::process::id()
+}
+
+/// Default lifetime of a [`BloomHide`] before the watchdog lifts it even if
+/// the effect never finished. An open/restore effect runs ~0.5 s.
+pub const BLOOM_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+struct LiveHide {
+    old_ex: isize,
+    deadline: std::time::Instant,
+}
+
+static LIVE_HIDES: std::sync::Mutex<Vec<(isize, LiveHide)>> = std::sync::Mutex::new(Vec::new());
+
+fn restore_hide(raw: isize, old_ex: isize) {
+    unsafe {
+        let h = hwnd(raw);
+        let _ = SetLayeredWindowAttributes(h, COLORREF(0), 255, LWA_ALPHA);
+        SetWindowLongPtrW(h, GWL_EXSTYLE, old_ex);
+    }
+}
+
+/// Lift every hide whose deadline passed. Call often (the compositor loop
+/// does, every frame). Returns how many were lifted.
+pub fn bloom_watchdog() -> usize {
+    let now = std::time::Instant::now();
+    let expired: Vec<(isize, isize)> = match LIVE_HIDES.lock() {
+        Ok(mut live) => {
+            let mut out = Vec::new();
+            live.retain(|(raw, h)| {
+                if h.deadline <= now {
+                    out.push((*raw, h.old_ex));
+                    false
+                } else {
+                    true
+                }
+            });
+            out
+        }
+        Err(_) => Vec::new(),
+    };
+    for (raw, old_ex) in &expired {
+        tracing::warn!("bloom watchdog: effect never finished, restoring window {raw:#x}");
+        restore_hide(*raw, *old_ex);
+    }
+    expired.len()
+}
+
+/// Lift every outstanding hide now (shutdown / fail-safe).
+pub fn lift_all_hides() {
+    let all: Vec<(isize, LiveHide)> = match LIVE_HIDES.lock() {
+        Ok(mut live) => std::mem::take(&mut *live),
+        Err(_) => Vec::new(),
+    };
+    for (raw, h) in all {
+        restore_hide(raw, h.old_ex);
     }
 }
 
@@ -271,11 +363,26 @@ pub fn set_overlay_visible(window: &mut gpui::Window, visible: bool) {
 /// alpha belongs to the app). Restores on drop.
 pub struct BloomHide {
     raw: isize,
-    old_ex: isize,
 }
 
 impl BloomHide {
     pub fn new(raw: isize) -> Option<Self> {
+        Self::with_ttl(raw, BLOOM_TTL)
+    }
+
+    /// Hide for at most `ttl`; the watchdog restores it after that.
+    /// Never applies to Nexus's own windows.
+    pub fn with_ttl(raw: isize, ttl: std::time::Duration) -> Option<Self> {
+        if is_own_window(raw) {
+            return None;
+        }
+        if LIVE_HIDES
+            .lock()
+            .map(|l| l.iter().any(|(r, _)| *r == raw))
+            .unwrap_or(true)
+        {
+            return None;
+        }
         unsafe {
             let h = hwnd(raw);
             let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
@@ -287,17 +394,29 @@ impl BloomHide {
                 SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
                 return None;
             }
-            Some(Self { raw, old_ex: ex })
+            if let Ok(mut live) = LIVE_HIDES.lock() {
+                live.push((
+                    raw,
+                    LiveHide {
+                        old_ex: ex,
+                        deadline: std::time::Instant::now() + ttl,
+                    },
+                ));
+            }
+            Some(Self { raw })
         }
     }
 }
 
 impl Drop for BloomHide {
     fn drop(&mut self) {
-        unsafe {
-            let h = hwnd(self.raw);
-            let _ = SetLayeredWindowAttributes(h, COLORREF(0), 255, LWA_ALPHA);
-            SetWindowLongPtrW(h, GWL_EXSTYLE, self.old_ex);
+        // Restore only if the watchdog has not already done it.
+        let entry = LIVE_HIDES.lock().ok().and_then(|mut live| {
+            let i = live.iter().position(|(r, _)| *r == self.raw)?;
+            Some(live.swap_remove(i).1)
+        });
+        if let Some(h) = entry {
+            restore_hide(self.raw, h.old_ex);
         }
     }
 }

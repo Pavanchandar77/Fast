@@ -1034,6 +1034,18 @@ impl MotionOverlayView {
         )
     }
 
+    /// Show/hide the OS window to match whether any effect is running and
+    /// keep frames coming while one is. Call after every state change from
+    /// outside `render` (a hidden window gets no paint, so `render` alone
+    /// can never bring it back).
+    pub fn sync_window(&mut self, window: &mut Window) {
+        let active = self.is_animating();
+        self.sync_os_visibility(window, active);
+        if active {
+            window.refresh();
+        }
+    }
+
     fn sync_os_visibility(&mut self, window: &mut Window, active: bool) {
         if self.os_visible == Some(active) {
             return;

@@ -11,6 +11,7 @@ mod imp {
     use os_core::hollow_shell::HollowShellManager;
     use os_core::window::WindowHandle;
     use os_governor::Governor;
+    use os_session::diag;
     use parking_lot::RwLock;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,26 +46,49 @@ mod imp {
             return Ok(());
         }
 
+        // Release builds have no console: everything goes to
+        // %LOCALAPPDATA%\Nexus\logs\nexus.log so a real-PC run leaves data.
+        let safe = diag::parse_safe_mode(
+            std::env::args(),
+            std::env::var("NEXUS_SAFE").ok().as_deref(),
+        );
+        diag::set_safe_mode(safe);
+        let log_path = diag::open_log_file();
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .with_ansi(false)
+            .with_thread_names(true)
+            .with_writer(|| diag::LogWriter)
+            .init();
+        info!(
+            "==== Nexus {} starting (pid {}, safe_mode={safe}, log={:?}) ====",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id(),
+            log_path
+        );
+        info!("args: {:?}", std::env::args().collect::<Vec<_>>());
+
         // One session per user: a second launch (shortcut + sign-in entry)
         // must not attach a second set of hooks.
         let _single_instance = match acquire_single_instance() {
             Some(guard) => guard,
-            None => return Ok(()),
+            None => {
+                warn!("another Nexus session already holds Local\\NexusOS.Session; exiting");
+                return Ok(());
+            }
         };
 
-        // Restore journaled mutations on panic before anything else runs.
+        // Restore journaled mutations on panic before anything else runs,
+        // and record the panic in the log first.
         os_core::recovery::install_panic_hook();
+        diag::install_panic_logging();
 
         // 0b. Enforce Per-Monitor DPI V2 scaling
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
-
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-            )
-            .init();
 
         println!(
             r#"
@@ -167,17 +191,22 @@ mod imp {
 
         // The keyboard hook is installed before any system mutation. If it cannot
         // be installed, startup stops and the drop guard restores the journal.
-        info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
-        let (keyboard_hook, hotkey_rx) = match GlobalKeyboardHook::start_with_config(
-            fail_safe,
-            &config_arc.read().keybindings,
-        ) {
-            Ok(hook) => hook,
-            Err(err) => {
-                tracing::error!(
-                    "keyboard hook failed ({err}); restoring the session and aborting startup"
-                );
-                return Ok(());
+        let (keyboard_hook, hotkey_rx) = if safe {
+            warn!("safe mode: global keyboard hook not installed");
+            (None, crossbeam_channel::never())
+        } else {
+            info!("Attaching Low-Level Keyboard Hook (WH_KEYBOARD_LL)...");
+            match GlobalKeyboardHook::start_with_config(fail_safe, &config_arc.read().keybindings) {
+                Ok((hook, rx)) => {
+                    info!("keyboard hook installed");
+                    (Some(hook), rx)
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "keyboard hook failed ({err}); restoring the session and aborting startup"
+                    );
+                    return Ok(());
+                }
             }
         };
 
@@ -196,7 +225,12 @@ mod imp {
 
         // 6. Enumerate and ingest all existing desktop windows into the compositor
         info!("Scanning initial desktop surface hierarchy...");
-        let existing = enumerate_existing_windows(wm.clone());
+        let existing = if safe {
+            Vec::new()
+        } else {
+            enumerate_existing_windows(wm.clone())
+        };
+        info!("adopted {} existing top-level windows", existing.len());
 
         // Elevate the current foreground window immediately
         unsafe {
@@ -204,12 +238,16 @@ mod imp {
             if !fg.0.is_null() {
                 let handle = WindowHandle::new(fg);
                 governor.on_foreground_changed(handle);
-                wm.write().set_foreground(handle);
+                if !safe {
+                    wm.write().set_foreground(handle);
+                }
             }
         }
 
         // 7. Enforce Hollowed Shell Trick: suppress explorer taskbar surfaces if configured
-        if config_arc.read().compositor.suppress_native_taskbar {
+        if safe {
+            warn!("safe mode: native taskbar left visible");
+        } else if config_arc.read().compositor.suppress_native_taskbar {
             if let Err(e) = HollowShellManager::suppress_taskbar() {
                 warn!("Could not suppress native taskbar: {:?}", e);
             }
@@ -225,6 +263,7 @@ mod imp {
         let compositor = CompositorLoop {
             motion,
             _keyboard_hook: keyboard_hook,
+            safe,
             hotkey_rx,
             _win_event_listener: win_event_listener,
             win_event_rx,
@@ -242,9 +281,10 @@ mod imp {
         // continues on a background thread at 120Hz.
         info!("Starting GPUI application...");
         gpui::Application::new().run(move |cx| {
-            let mut session = os_session::startup::start_session();
+            let mut session = diag::timed("start_session", 500, os_session::startup::start_session);
             info!("session surfaces: {}", session.summary());
             let windows = os_session::startup::open_gpui_windows(cx, &mut session);
+            info!("GPUI windows: {}", windows.describe());
             // Keep component state alive for the GPUI application lifetime.
             cx.set_global(LiveSession(session));
 
@@ -252,6 +292,8 @@ mod imp {
             let running = Arc::new(AtomicBool::new(true));
             let running_for_quit = running.clone();
             cx.on_app_quit(move |_| {
+                info!("GPUI quitting; lifting any window hides");
+                nx_shell::capture::lift_all_hides();
                 running_for_quit.store(false, Ordering::SeqCst);
                 async {}
             })
@@ -281,6 +323,8 @@ mod imp {
             }
 
             let mut motion_state = os_session::motion_bridge::UiMotionState::default();
+            let mut ticks: u64 = 0;
+            let mut last_tick = Instant::now();
             cx.spawn(async move |cx| loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(8))
@@ -321,6 +365,14 @@ mod imp {
                 if quit {
                     break;
                 }
+                // UI-thread starvation detector: this loop should run every
+                // ~8 ms. A long gap means something blocked the UI thread.
+                let gap = last_tick.elapsed();
+                last_tick = Instant::now();
+                if gap > Duration::from_millis(250) {
+                    warn!("UI thread stalled for {} ms", gap.as_millis());
+                }
+                ticks = ticks.wrapping_add(1);
                 if let Some(on) = peek_flag.take() {
                     motion_state.set_peek(on);
                 }
@@ -334,7 +386,8 @@ mod imp {
 
     struct CompositorLoop {
         motion: os_session::motion_bridge::MotionBridge,
-        _keyboard_hook: GlobalKeyboardHook,
+        _keyboard_hook: Option<GlobalKeyboardHook>,
+        safe: bool,
         hotkey_rx: crossbeam_channel::Receiver<HotkeyAction>,
         _win_event_listener: WinEventListener,
         win_event_rx: crossbeam_channel::Receiver<os_compositor::hooks::WindowEvent>,
@@ -363,7 +416,8 @@ mod imp {
                     None
                 }
             };
-            let mut border_overlay = gpu.as_ref().and_then(|g| {
+            let safe = self.safe;
+            let mut border_overlay = gpu.as_ref().filter(|_| !safe).and_then(|g| {
                 let hwnd = create_border_overlay_window().ok()?;
                 let spring_cfg =
                     WindowManager::to_spring_config(&self.config_arc.read().compositor.spring);
@@ -381,6 +435,7 @@ mod imp {
                 let frame_start = Instant::now();
 
                 os_core::heartbeat::pulse();
+                nx_shell::capture::bloom_watchdog();
                 if pump_messages() {
                     self.fail_safe_restore_and_quit(&ui_tx);
                     return;
@@ -404,6 +459,9 @@ mod imp {
                             self.governor.on_process_exit(hwnd.pid());
                         }
                         _ => {}
+                    }
+                    if self.safe {
+                        continue;
                     }
                     let floating = self.compositor_config.read().layout == "floating";
                     for msg in self.motion.on_window_event(&event, floating) {
@@ -457,7 +515,7 @@ mod imp {
                     self.wm.write().retile_workspace(active_ws);
                 }
 
-                for msg in self.motion.tick() {
+                for msg in self.motion.tick().into_iter().filter(|_| !self.safe) {
                     let _ = ui_tx.send(SessionUiEvent::Motion(msg));
                 }
 
@@ -482,6 +540,7 @@ mod imp {
 
         fn fail_safe_restore_and_quit(&self, ui_tx: &crossbeam_channel::Sender<SessionUiEvent>) {
             warn!("Emergency fail-safe triggered");
+            nx_shell::capture::lift_all_hides();
             info!("Restoring the journaled session and exiting");
             self.wm.write().restore_all_on_exit();
             let _ = ui_tx.send(SessionUiEvent::FailSafeQuit);

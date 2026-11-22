@@ -1,5 +1,6 @@
 //! Session library: product startup orchestration for Nexus-OS.
 
+pub mod diag;
 #[cfg(windows)]
 pub mod motion_bridge;
 pub mod motion_plan;

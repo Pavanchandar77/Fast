@@ -4546,6 +4546,7 @@ dependencies = [
  "proptest",
  "raw-window-handle",
  "thiserror 1.0.69",
+ "tracing",
  "windows 0.58.0",
 ]
 

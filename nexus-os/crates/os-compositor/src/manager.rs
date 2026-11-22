@@ -130,6 +130,11 @@ impl WindowManager {
         if !hwnd.is_manageable() {
             return;
         }
+        // Nexus's own windows (Files, Privacy) float macOS-style; tiling them
+        // pushed them over the island and dock.
+        if hwnd.pid() == std::process::id() {
+            return;
+        }
 
         if self.windows.contains_key(&hwnd) {
             return;
@@ -209,6 +214,9 @@ impl WindowManager {
     }
 
     pub fn set_foreground(&mut self, hwnd: WindowHandle) {
+        if hwnd.pid() == std::process::id() {
+            return;
+        }
         if !self.windows.contains_key(&hwnd) && hwnd.is_manageable() {
             self.register_window(hwnd);
         }

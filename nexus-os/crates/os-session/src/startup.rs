@@ -298,6 +298,27 @@ pub struct GpuiSessionWindows {
     pub island_rect: Rect,
 }
 
+impl GpuiSessionWindows {
+    /// One-line summary for the startup log.
+    pub fn describe(&self) -> String {
+        let yn = |b: bool| if b { "ok" } else { "MISSING" };
+        format!(
+            "island={} dock={} spotlight={} expose={} explorer={} privacy={} motion_overlay={}",
+            yn(self.island_window.is_some()),
+            yn(self.dock_window.is_some()),
+            yn(self.spotlight_window.is_some()),
+            yn(self.expose_window.is_some()),
+            yn(self.explorer_window.is_some()),
+            yn(self.privacy_dashboard_window.is_some()),
+            if crate::diag::safe_mode() {
+                "off(safe)"
+            } else {
+                yn(self.motion_window.is_some())
+            },
+        )
+    }
+}
+
 /// Open all user-facing GPUI windows adhering to macOS design tokens, Mica/Acrylic backdrops,
 /// and SF typography.
 pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> GpuiSessionWindows {
@@ -378,6 +399,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 ),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    native_chrome(window, "island");
                     #[cfg(windows)]
                     nx_shell::capture::raise_topmost(window);
                     cx.new(|cx| IslandView::new(island_model, cx))
@@ -411,6 +433,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 ),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    native_chrome(window, "dock");
                     #[cfg(windows)]
                     nx_shell::capture::raise_topmost(window);
                     cx.new(|_cx| DockView::new(dock_model))
@@ -434,6 +457,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         windows.spotlight_window = cx
             .open_window(spotlight_opts, move |window, cx| {
                 apply_rounded_native_corners(window);
+                native_chrome(window, "spotlight");
                 // Linux ignores WindowOptions.show; park minimized until toggled.
                 hide_auxiliary_window(window);
                 cx.new(|_cx| SpotlightView::new(spotlight_model))
@@ -454,6 +478,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         windows.expose_window = cx
             .open_window(expose_opts, move |window, cx| {
                 apply_rounded_native_corners(window);
+                native_chrome(window, "mission-control");
                 hide_auxiliary_window(window);
                 cx.new(|_cx| MissionControlView::new(expose_model))
             })
@@ -469,6 +494,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 }),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    native_chrome(window, "files");
                     cx.new(|_cx| ExplorerView::new(explorer.window))
                 },
             )
@@ -485,6 +511,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 }),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    native_chrome(window, "privacy");
                     cx.new(|_cx| PrivacyDashboardView::new(dash_vm))
                 },
             )
@@ -505,21 +532,28 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         false,
     );
     motion_opts.focus = false;
-    windows.motion_window = cx
-        .open_window(motion_opts, move |window, cx| {
-            #[cfg(windows)]
-            {
-                nx_shell::capture::set_overlay_visible(window, false);
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                if let Ok(handle) = HasWindowHandle::window_handle(window) {
-                    if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                        nx_shell::capture::keep_overlay_hidden(win32.hwnd.get());
+    if crate::diag::safe_mode() {
+        warn!("safe mode: motion overlay not created");
+    } else {
+        windows.motion_window = cx
+            .open_window(motion_opts, move |window, cx| {
+                #[cfg(windows)]
+                {
+                    nx_shell::capture::set_overlay_visible(window, false);
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = HasWindowHandle::window_handle(window) {
+                        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                            nx_shell::capture::keep_overlay_hidden(win32.hwnd.get());
+                        }
                     }
                 }
-            }
-            cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
-        })
-        .ok();
+                cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
+            })
+            .ok();
+    }
+    if windows.island_window.is_none() {
+        error!("island window failed to open");
+    }
 
     install_shell_launch(&windows, cx);
     install_island_hooks(&windows, cx);
@@ -623,7 +657,8 @@ pub fn with_motion(
     f: impl FnOnce(&mut MotionOverlayView),
 ) {
     if let Some(handle) = windows.motion_window {
-        let _ = handle.update(cx, |view, _window, cx| {
+        let _ = handle.update(cx, |view, window, cx| {
+            view.sync_window(window);
             f(view);
             cx.notify();
         });
@@ -685,6 +720,93 @@ pub fn toggle_gpui_spotlight(
             open
         })
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn window_hwnd(window: &gpui::Window) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+        _ => None,
+    }
+}
+
+/// Make the whole window client area and log its handle.
+///
+/// `present_client_window` (nx-ui) already drops the caption, the accent
+/// border and DWM rounding. GPUI's own `WM_NCCALCSIZE` still reserves an
+/// invisible resize frame (8 px left/right/bottom, 1 px top) whose hit-test
+/// codes swallow clicks near the edges; this subclass returns the full rect
+/// as client and maps resize/border hit codes to `HTCLIENT`.
+fn native_chrome(window: &mut gpui::Window, name: &str) {
+    #[cfg(windows)]
+    {
+        match window_hwnd(window) {
+            Some(raw) => {
+                win_chrome::subclass_client_only(raw);
+                info!("window '{name}' created hwnd={raw:#x}");
+            }
+            None => warn!("window '{name}': no Win32 handle"),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, name);
+    }
+}
+
+#[cfg(windows)]
+mod win_chrome {
+    use windows::Win32::Foundation::HWND;
+
+    const SUBCLASS_ID: usize = 0x4E58_4253; // "NXBS"
+
+    /// Install the client-only subclass. Styles and DWM attributes stay as
+    /// `present_client_window` set them.
+    pub fn subclass_client_only(raw: isize) {
+        use windows::Win32::UI::Shell::SetWindowSubclass;
+        unsafe {
+            let _ = SetWindowSubclass(
+                HWND(raw as *mut std::ffi::c_void),
+                Some(client_only_proc),
+                SUBCLASS_ID,
+                0,
+            );
+        }
+    }
+
+    unsafe extern "system" fn client_only_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: windows::Win32::Foundation::WPARAM,
+        lparam: windows::Win32::Foundation::LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> windows::Win32::Foundation::LRESULT {
+        use windows::Win32::Foundation::LRESULT;
+        use windows::Win32::UI::Shell::DefSubclassProc;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            HTBORDER, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTRIGHT, HTTOP,
+            HTTOPLEFT, HTTOPRIGHT, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT,
+        };
+        match msg {
+            WM_NCCALCSIZE if wparam.0 != 0 => LRESULT(0),
+            WM_NCHITTEST => {
+                // Resize/border codes become client; caption and window
+                // buttons (from GPUI drag areas) pass through unchanged.
+                let hit = DefSubclassProc(hwnd, msg, wparam, lparam);
+                match hit.0 as u32 {
+                    HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT
+                    | HTBOTTOMRIGHT | HTBORDER => LRESULT(HTCLIENT as isize),
+                    _ => hit,
+                }
+            }
+            // TRUE keeps the activation change; nothing is painted.
+            WM_NCACTIVATE => LRESULT(1),
+            WM_NCPAINT => LRESULT(0),
+            _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+        }
+    }
 }
 
 fn apply_rounded_native_corners(window: &mut gpui::Window) {

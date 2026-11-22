@@ -17,9 +17,7 @@ use nx_ui::Rect;
 use os_compositor::hooks::WindowEvent;
 use os_core::window::WindowHandle;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, SetForegroundWindow,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetForegroundWindow};
 
 use crate::motion_plan::{LifeEvent, MotionPlanner, Plan};
 use crate::startup::{motion_anchor, with_motion, GpuiSessionWindows};
@@ -320,6 +318,12 @@ impl MotionBridge {
             WindowEvent::MoveSizeEnd(h) => (LifeEvent::DragEnd(key_of(h)), h),
             _ => return Vec::new(),
         };
+        // Nexus's own GPUI windows animate themselves; never snapshot, hide
+        // or bloom them (v0.1.0 left them layered at alpha 0, which made
+        // them ignore every click).
+        if capture::is_own_window(key_of(h) as isize) {
+            return Vec::new();
+        }
         let key = key_of(h);
         let echo = matches!(
             ev,
@@ -493,7 +497,7 @@ impl UiMotionState {
             self.peek_hides = self
                 .peek_others
                 .iter()
-                .filter_map(|k| BloomHide::new(*k as isize))
+                .filter_map(|k| BloomHide::with_ttl(*k as isize, Duration::from_secs(30)))
                 .collect();
         } else {
             self.peek_hides.clear();
