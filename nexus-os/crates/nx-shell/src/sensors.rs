@@ -21,6 +21,8 @@ pub enum SensorEvent {
         cam: bool,
     },
     MediaIdle,
+    /// An app is reading your location right now (None when it stops).
+    LocationInUse(Option<String>),
     CapsLock(bool),
     Layout(String),
     DriveAdded(String),
@@ -79,6 +81,7 @@ pub struct NowPlaying {
 pub struct Sensors {
     net_prev: Option<(u64, u64, Instant)>,
     media: Option<(String, bool, bool)>,
+    location: Option<String>,
     caps: Option<bool>,
     layout: Option<String>,
     drives: Option<BTreeSet<String>>,
@@ -106,6 +109,7 @@ impl Sensors {
         Self {
             net_prev: None,
             media: None,
+            location: None,
             caps: None,
             layout: None,
             drives: None,
@@ -176,6 +180,11 @@ impl Sensors {
                 });
             }
             self.net_prev = Some((rx, tx, now));
+        }
+        let location = timed("location_in_use", 150, platform::location_in_use);
+        if location != self.location {
+            out.push(SensorEvent::LocationInUse(location.clone()));
+            self.location = location;
         }
         let media = timed("media_in_use", 150, platform::media_in_use);
         if media != self.media {
@@ -591,6 +600,9 @@ mod platform {
         }
         Some((rx, tx))
     }
+    pub fn location_in_use() -> Option<String> {
+        None
+    }
     pub fn media_in_use() -> Option<(String, bool, bool)> {
         None
     }
@@ -874,6 +886,10 @@ mod platform {
         scan(&base, false);
         scan(&format!(r"{base}\NonPackaged"), true);
         apps
+    }
+
+    pub fn location_in_use() -> Option<String> {
+        active_apps("location").first().map(|a| pretty_app(a))
     }
 
     pub fn media_in_use() -> Option<(String, bool, bool)> {

@@ -131,6 +131,7 @@ pub struct IslandView {
     lyrics: (String, Vec<(f32, String)>),
     bluetooth: Vec<(String, Option<u8>)>,
     media_in_use: Option<(String, bool, bool)>,
+    location_in_use: Option<String>,
     clip: Vec<String>,
     clip_last: Option<String>,
     detector: Option<SensitivePatternDetector>,
@@ -177,6 +178,7 @@ impl IslandView {
             lyrics: (String::new(), Vec::new()),
             bluetooth: Vec::new(),
             media_in_use: None,
+            location_in_use: None,
             clip: Vec::new(),
             clip_last: None,
             detector: None,
@@ -569,6 +571,20 @@ impl IslandView {
                     None,
                     3.0,
                 );
+            }
+            SensorEvent::LocationInUse(app) => {
+                if let Some(app) = &app {
+                    self.notify_live(
+                        LiveKind::Toast {
+                            glyph: "➤",
+                            title: "LOCATION IN USE".into(),
+                            body: app.to_uppercase(),
+                        },
+                        Some(2.4),
+                        2.0,
+                    );
+                }
+                self.location_in_use = app;
             }
             SensorEvent::MediaIdle => {
                 self.media_in_use = None;
@@ -1185,10 +1201,21 @@ impl IslandView {
             .as_ref()
             .map(|(_, m, c)| (*m, *c))
             .unwrap_or((false, false));
+        let location = self.location_in_use.is_some();
         div()
             .flex()
             .flex_row()
+            .items_center()
             .gap(px(4.0))
+            .when(location, |d| {
+                d.child(
+                    div()
+                        .text_size(px(8.0))
+                        .text_color(WHITE)
+                        .line_height(px(8.0))
+                        .child("➤"),
+                )
+            })
             .when(cam, |d| {
                 d.child(div().size(px(7.0)).rounded_full().bg(WHITE))
             })
