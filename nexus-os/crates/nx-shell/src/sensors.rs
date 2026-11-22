@@ -31,6 +31,13 @@ pub enum SensorEvent {
         muted: bool,
     },
     Fullscreen(bool),
+    /// Display brightness 0..1 (laptop panels; hardware keys included).
+    Brightness(f32),
+    /// System drive usage in bytes.
+    Disk {
+        used: u64,
+        total: u64,
+    },
     WindowsBuild {
         version: String,
         previous: Option<String>,
@@ -79,6 +86,13 @@ pub struct Sensors {
     volume: Option<(i32, bool)>,
     fullscreen: Option<bool>,
     build_checked: Option<Instant>,
+    brightness: Option<u8>,
+    disk_checked: Option<Instant>,
+    #[cfg(windows)]
+    wmi: Option<platform::Wmi>,
+    #[cfg(windows)]
+    wmi_tried: bool,
+    first_poll_logged: bool,
 }
 
 impl Default for Sensors {
@@ -99,7 +113,54 @@ impl Sensors {
             volume: None,
             fullscreen: None,
             build_checked: None,
+            brightness: None,
+            disk_checked: None,
+            #[cfg(windows)]
+            wmi: None,
+            #[cfg(windows)]
+            wmi_tried: false,
+            first_poll_logged: false,
         }
+    }
+
+    /// Hardware-key-fast readings (brightness, volume): run several times a
+    /// second on the sensor thread.
+    pub fn poll_quick(&mut self) -> Vec<SensorEvent> {
+        let mut out = Vec::new();
+        if let Some(b) = timed("brightness", 150, || self.read_brightness()) {
+            if self.brightness != Some(b) {
+                out.push(SensorEvent::Brightness(b as f32 / 100.0));
+            }
+            self.brightness = Some(b);
+        }
+        if let Some((v, m)) = timed("volume", 150, nx_assistant::exec::read_system_volume) {
+            let key = ((v * 100.0).round() as i32, m);
+            if self.volume.is_some_and(|p| p != key) {
+                out.push(SensorEvent::SystemVolume { level: v, muted: m });
+            }
+            self.volume = Some(key);
+        }
+        out
+    }
+
+    #[cfg(windows)]
+    fn read_brightness(&mut self) -> Option<u8> {
+        if self.wmi.is_none() && !self.wmi_tried {
+            self.wmi_tried = true;
+            self.wmi = platform::Wmi::connect();
+            tracing::info!("WMI (root\\WMI) connected: {}", self.wmi.is_some());
+        }
+        let b = self.wmi.as_ref()?.brightness();
+        if b.is_none() {
+            // Desktop monitors expose no WmiMonitorBrightness; stop asking.
+            self.wmi = None;
+        }
+        b
+    }
+
+    #[cfg(not(windows))]
+    fn read_brightness(&mut self) -> Option<u8> {
+        None
     }
 
     /// Poll fast sensors; only changes are reported (plus the net rate).
@@ -116,7 +177,7 @@ impl Sensors {
             }
             self.net_prev = Some((rx, tx, now));
         }
-        let media = platform::media_in_use();
+        let media = timed("media_in_use", 150, platform::media_in_use);
         if media != self.media {
             out.push(match &media {
                 Some((app, mic, cam)) => SensorEvent::MediaInUse {
@@ -140,7 +201,7 @@ impl Sensors {
             }
             self.layout = Some(l);
         }
-        let drives = platform::removable_drives();
+        let drives = timed("removable_drives", 150, platform::removable_drives);
         if let Some(prev) = &self.drives {
             for d in drives.difference(prev) {
                 out.push(SensorEvent::DriveAdded(d.clone()));
@@ -158,12 +219,14 @@ impl Sensors {
                 self.shot_seen = Some(t);
             }
         }
-        if let Some((v, m)) = nx_assistant::exec::read_system_volume() {
-            let key = ((v * 100.0).round() as i32, m);
-            if self.volume.is_some_and(|p| p != key) {
-                out.push(SensorEvent::SystemVolume { level: v, muted: m });
+        if self
+            .disk_checked
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(15))
+        {
+            self.disk_checked = Some(Instant::now());
+            if let Some((used, total)) = timed("disk", 200, disk_usage) {
+                out.push(SensorEvent::Disk { used, total });
             }
-            self.volume = Some(key);
         }
         if let Some(fs) = platform::fullscreen_active() {
             if self.fullscreen != Some(fs) {
@@ -176,12 +239,67 @@ impl Sensors {
             .is_none_or(|t| t.elapsed() > Duration::from_secs(300))
         {
             self.build_checked = Some(Instant::now());
-            if let Some(ev) = windows_build_status() {
+            if let Some(ev) = timed("windows_build_status", 500, windows_build_status) {
                 out.push(ev);
             }
         }
+        if !self.first_poll_logged {
+            self.first_poll_logged = true;
+            tracing::info!("first sensor poll: {out:?}");
+        }
         out
     }
+}
+
+/// Run `f`, logging it when it takes `warn_ms` or longer.
+pub fn timed<T>(what: &str, warn_ms: u128, f: impl FnOnce() -> T) -> T {
+    let t = Instant::now();
+    let out = f();
+    let ms = t.elapsed().as_millis();
+    if ms >= warn_ms {
+        tracing::warn!("slow sensor: {what} took {ms} ms");
+    }
+    out
+}
+
+/// Used/total bytes of the system drive (C:\ on Windows, / elsewhere).
+pub fn disk_usage() -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        platform::disk_usage()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Fast sensors on their own thread. Nothing here may run on the UI
+/// thread: v0.1.0 polled registry, COM and the Windows build probes from
+/// the island's 1 Hz UI tick, so the UI stalled and a hardware brightness
+/// change showed up tens of seconds late.
+pub fn spawn_fast() -> Receiver<SensorEvent> {
+    let (tx, rx) = channel();
+    let _ = std::thread::Builder::new()
+        .name("nexus-sensors".into())
+        .spawn(move || {
+            let mut sensors = Sensors::new();
+            let mut n: u64 = 0;
+            loop {
+                let mut evs = sensors.poll_quick();
+                if n.is_multiple_of(4) {
+                    evs.extend(sensors.poll());
+                }
+                n = n.wrapping_add(1);
+                for ev in evs {
+                    if tx.send(ev).is_err() {
+                        return;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        });
+    rx
 }
 
 /// Windows build + update state from nx-compat. Reports on first poll and on
@@ -539,6 +657,115 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
+    /// Cached WMI connection to `root\\WMI` (one per sensor thread).
+    pub struct Wmi {
+        svc: windows::Win32::System::Wmi::IWbemServices,
+    }
+
+    impl Wmi {
+        pub fn connect() -> Option<Self> {
+            use windows::core::BSTR;
+            use windows::Win32::System::Com::{
+                CoCreateInstance, CoInitializeEx, CoInitializeSecurity, CoSetProxyBlanket,
+                CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL,
+                RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE,
+            };
+            use windows::Win32::System::Rpc::{RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE};
+            use windows::Win32::System::Wmi::{IWbemLocator, WbemLocator};
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                // Fails harmlessly if the process already set security.
+                let _ = CoInitializeSecurity(
+                    None,
+                    -1,
+                    None,
+                    None,
+                    RPC_C_AUTHN_LEVEL_DEFAULT,
+                    RPC_C_IMP_LEVEL_IMPERSONATE,
+                    None,
+                    EOAC_NONE,
+                    None,
+                );
+                let loc: IWbemLocator =
+                    CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).ok()?;
+                let svc = loc
+                    .ConnectServer(
+                        &BSTR::from("ROOT\\WMI"),
+                        &BSTR::new(),
+                        &BSTR::new(),
+                        &BSTR::new(),
+                        0,
+                        &BSTR::new(),
+                        None,
+                    )
+                    .ok()?;
+                let _ = CoSetProxyBlanket(
+                    &svc,
+                    RPC_C_AUTHN_WINNT,
+                    RPC_C_AUTHZ_NONE,
+                    None,
+                    RPC_C_AUTHN_LEVEL_CALL,
+                    RPC_C_IMP_LEVEL_IMPERSONATE,
+                    None,
+                    EOAC_NONE,
+                );
+                Some(Self { svc })
+            }
+        }
+
+        /// `WmiMonitorBrightness.CurrentBrightness` (0..100) of the active panel.
+        pub fn brightness(&self) -> Option<u8> {
+            use windows::core::{w, BSTR, VARIANT};
+            use windows::Win32::System::Wmi::{
+                WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY,
+            };
+            unsafe {
+                let en = self
+                    .svc
+                    .ExecQuery(
+                        &BSTR::from("WQL"),
+                        &BSTR::from("SELECT CurrentBrightness FROM WmiMonitorBrightness"),
+                        WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+                        None,
+                    )
+                    .ok()?;
+                let mut row: [Option<windows::Win32::System::Wmi::IWbemClassObject>; 1] = [None];
+                let mut got = 0u32;
+                let _ = en.Next(2000, &mut row, &mut got);
+                if got == 0 {
+                    return None;
+                }
+                let obj = row[0].take()?;
+                let mut v = VARIANT::default();
+                obj.Get(w!("CurrentBrightness"), 0, &mut v, None, None)
+                    .ok()?;
+                let b = u32::try_from(&v).ok()?;
+                Some(b.min(100) as u8)
+            }
+        }
+    }
+
+    /// Used/total bytes of the system drive.
+    pub fn disk_usage() -> Option<(u64, u64)> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let root = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()) + "\\";
+        let wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut avail = 0u64;
+        let mut total = 0u64;
+        let mut free = 0u64;
+        unsafe {
+            GetDiskFreeSpaceExW(
+                PCWSTR(wide.as_ptr()),
+                Some(&mut avail),
+                Some(&mut total),
+                Some(&mut free),
+            )
+            .ok()?;
+        }
+        (total > 0).then(|| (total.saturating_sub(free), total))
+    }
+
     use super::*;
     use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Foundation::{ERROR_SUCCESS, HWND, RECT};
@@ -890,16 +1117,23 @@ mod platform {
         })
     }
 
+    /// Fire-and-forget on a worker thread: the WinRT session lookup and
+    /// `.get()` block, and this is called from a click on the UI thread.
     pub fn media_command(cmd: MediaCmd) -> bool {
-        let Some(s) = session() else {
-            return false;
-        };
-        let op = match cmd {
-            MediaCmd::PlayPause => s.TryTogglePlayPauseAsync(),
-            MediaCmd::Next => s.TrySkipNextAsync(),
-            MediaCmd::Previous => s.TrySkipPreviousAsync(),
-        };
-        op.ok().and_then(|o| o.get().ok()).unwrap_or(false)
+        let _ = std::thread::Builder::new()
+            .name("nexus-media-cmd".into())
+            .spawn(move || {
+                let Some(s) = session() else {
+                    return;
+                };
+                let op = match cmd {
+                    MediaCmd::PlayPause => s.TryTogglePlayPauseAsync(),
+                    MediaCmd::Next => s.TrySkipNextAsync(),
+                    MediaCmd::Previous => s.TrySkipPreviousAsync(),
+                };
+                let _ = op.ok().and_then(|o| o.get().ok());
+            });
+        true
     }
 
     pub fn local_offset_secs() -> i64 {

@@ -28,7 +28,7 @@ use nx_ui::{glyph_icon, GlyphIcon};
 
 use crate::island::{BatteryAlert, IslandModel, IslandShape, ISLAND_WIDTH};
 use crate::live::{fmt_clock, fmt_rate, HudKind, LiveKind, LiveState, Spring1};
-use crate::sensors::{self, MediaCmd, NowPlaying, SensorEvent, Sensors, SlowEvent};
+use crate::sensors::{self, MediaCmd, NowPlaying, SensorEvent, SlowEvent};
 
 fn theme_of(cx: &App) -> Theme {
     if cx.has_global::<Theme>() {
@@ -120,7 +120,7 @@ pub struct IslandView {
     assistant: Option<Assistant>,
     ai: AssistantUi,
     network: Arc<AtomicBool>,
-    sensors: Option<Sensors>,
+    sensors: Option<std::sync::mpsc::Receiver<SensorEvent>>,
     slow_rx: Option<Receiver<SlowEvent>>,
     media_rx: Option<Receiver<SlowEvent>>,
     net_rate: (f64, f64),
@@ -141,6 +141,8 @@ pub struct IslandView {
     last_applied: u8,
     /// Simulated battery (preview/demo) that host sampling must not clobber.
     battery_override: Option<(u8, bool)>,
+    /// A host brightness reading arrived (later changes show the HUD).
+    host_brightness_seen: bool,
     charge_step: i64,
 }
 
@@ -184,6 +186,7 @@ impl IslandView {
             dragging: None,
             last_applied: 255,
             battery_override: None,
+            host_brightness_seen: false,
             charge_step: 0,
         }
     }
@@ -450,6 +453,21 @@ impl IslandView {
         true
     }
 
+    /// Apply readings from the sensor thread. Cheap; runs every frame so a
+    /// hardware brightness or volume key shows within a few frames.
+    fn drain_sensors(&mut self) -> bool {
+        let events: Vec<SensorEvent> = self
+            .sensors
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        let any = !events.is_empty();
+        for ev in events {
+            self.sensor_event(ev);
+        }
+        any
+    }
+
     fn slow_tick(&mut self, cx: &mut Context<Self>) {
         let now = self.now();
         self.model.tick();
@@ -464,15 +482,12 @@ impl IslandView {
             self.battery_alert(alert);
         }
         if self.sensors.is_none() {
-            self.sensors = Some(Sensors::new());
+            self.sensors = Some(sensors::spawn_fast());
             self.slow_rx = Some(sensors::spawn_slow(self.network.clone()));
             self.media_rx = Some(sensors::spawn_media(self.network.clone()));
             self.detector = Some(SensitivePatternDetector::new());
         }
-        let events = self.sensors.as_mut().map(|s| s.poll()).unwrap_or_default();
-        for ev in events {
-            self.sensor_event(ev);
-        }
+        self.drain_sensors();
         let slow: Vec<SlowEvent> = self
             .slow_rx
             .iter()
@@ -605,6 +620,19 @@ impl IslandView {
                 self.hud(HudKind::Volume);
             }
             SensorEvent::Fullscreen(on) => self.model.set_fullscreen(on),
+            SensorEvent::Brightness(level) => {
+                let first = self.host_brightness_seen;
+                self.host_brightness_seen = true;
+                self.model.brightness = level;
+                if first {
+                    self.hud(HudKind::Brightness);
+                }
+            }
+            SensorEvent::Disk { used, total } => {
+                if total > 0 {
+                    self.model.disk = (used as f32 / total as f32).clamp(0.0, 1.0);
+                }
+            }
             SensorEvent::WindowsBuild {
                 version,
                 previous,
@@ -721,6 +749,7 @@ impl IslandView {
             changed = true;
         }
         changed |= self.drain_assistant(cx);
+        changed |= self.drain_sensors();
         if self.model.charging && self.model.battery_pct.is_some() {
             let step = (now * 3.0) as i64;
             if step != self.charge_step {
