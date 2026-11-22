@@ -34,6 +34,8 @@ pub fn format_bytes(bytes: u64) -> String {
 /// Helper representing an individual item snapshot for rendering.
 #[derive(Clone, Debug)]
 pub struct FileRowSnapshot {
+    /// Row index in the pane (stable under the filter).
+    pub row: usize,
     pub name: String,
     pub is_dir: bool,
     pub size_formatted: String,
@@ -43,11 +45,107 @@ pub struct FileRowSnapshot {
 /// GPUI View for the complete Finder-grade File Explorer.
 pub struct ExplorerView {
     pub window: ExplorerWindow,
+    /// Type-to-filter text for the current folder.
+    pub filter: String,
+    pub filtering: bool,
+    /// Icon grid instead of the list.
+    pub grid: bool,
+    focus: Option<gpui::FocusHandle>,
 }
 
 impl ExplorerView {
     pub fn new(window: ExplorerWindow) -> Self {
-        Self { window }
+        Self {
+            window,
+            filter: String::new(),
+            filtering: false,
+            grid: false,
+            focus: None,
+        }
+    }
+
+    /// Rows of the current pane that pass the filter, as (row, name).
+    fn visible_rows(&self) -> Vec<usize> {
+        let Some(pane) = self.window.explorer.tab().and_then(|t| t.pane()) else {
+            return Vec::new();
+        };
+        let needle = self.filter.to_lowercase();
+        (0..pane.len())
+            .filter(|i| {
+                needle.is_empty()
+                    || pane
+                        .row(*i)
+                        .is_some_and(|e| e.display_name.to_lowercase().contains(&needle))
+            })
+            .collect()
+    }
+
+    /// Arrow keys: move the selection within the visible rows.
+    fn move_selection(&mut self, delta: i32) {
+        let rows = self.visible_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let pane = self.window.explorer.tab().and_then(|t| t.pane());
+        let cur = pane.and_then(|p| rows.iter().position(|r| p.is_selected(*r)));
+        let next = match cur {
+            None => 0,
+            Some(c) => (c as i32 + delta).clamp(0, rows.len() as i32 - 1) as usize,
+        };
+        self.dispatch(Action::ClickRow {
+            row: rows[next],
+            ctrl: false,
+            shift: false,
+        });
+    }
+
+    /// Keyboard: arrows/Enter/Backspace navigate, typing filters (Ctrl+F
+    /// or the search field), Esc clears, Alt+Left/Right go back/forward.
+    fn on_key(&mut self, ev: &gpui::KeyDownEvent) {
+        let k = ev.keystroke.key.as_str();
+        let m = ev.keystroke.modifiers;
+        if m.alt && matches!(k, "left" | "arrowleft") {
+            self.dispatch(Action::GoBack);
+            return;
+        }
+        if m.alt && matches!(k, "right" | "arrowright") {
+            self.dispatch(Action::GoForward);
+            return;
+        }
+        if (m.control || m.platform) && k == "f" {
+            self.filtering = true;
+            return;
+        }
+        if m.control || m.alt || m.platform {
+            return;
+        }
+        let step = if self.grid { 4 } else { 1 };
+        match k {
+            "up" | "arrowup" => self.move_selection(-step),
+            "down" | "arrowdown" => self.move_selection(step),
+            "left" | "arrowleft" if self.grid => self.move_selection(-1),
+            "right" | "arrowright" if self.grid => self.move_selection(1),
+            "enter" | "return" => self.dispatch(Action::OpenSelection),
+            "escape" => {
+                self.filter.clear();
+                self.filtering = false;
+            }
+            "backspace" => {
+                if self.filtering && !self.filter.is_empty() {
+                    self.filter.pop();
+                } else if !self.filtering {
+                    self.dispatch(Action::GoUp);
+                }
+            }
+            _ => {
+                if let Some(text) = ev.keystroke.key_char.as_ref() {
+                    if !text.chars().any(|c| c.is_control()) && self.filter.len() < 128 {
+                        self.filtering = true;
+                        self.filter.push_str(text);
+                    }
+                }
+            }
+        }
     }
 
     /// Run an explorer action and carry out what it asks for: directory
@@ -59,6 +157,8 @@ impl ExplorerView {
 
     /// Show `path` (a folder, or a file's folder).
     pub fn navigate_to(&mut self, path: PathBuf) {
+        self.filter.clear();
+        self.filtering = false;
         let dir = if path.is_dir() {
             path
         } else {
@@ -128,6 +228,8 @@ fn sidebar_item(
         .when(!selected, |d| d.hover(|s| s.bg(theme.hover_hsla())))
         .cursor_pointer()
         .on_click(cx.listener(move |this, _, _, cx| {
+            this.filter.clear();
+            this.filtering = false;
             this.dispatch(Action::Navigate(path.clone()));
             cx.notify();
         }))
@@ -135,7 +237,15 @@ fn sidebar_item(
 }
 
 impl Render for ExplorerView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        if !focus.is_focused(window) && window.is_window_active() {
+            window.focus(&focus);
+        }
+        let visible: std::collections::HashSet<usize> = self.visible_rows().into_iter().collect();
+        let filter_text = self.filter.clone();
+        let filtering = self.filtering;
+        let grid = self.grid;
         let theme = if cx.has_global::<Theme>() {
             *cx.global::<Theme>()
         } else {
@@ -153,8 +263,12 @@ impl Render for ExplorerView {
                 let count = pane.len();
                 let mut items = Vec::with_capacity(count.min(100_000));
                 for i in 0..count {
+                    if !visible.contains(&i) {
+                        continue;
+                    }
                     if let Some(entry) = pane.row(i) {
                         items.push(FileRowSnapshot {
+                            row: i,
                             name: entry.display_name.clone(),
                             is_dir: entry.is_folder(),
                             size_formatted: if entry.is_folder() {
@@ -186,10 +300,74 @@ impl Render for ExplorerView {
         let total_items = items_snapshot.len();
         let selected_count = items_snapshot.iter().filter(|i| i.is_selected).count();
         let items_rc = std::rc::Rc::new(items_snapshot);
+        let grid_el = grid.then(|| {
+            div()
+                .id("explorer-file-grid")
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .content_start()
+                .gap(px(6.0))
+                .p(px(12.0))
+                .flex_1()
+                .w_full()
+                .overflow_y_scroll()
+                .children(items_rc.iter().map(|item| {
+                    let row = item.row;
+                    let glyph = if item.is_dir {
+                        nx_ui::GlyphIcon::Folder
+                    } else {
+                        nx_ui::GlyphIcon::Tray
+                    };
+                    div()
+                        .id(("file-tile", row))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(6.0))
+                        .w(px(96.0))
+                        .h(px(84.0))
+                        .p(px(6.0))
+                        .rounded(px(theme.radii.sm))
+                        .when(item.is_selected, |d| d.bg(theme.selection_hsla()))
+                        .hover(|s| s.bg(theme.hover_hsla()))
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                                this.dispatch(Action::ClickRow {
+                                    row,
+                                    ctrl: ev.modifiers.control || ev.modifiers.platform,
+                                    shift: ev.modifiers.shift,
+                                });
+                                if ev.click_count >= 2 {
+                                    this.dispatch(Action::OpenSelection);
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        .child(nx_ui::glyph_icon(glyph, theme.text_primary_hsla(), 34.0))
+                        .child(
+                            div()
+                                .w_full()
+                                .text_size(px(11.5))
+                                .text_center()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .child(item.name.clone()),
+                        )
+                }))
+        });
 
         rounded_window_frame(
             &theme,
             div()
+                .track_focus(&focus)
+                .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
+                    this.on_key(ev);
+                    cx.notify();
+                }))
                 .flex()
                 .flex_col()
                 .w_full()
@@ -302,27 +480,87 @@ impl Render for ExplorerView {
                                 .gap(px(10.0))
                                 .child(
                                     div()
-                                        .px(px(12.0))
+                                        .id("files-search")
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .w(px(180.0))
+                                        .px(px(10.0))
                                         .py(px(4.0))
                                         .rounded(px(theme.radii.xs))
                                         .bg(Hsla::from(theme.palette.fill))
-                                        .text_color(theme.text_secondary_hsla())
-                                        .child("SEARCH"),
+                                        .when(filtering, |d| {
+                                            d.border_1().border_color(theme.text_secondary_hsla())
+                                        })
+                                        .cursor_text()
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.filtering = true;
+                                            cx.notify();
+                                        }))
+                                        .child(nx_ui::glyph_icon(
+                                            nx_ui::GlyphIcon::Search,
+                                            theme.text_secondary_hsla(),
+                                            12.0,
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .overflow_hidden()
+                                                .text_color(if filter_text.is_empty() {
+                                                    theme.text_tertiary_hsla()
+                                                } else {
+                                                    theme.text_primary_hsla()
+                                                })
+                                                .child(if filter_text.is_empty() {
+                                                    "Search".to_string()
+                                                } else {
+                                                    filter_text.clone()
+                                                }),
+                                        ),
                                 )
                                 .child(
                                     div()
                                         .flex()
+                                        .mr(px(14.0))
                                         .rounded(px(theme.radii.xs))
                                         .border_1()
                                         .border_color(Hsla::from(theme.palette.separator))
                                         .child(
                                             div()
+                                                .id("files-view-list")
                                                 .px(px(8.0))
                                                 .py(px(2.0))
-                                                .bg(theme.selection_hsla())
+                                                .when(!grid, |d| d.bg(theme.selection_hsla()))
+                                                .cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.grid = false;
+                                                    cx.notify();
+                                                }))
                                                 .child("≡"),
                                         )
-                                        .child(div().px(px(8.0)).py(px(2.0)).child("⊞")),
+                                        .child(
+                                            div()
+                                                .id("files-view-grid")
+                                                .px(px(8.0))
+                                                .py(px(2.0))
+                                                .when(grid, |d| d.bg(theme.selection_hsla()))
+                                                .cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.grid = true;
+                                                    cx.notify();
+                                                }))
+                                                .child("⊞"),
+                                        ),
                                 ),
                         ),
                 )
@@ -372,6 +610,7 @@ impl Render for ExplorerView {
                                         .flex_row()
                                         .items_center()
                                         .h(px(26.0))
+                                        .when(grid, |d| d.hidden())
                                         .px(px(16.0))
                                         .bg(Hsla::from(theme.palette.window_bg))
                                         .border_b_1()
@@ -383,11 +622,13 @@ impl Render for ExplorerView {
                                         .child(div().w(px(120.0)).child("Size"))
                                         .child(div().w(px(100.0)).child("Kind")),
                                 )
+                                .children(grid_el)
                                 // File rows. uniform_list stays in tests for the 100k case;
                                 // a flex column is reliable for real window layout.
                                 .child(
                                     div()
                                         .id("explorer-file-list")
+                                        .when(grid, |d| d.hidden())
                                         .flex()
                                         .flex_col()
                                         .flex_1()
@@ -397,6 +638,7 @@ impl Render for ExplorerView {
                                         .children(items_rc.iter().enumerate().map(
                                             |(idx, item)| {
                                                 let is_alt = idx % 2 == 1;
+                                                let row = item.row;
                                                 let is_selected = item.is_selected;
                                                 let mark = if item.is_dir { "DIR" } else { "DOC" };
                                                 let kind_str =
@@ -411,7 +653,7 @@ impl Render for ExplorerView {
                                                         cx.listener(
                                                             move |this, ev: &MouseDownEvent, _, cx| {
                                                                 this.dispatch(Action::ClickRow {
-                                                                    row: idx,
+                                                                    row,
                                                                     ctrl: ev.modifiers.control
                                                                         || ev.modifiers.platform,
                                                                     shift: ev.modifiers.shift,
@@ -540,6 +782,7 @@ mod tests {
         let mut items = Vec::with_capacity(100);
         for i in 0..100 {
             items.push(FileRowSnapshot {
+                row: i,
                 name: format!("file_{i:06}.txt"),
                 is_dir: false,
                 size_formatted: "1.2 MB".to_string(),
