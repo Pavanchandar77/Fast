@@ -227,7 +227,9 @@ impl Worker {
                 })?;
             }
             self.emit(AgentEvent::Phase(Phase::Loading, 0.0));
+            let t = std::time::Instant::now();
             self.model = Some(LocalModel::load(&model_store::model_path())?);
+            tracing::info!("assistant model loaded in {} ms", t.elapsed().as_millis());
         }
         Ok(self.model.as_mut().expect("model loaded"))
     }

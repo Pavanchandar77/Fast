@@ -8,6 +8,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+tracing = { workspace = true }
 candle-core = "0.11"
 candle-transformers = "0.11"
 serde = { workspace = true }

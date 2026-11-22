@@ -171,6 +171,17 @@ impl LocalModel {
             logits = model.forward(&input, pos).map_err(err)?;
             pos += 1;
         }
+        let decode_secs = decode_start.elapsed().as_secs_f32();
+        tracing::info!(
+            "llm: prompt {} tok, prefill {:.2}s, {} new tok in {:.2}s ({:.1} tok/s), threads={}, avx2={}",
+            rest_ids.len(),
+            prefill_secs,
+            out_ids.len(),
+            decode_secs,
+            out_ids.len() as f32 / decode_secs.max(0.001),
+            candle_core::utils::get_num_threads(),
+            candle_core::utils::with_avx(),
+        );
         Ok(Generation {
             text,
             prompt_tokens: pos - out_ids.len(),
