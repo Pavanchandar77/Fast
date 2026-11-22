@@ -427,6 +427,8 @@ mod imp {
             info!("✨ Nexus-OS Active: Entering 120Hz Compositor Event Loop");
             let mut last_frame = Instant::now();
             let target_frame_time = Duration::from_micros(8333); // 120Hz
+            let mut hot = nx_shell::hot_corners::HotCorners::default();
+            let hot_epoch = Instant::now();
 
             while running.load(Ordering::SeqCst) {
                 let now = Instant::now();
@@ -513,6 +515,28 @@ mod imp {
                     let active_ws = self.wm.read().active_workspace();
                     *self.config_arc.write() = new_cfg;
                     self.wm.write().retile_workspace(active_ws);
+                }
+
+                // Hot corners: top-left Mission Control, top-right Spotlight,
+                // bottom-right Show Desktop.
+                if !self.safe {
+                    let now_ms = hot_epoch.elapsed().as_millis() as u64;
+                    match nx_shell::hot_corners::poll(&mut hot, now_ms) {
+                        Some(nx_shell::hot_corners::Corner::TopLeft) => {
+                            info!("Hot corner: Mission Control");
+                            let _ =
+                                ui_tx.send(SessionUiEvent::Motion(self.motion.mission_control()));
+                        }
+                        Some(nx_shell::hot_corners::Corner::TopRight) => {
+                            info!("Hot corner: Spotlight");
+                            let _ = ui_tx.send(SessionUiEvent::ToggleSpotlight);
+                        }
+                        Some(nx_shell::hot_corners::Corner::BottomRight) => {
+                            info!("Hot corner: Show Desktop");
+                            nx_shell::hot_corners::show_desktop();
+                        }
+                        _ => {}
+                    }
                 }
 
                 for msg in self.motion.tick().into_iter().filter(|_| !self.safe) {
