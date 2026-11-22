@@ -117,6 +117,9 @@ pub struct IslandView {
     shape: IslandShape,
     running: bool,
     last_slow_tick: f64,
+    /// Time of the previous spring step, so the springs run at the same
+    /// speed on 60, 120 and 144 Hz displays.
+    last_spring_t: f64,
     assistant: Option<Assistant>,
     ai: AssistantUi,
     network: Arc<AtomicBool>,
@@ -164,6 +167,7 @@ impl IslandView {
             shape,
             running: false,
             last_slow_tick: -10.0,
+            last_spring_t: 0.0,
             assistant: None,
             ai: AssistantUi::default(),
             network: Arc::new(AtomicBool::new(nx_assistant::agent::network_enabled())),
@@ -799,8 +803,14 @@ impl IslandView {
         }
         self.width.target = body_width(shape, has_activity);
         self.height.target = body_height(shape);
-        self.width.step(1.0 / 60.0);
-        self.height.step(1.0 / 60.0);
+        let dt = if self.last_spring_t > 0.0 {
+            ((now - self.last_spring_t) as f32).clamp(1.0 / 240.0, 1.0 / 30.0)
+        } else {
+            1.0 / 60.0
+        };
+        self.last_spring_t = now;
+        self.width.step(dt);
+        self.height.step(dt);
         let springs = !(self.width.settled() && self.height.settled());
 
         // Grow the window first, shrink it after the spring settles.
@@ -828,7 +838,7 @@ impl IslandView {
         })
         .detach();
         cx.spawn_in(window, async move |this, cx| loop {
-            let mut delay = Duration::from_millis(16);
+            let mut delay = Duration::from_millis(7);
             let alive = this.update_in(cx, |this, window, cx| {
                 let animating = this.frame(window, cx);
                 if animating {

@@ -332,33 +332,74 @@ impl DockView {
         self.tracking = true;
         let b = window.bounds();
         self.home = Some((f32::from(b.origin.x), f32::from(b.origin.y)));
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(8))
-                .await;
-            let alive = this.update_in(cx, |this, window, cx| {
-                let pass = this.sample_cursor(window);
-                cx.notify();
-                pass
-            });
-            let Ok(pass) = alive else {
-                break;
-            };
-            // Applied after the view borrow ends. Doing it inside the update
-            // re-enters the window procedure and the process exits.
-            #[cfg(windows)]
-            if let Some((raw, on)) = pass.click {
-                crate::capture::set_click_through(raw, on);
-            }
-            for path in pass.missing {
-                let tx = pass.icon_tx.clone();
-                std::thread::spawn(move || {
-                    let image = crate::icons::app_icon_rgba(&path);
-                    let _ = tx.send((path, image));
+        cx.spawn_in(window, async move |this, cx| {
+            // 120 Hz while the pointer is on the dock or something moves;
+            // otherwise a cheap 25 Hz edge check. Redraw only on change, so
+            // an idle dock costs no frames at all.
+            let mut delay = Duration::from_millis(8);
+            loop {
+                cx.background_executor().timer(delay).await;
+                let alive = this.update_in(cx, |this, window, cx| {
+                    let before = this.signature();
+                    let pass = this.sample_cursor(window);
+                    let busy = this.model.animating()
+                        || this.mag_springs.iter().any(|s| !s.settled())
+                        || this.attention.iter().any(|a| a.is_some());
+                    if busy || this.signature() != before {
+                        cx.notify();
+                    }
+                    let hot = busy
+                        || this.hovered_index.is_some()
+                        || this.drag.is_some()
+                        || this.popup.is_some()
+                        || this.hold_open;
+                    (pass, hot)
                 });
+                let Ok((pass, hot)) = alive else {
+                    break;
+                };
+                delay = Duration::from_millis(if hot { 8 } else { 40 });
+                // Applied after the view borrow ends. Doing it inside the update
+                // re-enters the window procedure and the process exits.
+                #[cfg(windows)]
+                if let Some((raw, on)) = pass.click {
+                    crate::capture::set_click_through(raw, on);
+                }
+                for path in pass.missing {
+                    let tx = pass.icon_tx.clone();
+                    std::thread::spawn(move || {
+                        let image = crate::icons::app_icon_rgba(&path);
+                        let _ = tx.send((path, image));
+                    });
+                }
             }
         })
         .detach();
+    }
+
+    /// Everything the dock draws from, folded into one number, so the poll
+    /// loop can skip redraws when nothing changed.
+    fn signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.hovered_index.hash(&mut h);
+        self.cursor_axis
+            .map(|a| (a * 2.0).round() as i32)
+            .hash(&mut h);
+        ((self.model.reveal() * 1000.0) as i32).hash(&mut h);
+        self.hold_open.hash(&mut h);
+        self.drag.map(|d| (d.index, d.moved)).hash(&mut h);
+        match &self.popup {
+            None => 0usize.hash(&mut h),
+            Some(DockPopup::Menu(i)) => (1usize, *i).hash(&mut h),
+            Some(DockPopup::Stack(v)) => (2usize, v.len()).hash(&mut h),
+        }
+        self.icons.len().hash(&mut h);
+        self.icon_miss.len().hash(&mut h);
+        for item in self.model.items() {
+            (&item.id, item.pinned, item.running, item.frontmost).hash(&mut h);
+        }
+        h.finish()
     }
 
     /// Which icon the pointer is over, in screen space. Slots are centered
@@ -1107,11 +1148,26 @@ fn space_chip(theme: &Theme, label: &'static str, active: bool) -> impl IntoElem
 pub struct SpotlightView {
     pub model: Spotlight,
     pub selected: usize,
+    focus: Option<gpui::FocusHandle>,
+    want_focus: bool,
+    watching: bool,
+    last_frame: Option<Instant>,
+    icons: HashMap<String, Arc<RenderImage>>,
+    icon_pending: HashSet<String>,
 }
 
 impl SpotlightView {
     pub fn new(model: Spotlight) -> Self {
-        Self { model, selected: 0 }
+        Self {
+            model,
+            selected: 0,
+            focus: None,
+            want_focus: true,
+            watching: false,
+            last_frame: None,
+            icons: HashMap::new(),
+            icon_pending: HashSet::new(),
+        }
     }
 
     /// Toggle the Spotlight palette. Returns true when it is open afterwards.
@@ -1119,8 +1175,44 @@ impl SpotlightView {
         self.model.toggle();
         if self.model.is_open() {
             self.selected = 0;
+            self.want_focus = true;
+            self.last_frame = None;
         }
         self.model.is_open()
+    }
+
+    /// Close and hide the palette window (Esc, click outside, launch).
+    fn dismiss(&mut self, window: &mut Window) {
+        self.model.close_palette();
+        self.model.query.clear();
+        self.selected = 0;
+        hide_palette_window(window);
+    }
+
+    /// Real app/file icons for the visible rows, loaded off the UI thread.
+    fn request_icons(&mut self, ids: &[String], cx: &mut Context<Self>) {
+        for id in ids {
+            let Some(target) = crate::catalog::target_of(id) else {
+                continue;
+            };
+            if self.icons.contains_key(&target) || !self.icon_pending.insert(target.clone()) {
+                continue;
+            }
+            let path = target.clone();
+            cx.spawn(async move |this, cx| {
+                let raster = cx
+                    .background_executor()
+                    .spawn(async move { crate::icons::app_icon_rgba(&path) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(img) = raster.and_then(|(w, h, b)| raster_icon(w, h, b)) {
+                        this.icons.insert(target, img);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// Record a launch for the highlighted row, close the palette, and return
@@ -1154,6 +1246,41 @@ fn kind_tag(kind: ProviderKind) -> &'static str {
     }
 }
 
+/// Hide the Spotlight window without re-entering its window procedure.
+fn hide_palette_window(window: &mut Window) {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(w) = handle.as_raw() {
+                let hwnd = windows::Win32::Foundation::HWND(w.hwnd.get() as *mut std::ffi::c_void);
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindowAsync(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::SW_HIDE,
+                    );
+                }
+                return;
+            }
+        }
+    }
+    #[cfg(all(unix, not(test)))]
+    window.minimize_window();
+    let _ = window;
+}
+
+/// Vector glyph for a row without a real icon.
+fn kind_glyph(kind: ProviderKind) -> Option<GlyphIcon> {
+    match kind {
+        ProviderKind::Calculator => None,
+        ProviderKind::App => Some(GlyphIcon::Tray),
+        ProviderKind::Setting => Some(GlyphIcon::Gear),
+        ProviderKind::File => Some(GlyphIcon::Folder),
+        ProviderKind::Clipboard => Some(GlyphIcon::Clipboard),
+    }
+}
+
+#[allow(dead_code)]
 fn kind_mark(kind: ProviderKind) -> &'static str {
     match kind {
         ProviderKind::Calculator => "=",
@@ -1165,9 +1292,48 @@ fn kind_mark(kind: ProviderKind) -> &'static str {
 }
 
 impl Render for SpotlightView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_of(cx);
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        if self.want_focus && self.model.is_open() {
+            self.want_focus = false;
+            window.focus(&focus);
+        }
+        if !self.watching {
+            self.watching = true;
+            // Click anywhere else and Spotlight goes away, like macOS.
+            cx.observe_window_activation(window, |this, window, cx| {
+                if !window.is_window_active() && this.model.is_open() {
+                    this.dismiss(window);
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
+        // Appear: a short spring fade/lift, stepped with the real frame time.
+        let now = Instant::now();
+        let dt = self
+            .last_frame
+            .map(|t| now.duration_since(t).as_secs_f32())
+            .unwrap_or(1.0 / 120.0)
+            .clamp(1.0 / 240.0, 1.0 / 30.0);
+        self.last_frame = Some(now);
+        self.model.step(dt);
+        if self.model.animating() {
+            window.request_animation_frame();
+        }
+        let appear = self.model.open_amount().clamp(0.0, 1.0);
         let hits = self.model.query_str(&self.model.query);
+        let icon_ids: Vec<String> = hits
+            .iter()
+            .filter(|h| h.id.starts_with("app:") || h.id.starts_with("doc:"))
+            .map(|h| h.id.clone())
+            .collect();
+        self.request_icons(&icon_ids, cx);
+        let row_icons: Vec<Option<Arc<RenderImage>>> = hits
+            .iter()
+            .map(|h| crate::catalog::target_of(&h.id).and_then(|t| self.icons.get(&t).cloned()))
+            .collect();
         let hit_count = hits.len();
         if self.selected >= hit_count && hit_count > 0 {
             self.selected = hit_count - 1;
@@ -1182,9 +1348,12 @@ impl Render for SpotlightView {
 
         let card = div()
             .id("spotlight")
+            .track_focus(&focus)
             .flex()
             .flex_col()
             .w(px(680.0))
+            .opacity(0.35 + 0.65 * appear)
+            .mt(px((1.0 - appear) * 10.0))
             .bg(Hsla::from(theme.palette.menu_bg))
             .border_1()
             .border_color(Hsla::from(theme.palette.separator))
@@ -1192,26 +1361,65 @@ impl Render for SpotlightView {
             .shadow_lg()
             .overflow_hidden()
             .font_family(sf_font_family())
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let mods = event.keystroke.modifiers;
+                let key = event.keystroke.key.as_str();
+                // Ctrl+Backspace / Ctrl+U clear the field; other chords pass.
+                if mods.control && matches!(key, "backspace" | "u") {
+                    this.model.query.clear();
+                    this.selected = 0;
+                    cx.notify();
+                    return;
+                }
                 if mods.control || mods.alt || mods.platform || mods.function {
                     return;
                 }
-                let key = event.keystroke.key.as_str();
+                let count = this.model.query_str(&this.model.query).len();
+                let last = count.saturating_sub(1);
                 match key {
                     "up" | "arrowup" => {
-                        this.selected = this.selected.saturating_sub(1);
+                        this.selected = if this.selected == 0 {
+                            last
+                        } else {
+                            this.selected - 1
+                        };
                     }
                     "down" | "arrowdown" => {
-                        this.selected = this.selected.saturating_add(1);
+                        this.selected = if this.selected >= last {
+                            0
+                        } else {
+                            this.selected + 1
+                        };
                     }
+                    "tab" => {
+                        this.selected = if mods.shift {
+                            if this.selected == 0 {
+                                last
+                            } else {
+                                this.selected - 1
+                            }
+                        } else if this.selected >= last {
+                            0
+                        } else {
+                            this.selected + 1
+                        };
+                    }
+                    "home" | "pageup" => this.selected = 0,
+                    "end" | "pagedown" => this.selected = last,
                     "enter" | "return" => {
                         if let Some(id) = this.activate_selected() {
+                            this.dismiss(window);
                             cx.defer(move |cx| request_shell_launch(cx, &id));
                         }
                     }
                     "escape" => {
-                        this.model.close_palette();
+                        // First Esc clears the query, the second closes.
+                        if this.model.query.is_empty() {
+                            this.dismiss(window);
+                        } else {
+                            this.model.query.clear();
+                            this.selected = 0;
+                        }
                     }
                     "backspace" => {
                         this.model.query.pop();
@@ -1219,6 +1427,16 @@ impl Render for SpotlightView {
                     }
                     "space" => {
                         this.model.query.push(' ');
+                        this.selected = 0;
+                    }
+                    _ if event.keystroke.key_char.is_some() => {
+                        // key_char honours the keyboard layout and Shift
+                        // (symbols, accents), not just ASCII letters.
+                        if let Some(text) = event.keystroke.key_char.as_ref() {
+                            if this.model.query.len() < 256 {
+                                this.model.query.push_str(text);
+                            }
+                        }
                         this.selected = 0;
                     }
                     k if k.chars().count() == 1 => {
@@ -1286,6 +1504,7 @@ impl Render for SpotlightView {
                     .gap(px(4.0))
                     .max_h(px(420.0))
                     .children(hits.into_iter().enumerate().map(|(idx, hit)| {
+                        let row_icon = row_icons.get(idx).cloned().flatten();
                         let is_selected = idx == selected;
                         div()
                             .id(("spotlight-hit", idx))
@@ -1301,9 +1520,10 @@ impl Render for SpotlightView {
                                     .text_color(theme.on_inverted_hsla())
                             })
                             .when(!is_selected, |d| d.hover(|s| s.bg(theme.hover_hsla())))
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.selected = idx;
                                 if let Some(id) = this.activate_selected() {
+                                    this.dismiss(window);
                                     cx.defer(move |cx| request_shell_launch(cx, &id));
                                 }
                                 cx.notify();
@@ -1332,7 +1552,24 @@ impl Render for SpotlightView {
                                             })
                                             .font_weight(FontWeight::BOLD)
                                             .text_size(px(14.0))
-                                            .child(kind_mark(hit.kind)),
+                                            .map(|d| {
+                                                let fg = if is_selected {
+                                                    theme.inverted_hsla()
+                                                } else {
+                                                    theme.text_primary_hsla()
+                                                };
+                                                match (row_icon.clone(), kind_glyph(hit.kind)) {
+                                                    (Some(image), _) => d.child(
+                                                        img(ImageSource::Render(image))
+                                                            .w(px(24.0))
+                                                            .h(px(24.0)),
+                                                    ),
+                                                    (None, Some(g)) => {
+                                                        d.child(glyph_icon(g, fg, 18.0))
+                                                    }
+                                                    (None, None) => d.child("="),
+                                                }
+                                            }),
                                     )
                                     .child(
                                         div()
