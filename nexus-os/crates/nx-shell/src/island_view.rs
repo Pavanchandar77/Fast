@@ -840,7 +840,8 @@ impl IslandView {
         cx.spawn_in(window, async move |this, cx| loop {
             let mut delay = Duration::from_millis(7);
             let alive = this.update_in(cx, |this, window, cx| {
-                let animating = this.frame(window, cx);
+                let animating =
+                    crate::guard::guard("island frame", || this.frame(window, cx)).unwrap_or(false);
                 if animating {
                     cx.notify();
                 } else {
@@ -1955,6 +1956,12 @@ fn fmt_minutes(m: i64) -> String {
 
 impl Render for IslandView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("island", || self.render_body(window, cx).into_any_element())
+    }
+}
+
+impl IslandView {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_running(window, cx);
         let shape = self.shape;
         let w = self.width.pos;

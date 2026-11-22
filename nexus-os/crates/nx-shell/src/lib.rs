@@ -11,6 +11,7 @@ pub mod dock_popup;
 pub mod error;
 pub mod expose;
 pub mod gpui_views;
+pub mod guard;
 pub mod host;
 pub mod hot_corners;
 pub mod icons;

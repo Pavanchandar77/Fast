@@ -41,6 +41,8 @@ pub struct BorderOverlay {
     screen_height: u32,
     is_dirty: bool,
     visible: bool,
+    /// Last target, so an unchanged focus rect does not redraw every frame.
+    last_target: Option<[f32; 4]>,
 }
 
 pub fn create_border_overlay_window() -> anyhow::Result<HWND> {
@@ -154,12 +156,17 @@ impl BorderOverlay {
             screen_width,
             screen_height,
             is_dirty: true,
+            last_target: None,
             visible: true,
         })
     }
 
     /// Set target bounding rectangle for the focused window [x, y, w, h]
     pub fn set_target_rect(&mut self, target: [f32; 4]) {
+        if self.last_target == Some(target) {
+            return;
+        }
+        self.last_target = Some(target);
         self.spring
             .set_target(target[0], target[1], target[2], target[3]);
         self.is_dirty = true;

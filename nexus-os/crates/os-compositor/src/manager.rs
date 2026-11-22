@@ -281,6 +281,11 @@ impl WindowManager {
 
     /// Advances physics simulation and applies smooth window coordinates at 120Hz
     /// Uses SWP_ASYNCWINDOWPOS to strictly prevent hung applications from blocking compositor loop.
+    /// True while any managed window is still springing into place.
+    pub fn animating(&self) -> bool {
+        self.windows.values().any(|w| !w.spring.is_at_rest())
+    }
+
     pub fn update_animations(&mut self, dt: f32) {
         for win in self.windows.values_mut() {
             if !win.spring.is_at_rest() {

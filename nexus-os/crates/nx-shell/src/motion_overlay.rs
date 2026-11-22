@@ -1208,6 +1208,14 @@ fn layer(opacity: f32, paint: impl FnOnce(&mut Window) + 'static) -> impl IntoEl
 
 impl Render for MotionOverlayView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("motion overlay", || {
+            self.render_body(window, cx).into_any_element()
+        })
+    }
+}
+
+impl MotionOverlayView {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Instant::now();
         let dt = self
             .last

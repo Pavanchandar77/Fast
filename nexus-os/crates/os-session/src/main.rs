@@ -39,6 +39,7 @@ mod imp {
     impl gpui::Global for LiveSession {}
 
     pub fn run() -> anyhow::Result<()> {
+        let process_t0 = Instant::now();
         // `nexus-os.exe --restore`: put back anything a killed session left
         // changed (e.g. the hidden taskbar) and exit. Used by the uninstaller
         // and the "Restore Windows desktop" Start Menu shortcut.
@@ -284,8 +285,14 @@ mod imp {
         gpui::Application::new().run(move |cx| {
             let mut session = diag::timed("start_session", 500, os_session::startup::start_session);
             info!("session surfaces: {}", session.summary());
-            let windows = os_session::startup::open_gpui_windows(cx, &mut session);
+            let windows = diag::timed("open_gpui_windows", 400, || {
+                os_session::startup::open_gpui_windows(cx, &mut session)
+            });
             info!("GPUI windows: {}", windows.describe());
+            info!(
+                "startup: shell windows ready {} ms after process start",
+                process_t0.elapsed().as_millis()
+            );
             // Keep component state alive for the GPUI application lifetime.
             cx.set_global(LiveSession(session));
 
@@ -326,12 +333,15 @@ mod imp {
             let mut motion_state = os_session::motion_bridge::UiMotionState::default();
             let mut ticks: u64 = 0;
             let mut last_tick = Instant::now();
+            // 120 Hz right after shell events (hotkeys, motion); 50 Hz when
+            // the session is quiet.
+            let mut last_event = Instant::now();
+            let mut ui_delay = Duration::from_millis(8);
             cx.spawn(async move |cx| loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(8))
-                    .await;
+                cx.background_executor().timer(ui_delay).await;
                 let mut quit = false;
                 while let Ok(event) = ui_rx.try_recv() {
+                    last_event = Instant::now();
                     match event {
                         SessionUiEvent::FailSafeQuit => {
                             let _ = cx.update(|cx| cx.quit());
@@ -379,6 +389,11 @@ mod imp {
                 // ~8 ms. A long gap means something blocked the UI thread.
                 let gap = last_tick.elapsed();
                 last_tick = Instant::now();
+                ui_delay = if last_event.elapsed() < Duration::from_millis(500) {
+                    Duration::from_millis(8)
+                } else {
+                    Duration::from_millis(20)
+                };
                 if gap > Duration::from_millis(250) {
                     warn!("UI thread stalled for {} ms", gap.as_millis());
                 }
@@ -553,11 +568,14 @@ mod imp {
                     }
                 }
 
+                let mut busy = false;
                 for msg in self.motion.tick().into_iter().filter(|_| !self.safe) {
+                    busy = true;
                     let _ = ui_tx.send(SessionUiEvent::Motion(msg));
                 }
 
                 // Step Spring Physics solver and reposition windows at 120Hz
+                busy |= self.wm.read().animating();
                 self.wm.write().update_animations(dt);
 
                 // Update and Render GPU Shell Surfaces (focus border overlay only)
@@ -565,13 +583,32 @@ mod imp {
                     if let Some(rect) = self.wm.read().active_window_rect() {
                         bo.set_target_rect(rect);
                     }
-                    bo.update(dt);
+                    busy |= bo.update(dt);
                     let _ = bo.render();
                 }
 
+                // 120 Hz while something moves; otherwise wait up to 16 ms
+                // for the next message (WinEvents wake us at once), so an
+                // idle desktop costs ~60 cheap wakeups instead of 120 frames.
+                let budget = if busy {
+                    target_frame_time
+                } else {
+                    Duration::from_millis(16)
+                };
                 let elapsed = frame_start.elapsed();
-                if elapsed < target_frame_time {
-                    std::thread::sleep(target_frame_time - elapsed);
+                if elapsed < budget {
+                    let wait = (budget - elapsed).as_millis().max(1) as u32;
+                    unsafe {
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            MsgWaitForMultipleObjectsEx, MWMO_INPUTAVAILABLE, QS_ALLINPUT,
+                        };
+                        let _ = MsgWaitForMultipleObjectsEx(
+                            None,
+                            wait,
+                            QS_ALLINPUT,
+                            MWMO_INPUTAVAILABLE,
+                        );
+                    }
                 }
             }
         }

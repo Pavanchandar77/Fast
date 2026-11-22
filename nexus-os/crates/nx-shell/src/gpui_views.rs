@@ -336,26 +336,37 @@ impl DockView {
             // otherwise a cheap 25 Hz edge check. Redraw only on change, so
             // an idle dock costs no frames at all.
             let mut delay = Duration::from_millis(8);
+            let mut failures = 0u32;
             loop {
                 cx.background_executor().timer(delay).await;
                 let alive = this.update_in(cx, |this, window, cx| {
-                    let before = this.signature();
-                    let pass = this.sample_cursor(window);
-                    let busy = this.model.animating()
-                        || this.mag_springs.iter().any(|s| !s.settled())
-                        || this.attention.iter().any(|a| a.is_some());
-                    if busy || this.signature() != before {
-                        cx.notify();
-                    }
-                    let hot = busy
-                        || this.hovered_index.is_some()
-                        || this.drag.is_some()
-                        || this.popup.is_some()
-                        || this.hold_open;
-                    (pass, hot)
+                    crate::guard::guard("dock poll", || {
+                        let before = this.signature();
+                        let pass = this.sample_cursor(window);
+                        let busy = this.model.animating()
+                            || this.mag_springs.iter().any(|s| !s.settled())
+                            || this.attention.iter().any(|a| a.is_some());
+                        if busy || this.signature() != before {
+                            cx.notify();
+                        }
+                        let hot = busy
+                            || this.hovered_index.is_some()
+                            || this.drag.is_some()
+                            || this.popup.is_some()
+                            || this.hold_open;
+                        (pass, hot)
+                    })
                 });
-                let Ok((pass, hot)) = alive else {
+                let Ok(result) = alive else {
                     break;
+                };
+                let Some((pass, hot)) = result else {
+                    failures += 1;
+                    if failures > 5 {
+                        tracing::error!("dock: poll keeps panicking; auto-hide tracking stopped");
+                        break;
+                    }
+                    continue;
                 };
                 delay = Duration::from_millis(if hot { 8 } else { 40 });
                 // Applied after the view borrow ends. Doing it inside the update
@@ -895,6 +906,12 @@ fn show_in_files_target(launch: &str) -> Option<String> {
 
 impl Render for DockView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("dock", || self.render_body(window, cx).into_any_element())
+    }
+}
+
+impl DockView {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_tracking(window, cx);
         let theme = theme_of(cx);
         let is_horizontal = self.model.placement.edge.is_horizontal();
@@ -1100,7 +1117,15 @@ impl MissionControlView {
 }
 
 impl Render for MissionControlView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("mission control", || {
+            self.render_body(window, cx).into_any_element()
+        })
+    }
+}
+
+impl MissionControlView {
+    fn render_body(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_of(cx);
         let tiles = self.model.tiles().to_vec();
 
@@ -1346,6 +1371,14 @@ fn kind_mark(kind: ProviderKind) -> &'static str {
 
 impl Render for SpotlightView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("spotlight", || {
+            self.render_body(window, cx).into_any_element()
+        })
+    }
+}
+
+impl SpotlightView {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_of(cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         if self.want_focus && self.model.is_open() {

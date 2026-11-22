@@ -187,6 +187,14 @@ fn glyph_for(action: &PopupAction) -> GlyphIcon {
 
 impl Render for DockPopupView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::guard::render("dock popup", || {
+            self.render_body(window, cx).into_any_element()
+        })
+    }
+}
+
+impl DockPopupView {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_of(cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         if !self.watching {
