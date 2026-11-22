@@ -361,6 +361,23 @@ impl MotionOverlayView {
         accepted
     }
 
+    /// Grow from `anchor` to `rect`, even if this window was already on screen.
+    /// Used for maximize and for restore-from-maximize.
+    pub fn grow(
+        &mut self,
+        key: u64,
+        snap: Arc<Snapshot>,
+        rect: Rect,
+        anchor: Rect,
+        done: Option<Done>,
+    ) -> bool {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.key == key) {
+            w.motion = WindowMotion::hidden(self.prefs);
+            w.linger = None;
+        }
+        self.command(key, snap, rect, anchor, false, Command::Open, done)
+    }
+
     /// Open: bloom from `anchor` (dock icon or island) to `rect`.
     pub fn open(
         &mut self,

@@ -1,18 +1,21 @@
 //! GPUI views for the Nexus shell (the Dynamic Island lives in `island_view`): macOS-style Dock,
 //! Mission Control, and Spotlight.
 
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, App, Context, FontWeight, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    div, img, px, App, Context, FontWeight, Hsla, ImageSource, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, RenderImage, StatefulInteractiveElement, Styled, Window,
 };
 use nx_ui::gpui_theme::{mono_font_family, sf_font_family, window_chrome, ThemeStyledExt};
 use nx_ui::theme::Theme;
 use nx_ui::{glyph_icon, GlyphIcon};
 
-use crate::dock::{magnification_target, DockModel};
+use crate::dock::{magnification_target, running_exe_ids, taskbar_buttons, DockModel};
 use crate::expose::ExposeModel;
 use crate::menu_bar::{bar_height, BarSlot, MenuBarModel, MENU_TITLES};
 use crate::spotlight::{ProviderKind, Spotlight};
@@ -45,6 +48,30 @@ impl ShellLaunch {
 }
 
 /// Fire the host launch hook, if the session installed one.
+fn launch_dock_target(id: &str, launch: &str, cx: &mut App) {
+    let path = if launch.is_empty() { id } else { launch };
+    let external = path.contains('\\')
+        || path.contains('/')
+        || path.to_ascii_lowercase().ends_with(".lnk")
+        || path.to_ascii_lowercase().ends_with(".exe");
+    if external {
+        #[cfg(windows)]
+        {
+            // `start` follows the shortcut the user pinned, so the dock icon
+            // opens that app rather than a folder of links.
+            let _ = std::process::Command::new("cmd.exe")
+                .args(["/C", "start", "", path])
+                .spawn();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = path;
+        }
+        return;
+    }
+    request_shell_launch(cx, id);
+}
+
 pub fn request_shell_launch(cx: &mut App, id: &str) {
     let handler = cx
         .try_global::<ShellLaunch>()
@@ -127,18 +154,52 @@ pub struct DockView {
     /// snapping between sizes.
     mag_springs: Vec<nx_ui::Spring>,
     /// When each icon last started a launch bounce, for the running-dot pulse.
-    attention: Vec<Option<std::time::Instant>>,
-    last_frame: Option<std::time::Instant>,
+    attention: Vec<Option<Instant>>,
+    last_frame: Option<Instant>,
+    tracking: bool,
+    /// Resting dock origin in logical pixels, captured once.
+    home: Option<(f32, f32)>,
+    last_procs: Instant,
+    last_sample: Option<Instant>,
+    /// `Some(true)` while the hidden dock lets clicks pass through.
+    click_through: Option<bool>,
+    /// Pointer is on the physical bottom edge this frame.
+    hold_open: bool,
+    /// Pointer x in the same space as the icon slots, while it is over the dock.
+    /// Magnification follows this continuously, the way the Windows 11 taskbar
+    /// zoom mod does, instead of snapping to one hovered icon.
+    cursor_axis: Option<f32>,
+    /// Real app icons, keyed by the launch path. Small BGRA frames only.
+    icons: HashMap<String, Arc<RenderImage>>,
+    icon_miss: HashSet<String>,
+    icon_pending: HashSet<String>,
+    icon_tx: Sender<IconMsg>,
+    icon_rx: Receiver<IconMsg>,
 }
+
+type IconMsg = (String, Option<(u32, u32, Vec<u8>)>);
 
 impl DockView {
     pub fn new(model: DockModel) -> Self {
+        let (icon_tx, icon_rx) = mpsc::channel();
         Self {
             model,
             hovered_index: None,
             mag_springs: Vec::new(),
             attention: Vec::new(),
             last_frame: None,
+            tracking: false,
+            home: None,
+            last_procs: Instant::now(),
+            last_sample: None,
+            click_through: None,
+            hold_open: false,
+            cursor_axis: None,
+            icons: HashMap::new(),
+            icon_miss: HashSet::new(),
+            icon_pending: HashSet::new(),
+            icon_tx,
+            icon_rx,
         }
     }
 
@@ -149,7 +210,7 @@ impl DockView {
 
     /// Step the dock springs. Returns true while anything is still moving.
     fn step_motion(&mut self, count: usize) -> bool {
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let dt = self
             .last_frame
             .map(|t| (now - t).as_secs_f32())
@@ -164,13 +225,13 @@ impl DockView {
         self.attention.resize(count, None);
         let gap = self.model.mag.gap;
         let base = self.model.mag.rest;
+        let slot = base + gap;
         for (idx, spring) in self.mag_springs.iter_mut().enumerate() {
-            let target = match self.hovered_index {
-                Some(h) => magnification_target(
-                    h as f32 * (base + gap),
-                    idx as f32 * (base + gap),
-                    self.model.mag,
-                ),
+            // Icon center vs the live pointer. Neighbors fall off with distance,
+            // same shape as Beej's Windows 11 taskbar zoom (150%, bottom origin).
+            let center = idx as f32 * slot + base * 0.5;
+            let target = match self.cursor_axis {
+                Some(axis) => magnification_target(center, axis, self.model.mag),
                 None => 1.0,
             };
             spring.set_target(target);
@@ -193,8 +254,210 @@ impl DockView {
     }
 }
 
+impl DockView {
+    fn ensure_tracking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tracking {
+            return;
+        }
+        self.tracking = true;
+        let b = window.bounds();
+        self.home = Some((f32::from(b.origin.x), f32::from(b.origin.y)));
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(8))
+                .await;
+            let alive = this.update_in(cx, |this, window, cx| {
+                let pass = this.sample_cursor(window);
+                cx.notify();
+                pass
+            });
+            let Ok(pass) = alive else {
+                break;
+            };
+            // Applied after the view borrow ends. Doing it inside the update
+            // re-enters the window procedure and the process exits.
+            #[cfg(windows)]
+            if let Some((raw, on)) = pass.click {
+                crate::capture::set_click_through(raw, on);
+            }
+            for path in pass.missing {
+                let tx = pass.icon_tx.clone();
+                std::thread::spawn(move || {
+                    let image = crate::icons::app_icon_rgba(&path);
+                    let _ = tx.send((path, image));
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Which icon the pointer is over, in screen space. Slots are centered
+    /// in the dock window at the resting size; the spring then grows them.
+    fn hover_from_cursor(&mut self, window: &Window, point: nx_ui::geom::Point) {
+        let b = window.bounds();
+        let left = f32::from(b.origin.x);
+        let top = f32::from(b.origin.y);
+        let width = f32::from(b.size.width);
+        let height = f32::from(b.size.height);
+        let n = self.model.items().len();
+        let over = point.x >= left
+            && point.x <= left + width
+            && point.y >= top
+            && point.y <= top + height
+            && self.model.reveal() > 0.4;
+        if !over || n == 0 {
+            self.hovered_index = None;
+            self.cursor_axis = None;
+            return;
+        }
+        let slot = self.model.mag.rest + self.model.mag.gap;
+        let total = n as f32 * slot - self.model.mag.gap;
+        let start = left + (width - total) * 0.5;
+        let rel = point.x - start;
+        if rel < -slot || rel > total + slot {
+            self.hovered_index = None;
+            self.cursor_axis = None;
+            return;
+        }
+        let idx = ((rel + self.model.mag.gap * 0.5) / slot)
+            .floor()
+            .clamp(0.0, (n - 1) as f32) as usize;
+        self.hovered_index = Some(idx);
+        self.cursor_axis = Some(rel);
+    }
+
+    /// Reveal when the pointer is near the bottom edge, including over a
+    /// fullscreen app. The shelf slides inside the dock window; the window
+    /// itself is not moved.
+    fn sample_cursor(&mut self, window: &mut Window) -> CursorPass {
+        if self.home.is_none() {
+            let b = window.bounds();
+            self.home = Some((f32::from(b.origin.x), f32::from(b.origin.y)));
+        }
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            let mut p = POINT::default();
+            if unsafe { GetCursorPos(&mut p) }.is_ok() {
+                // GetCursorPos and the screen rect we placed the dock with are
+                // both physical pixels on this window. Dividing by the GPUI
+                // scale put the pointer above the reveal zone, so the shelf
+                // never came up and the icons never grew.
+                let _ = window.scale_factor();
+                let point = nx_ui::geom::Point::new(p.x as f32, p.y as f32);
+                let screen_h = unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+                        windows::Win32::UI::WindowsAndMessaging::SM_CYSCREEN,
+                    )
+                } as f32;
+                // Hoverdock's rule: the physical bottom edge opens the dock.
+                let at_bottom = point.y >= screen_h - 120.0;
+                let bounds = self.model.placement.bounds;
+                let reach = self.model.placement.reveal_px.max(28.0) + self.model.placement.margin;
+                let near = point.y >= bounds.bottom() - reach && point.y <= bounds.bottom() + 96.0;
+                let over_x = point.x >= bounds.x && point.x <= bounds.right();
+                if at_bottom || (near && over_x) || self.hovered_index.is_some() {
+                    self.model.pointer_moved(point);
+                } else if self.model.auto_hide {
+                    self.model.pointer_left();
+                }
+                self.hold_open = at_bottom || (near && over_x);
+                self.hover_from_cursor(window, point);
+            }
+        }
+        while let Ok((path, image)) = self.icon_rx.try_recv() {
+            self.icon_pending.remove(&path);
+            match image.and_then(|(w, h, bytes)| raster_icon(w, h, bytes)) {
+                Some(frame) => {
+                    self.icons.insert(path, frame);
+                }
+                None => {
+                    self.icon_miss.insert(path);
+                }
+            }
+        }
+        let mut missing = Vec::new();
+        if self.last_procs.elapsed() > Duration::from_millis(400) {
+            self.last_procs = Instant::now();
+            let names = running_exe_ids();
+            self.model.note_running_exes(&names);
+            let buttons = taskbar_buttons();
+            self.model.note_taskbar(&buttons);
+            for item in self.model.items() {
+                let path = item.launch.clone();
+                let looks_like_file = path.contains('\\') || path.contains('/');
+                if !looks_like_file
+                    || self.icons.contains_key(&path)
+                    || self.icon_miss.contains(&path)
+                    || self.icon_pending.contains(&path)
+                {
+                    continue;
+                }
+                if missing.len() >= 3 {
+                    break;
+                }
+                self.icon_pending.insert(path.clone());
+                missing.push(path);
+            }
+        }
+        let now = Instant::now();
+        let dt = self
+            .last_sample
+            .map(|t| now.duration_since(t).as_secs_f32())
+            .unwrap_or(1.0 / 120.0)
+            .clamp(1.0 / 240.0, 0.05);
+        self.last_sample = Some(now);
+        self.model.step(dt);
+        if self.hold_open {
+            self.model.force_reveal();
+        }
+        let mut click = None;
+        #[cfg(windows)]
+        {
+            let hidden = self.model.auto_hide && self.model.reveal() < 0.08;
+            if self.click_through != Some(hidden) {
+                self.click_through = Some(hidden);
+                let raw = {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    HasWindowHandle::window_handle(window).ok().and_then(|handle| {
+                        match handle.as_raw() {
+                            RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+                            _ => None,
+                        }
+                    })
+                };
+                if let Some(raw) = raw {
+                    click = Some((raw, hidden));
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = window;
+        }
+        CursorPass {
+            click,
+            missing,
+            icon_tx: self.icon_tx.clone(),
+        }
+    }
+}
+
+struct CursorPass {
+    click: Option<(isize, bool)>,
+    missing: Vec<String>,
+    icon_tx: Sender<IconMsg>,
+}
+
+fn raster_icon(w: u32, h: u32, bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
+    let buf = image::RgbaImage::from_raw(w, h, bytes)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
+}
+
 impl Render for DockView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_tracking(window, cx);
         let theme = theme_of(cx);
         let is_horizontal = self.model.placement.edge.is_horizontal();
         let base_size = self.model.mag.rest;
@@ -208,7 +471,7 @@ impl Render for DockView {
         let bounces: Vec<f32> = (0..items.len())
             .map(|i| self.model.motion_bounce(i))
             .collect();
-        let pulse_clock = std::time::Instant::now();
+        let pulse_clock = Instant::now();
         let dots: Vec<f32> = self
             .attention
             .iter()
@@ -220,8 +483,10 @@ impl Render for DockView {
             })
             .collect();
 
+        let slide = (1.0 - self.model.reveal().clamp(0.0, 1.0)) * 130.0;
         let shelf = div()
             .id("dock-shelf")
+            .mt(px(slide))
             .flex()
             .when(is_horizontal, |d| d.flex_row())
             .when(!is_horizontal, |d| d.flex_col())
@@ -231,7 +496,9 @@ impl Render for DockView {
             .border_1()
             .border_color(Hsla::from(theme.palette.separator))
             .rounded(px(theme.radii.xl))
-            .p(px(pad + 4.0))
+            .px(px(pad + 2.0))
+            .pt(px(pad))
+            .pb(px(2.0))
             .gap(px(gap))
             .shadow_lg()
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
@@ -276,32 +543,50 @@ impl Render for DockView {
                                 cx.notify();
                             }))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                let id = this.model.items().get(idx).map(|item| item.id.clone());
-                                if let Some(id) = id {
+                                let item = this.model.items().get(idx).cloned();
+                                if let Some(item) = item {
                                     let _ = this.model.activate_index(idx);
-                                    cx.defer(move |cx| request_shell_launch(cx, &id));
+                                    let launch = item.launch.clone();
+                                    let id = item.id.clone();
+                                    cx.defer(move |cx| launch_dock_target(&id, &launch, cx));
                                 }
                                 cx.notify();
                             }))
-                            .child(
-                                div()
+                            .child({
+                                let art = item
+                                    .launch
+                                    .as_str()
+                                    .is_empty()
+                                    .then_some(None)
+                                    .unwrap_or_else(|| self.icons.get(&item.launch).cloned());
+                                let tile = div()
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .w(px(icon_size))
                                     .h(px(icon_size))
-                                    .bg(Hsla::from(theme.palette.elevated))
-                                    .border_1()
-                                    .border_color(Hsla::from(theme.palette.separator))
                                     .rounded(px(theme.radii.lg * scale.clamp(0.8, 1.4)))
-                                    .shadow_sm()
-                                    .hover(|s| s.bg(theme.selection_hsla()))
-                                    .child(glyph_icon(
+                                    .when(art.is_none(), |d| {
+                                        d.bg(Hsla::from(theme.palette.elevated))
+                                            .border_1()
+                                            .border_color(Hsla::from(theme.palette.separator))
+                                            .shadow_sm()
+                                            .hover(|s| s.bg(theme.selection_hsla()))
+                                    });
+                                if let Some(image) = art {
+                                    tile.child(
+                                        img(ImageSource::Render(image))
+                                            .w(px(icon_size))
+                                            .h(px(icon_size)),
+                                    )
+                                } else {
+                                    tile.child(glyph_icon(
                                         GlyphIcon::for_dock_id(&item.id),
                                         theme.text_primary_hsla(),
                                         (icon_size * 0.52).clamp(14.0, 36.0),
-                                    )),
-                            )
+                                    ))
+                                }
+                            })
                             .child(
                                 div()
                                     .w(px(4.0))
@@ -324,6 +609,7 @@ impl Render for DockView {
             .flex()
             .w_full()
             .h_full()
+            .overflow_hidden()
             .items_end()
             .justify_center()
             .child(shelf)
@@ -352,7 +638,14 @@ impl Render for MissionControlView {
             .w_full()
             .h_full()
             .bg(Hsla::from(theme.palette.window_bg))
-            .p(px(28.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .w_full()
+                    .justify_end()
+                    .child(window_chrome(&theme, true)),
+            )
             .gap(px(24.0))
             .child(
                 div()
@@ -360,6 +653,7 @@ impl Render for MissionControlView {
                     .flex_row()
                     .items_center()
                     .justify_center()
+                    .px(px(28.0))
                     .gap(px(16.0))
                     .h(px(64.0))
                     .w_full()
@@ -374,6 +668,7 @@ impl Render for MissionControlView {
                     .justify_center()
                     .items_center()
                     .gap(px(24.0))
+                    .px(px(28.0))
                     .flex_1()
                     .children(tiles.into_iter().map(|tile| {
                         div()
@@ -393,7 +688,7 @@ impl Render for MissionControlView {
                                     .items_center()
                                     .justify_between()
                                     .h(px(32.0))
-                                    .px(px(12.0))
+                                    .pl(px(12.0))
                                     .bg(Hsla::from(theme.palette.sidebar_bg))
                                     .border_b_1()
                                     .border_color(Hsla::from(theme.palette.separator))
@@ -402,7 +697,7 @@ impl Render for MissionControlView {
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme.text_primary_hsla())
                                     .child(tile.title.to_ascii_uppercase())
-                                    .child(window_chrome(&theme, 0.85)),
+                                    .child(window_chrome(&theme, false)),
                             )
                             .child(
                                 div()
@@ -574,7 +869,7 @@ impl Render for SpotlightView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .px(px(22.0))
+                    .pl(px(22.0))
                     .py(px(18.0))
                     .gap(px(14.0))
                     .border_b_1()
@@ -609,8 +904,9 @@ impl Render for SpotlightView {
                             .font_family(mono_font_family())
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary_hsla())
-                            .child("⌘␣"),
-                    ),
+                            .child("Ctrl Space"),
+                    )
+                    .child(window_chrome(&theme, true)),
             )
             .child(
                 div()

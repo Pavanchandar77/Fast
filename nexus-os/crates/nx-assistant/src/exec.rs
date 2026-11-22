@@ -556,10 +556,279 @@ mod platform {
                 .map_err(|e| AssistantError::Action(e.to_string()))
         }
     }
+    pub fn read_brightness() -> Option<u8> {
+        use windows::Win32::Devices::Display::{
+            GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
+            GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR,
+        };
+        use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+        use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+
+        unsafe extern "system" fn each(
+            monitor: HMONITOR,
+            _dc: HDC,
+            _rect: *mut RECT,
+            data: LPARAM,
+        ) -> BOOL {
+            let list = &mut *(data.0 as *mut Vec<HMONITOR>);
+            list.push(monitor);
+            BOOL(1)
+        }
+
+        let mut monitors: Vec<HMONITOR> = Vec::new();
+        unsafe {
+            let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&raw mut monitors as isize));
+        }
+        for monitor in monitors {
+            let mut count = 0u32;
+            unsafe {
+                if GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, &raw mut count).is_err()
+                    || count == 0
+                {
+                    continue;
+                }
+                let mut physical = vec![PHYSICAL_MONITOR::default(); count as usize];
+                if GetPhysicalMonitorsFromHMONITOR(monitor, &mut physical).is_err() {
+                    continue;
+                }
+                for item in &physical {
+                    let mut min = 0u32;
+                    let mut cur = 0u32;
+                    let mut max = 0u32;
+                    if GetMonitorBrightness(
+                        item.hPhysicalMonitor,
+                        &mut min,
+                        &mut cur,
+                        &mut max,
+                    ) != 0
+                        && cur <= 100
+                    {
+                        let _ = windows::Win32::Devices::Display::DestroyPhysicalMonitors(&physical);
+                        return Some(cur as u8);
+                    }
+                }
+                let _ = windows::Win32::Devices::Display::DestroyPhysicalMonitors(&physical);
+            }
+        }
+        read_scheme_brightness()
+    }
+
+    fn read_scheme_brightness() -> Option<u8> {
+        use std::ffi::c_void;
+        use windows::Win32::Foundation::LocalFree;
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        use windows::core::{s, w, GUID};
+
+        type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
+        type ReadIndex =
+            unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID, *const GUID, *mut u32) -> u32;
+
+        unsafe {
+            let lib = LoadLibraryW(w!("powrprof.dll")).ok()?;
+            let get: GetScheme = std::mem::transmute(GetProcAddress(lib, s!("PowerGetActiveScheme"))?);
+            let read: ReadIndex =
+                std::mem::transmute(GetProcAddress(lib, s!("PowerReadACValueIndex"))?);
+            let mut scheme = std::ptr::null_mut();
+            if get(std::ptr::null_mut(), &mut scheme) != 0 || scheme.is_null() {
+                return None;
+            }
+            let subgroup = GUID::from_u128(0x7516_b95f_f776_4464_8c53_0616_7f40_cc99);
+            let setting = GUID::from_u128(0xaded_5e82_b909_4619_9949_f5d7_1dac_0bcb);
+            let mut value = 0u32;
+            let status = read(
+                std::ptr::null_mut(),
+                scheme,
+                &subgroup,
+                &setting,
+                &mut value,
+            );
+            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(scheme.cast()));
+            (status == 0 && value <= 100).then_some(value as u8)
+        }
+    }
+
     pub fn set_brightness(level: u8) -> Result<(), AssistantError> {
-        ps(&format!(
-            "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods) | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Timeout=1;Brightness={level}}}"
+        // Never PowerShell. WMI through powershell.exe is what sat for 40
+        // seconds before the panel moved.
+        if set_monitor_brightness(level).is_ok()
+            || set_lcd_brightness(level).is_ok()
+            || set_scheme_brightness(level).is_ok()
+        {
+            return Ok(());
+        }
+        Err(AssistantError::Action(
+            "this display did not accept a brightness change".into(),
         ))
+    }
+
+    /// DDC brightness on each physical monitor. This is the call the panel
+    /// answers in a few milliseconds.
+    fn set_monitor_brightness(level: u8) -> Result<(), AssistantError> {
+        use windows::Win32::Devices::Display::{
+            DestroyPhysicalMonitors, GetNumberOfPhysicalMonitorsFromHMONITOR,
+            GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, PHYSICAL_MONITOR,
+        };
+        use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
+        use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+
+        unsafe extern "system" fn each(
+            monitor: HMONITOR,
+            _dc: HDC,
+            _rect: *mut RECT,
+            data: LPARAM,
+        ) -> BOOL {
+            let list = &mut *(data.0 as *mut Vec<HMONITOR>);
+            list.push(monitor);
+            BOOL(1)
+        }
+
+        let mut monitors: Vec<HMONITOR> = Vec::new();
+        unsafe {
+            let _ = EnumDisplayMonitors(
+                None,
+                None,
+                Some(each),
+                LPARAM(&raw mut monitors as isize),
+            );
+        }
+        if monitors.is_empty() {
+            return Err(AssistantError::Action("no monitors".into()));
+        }
+        let mut applied = false;
+        for monitor in monitors {
+            let mut count = 0u32;
+            unsafe {
+                if GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, &raw mut count).is_err()
+                    || count == 0
+                {
+                    continue;
+                }
+                let mut physical = vec![PHYSICAL_MONITOR::default(); count as usize];
+                if GetPhysicalMonitorsFromHMONITOR(monitor, &mut physical).is_err() {
+                    continue;
+                }
+                for item in &physical {
+                    if SetMonitorBrightness(item.hPhysicalMonitor, u32::from(level)) != 0 {
+                        applied = true;
+                    }
+                }
+                let _ = DestroyPhysicalMonitors(&physical);
+            }
+        }
+        if applied {
+            Ok(())
+        } else {
+            Err(AssistantError::Action("monitor brightness refused".into()))
+        }
+    }
+
+    /// `IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS` on `\\.\LCD`. Laptop panels answer
+    /// this in one call.
+    fn set_lcd_brightness(level: u8) -> Result<(), AssistantError> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        use windows::Win32::System::IO::DeviceIoControl;
+        use windows::core::PCWSTR;
+
+        #[repr(C)]
+        struct DisplayBrightness {
+            policy: u8,
+            ac: u8,
+            dc: u8,
+        }
+        const IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS: u32 = 0x0023_049C;
+        let wide: Vec<u16> = std::ffi::OsStr::new(r"\\.\LCD")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let err = |e: windows::core::Error| AssistantError::Action(e.to_string());
+        unsafe {
+            let handle = CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                0x8000_0000 | 0x4000_0000,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            .map_err(err)?;
+            let body = DisplayBrightness {
+                policy: 3,
+                ac: level,
+                dc: level,
+            };
+            let mut returned = 0u32;
+            let result = DeviceIoControl(
+                handle,
+                IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS,
+                Some(std::ptr::from_ref(&body).cast()),
+                std::mem::size_of::<DisplayBrightness>() as u32,
+                None,
+                0,
+                Some(&mut returned),
+                None,
+            );
+            let _ = CloseHandle(handle);
+            result.map_err(err)?;
+        }
+        Ok(())
+    }
+
+    /// Current power scheme brightness. Applied immediately by Windows, and it
+    /// does not start PowerShell.
+    fn set_scheme_brightness(level: u8) -> Result<(), AssistantError> {
+        use std::ffi::c_void;
+        use windows::Win32::Foundation::LocalFree;
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        use windows::core::{s, w, GUID};
+
+        type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
+        type WriteIndex =
+            unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID, *const GUID, u32) -> u32;
+        type SetScheme = unsafe extern "system" fn(*mut c_void, *const GUID) -> u32;
+
+        unsafe {
+            let lib = LoadLibraryW(w!("powrprof.dll"))
+                .map_err(|e| AssistantError::Action(e.to_string()))?;
+            let get: GetScheme = std::mem::transmute(
+                GetProcAddress(lib, s!("PowerGetActiveScheme"))
+                    .ok_or_else(|| AssistantError::Action("PowerGetActiveScheme missing".into()))?,
+            );
+            let write: WriteIndex = std::mem::transmute(
+                GetProcAddress(lib, s!("PowerWriteACValueIndex")).ok_or_else(|| {
+                    AssistantError::Action("PowerWriteACValueIndex missing".into())
+                })?,
+            );
+            let write_dc: WriteIndex = std::mem::transmute(
+                GetProcAddress(lib, s!("PowerWriteDCValueIndex")).ok_or_else(|| {
+                    AssistantError::Action("PowerWriteDCValueIndex missing".into())
+                })?,
+            );
+            let set: SetScheme = std::mem::transmute(
+                GetProcAddress(lib, s!("PowerSetActiveScheme"))
+                    .ok_or_else(|| AssistantError::Action("PowerSetActiveScheme missing".into()))?,
+            );
+            let mut scheme = std::ptr::null_mut();
+            if get(std::ptr::null_mut(), &mut scheme) != 0 || scheme.is_null() {
+                return Err(AssistantError::Action("no active power scheme".into()));
+            }
+            // VIDEO subgroup and the display brightness setting.
+            let subgroup = GUID::from_u128(0x7516_b95f_f776_4464_8c53_0616_7f40_cc99);
+            let setting = GUID::from_u128(0xaded_5e82_b909_4619_9949_f5d7_1dac_0bcb);
+            let value = u32::from(level);
+            let ac = write(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
+            let dc = write_dc(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
+            let applied = set(std::ptr::null_mut(), scheme);
+            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(scheme.cast()));
+            if ac != 0 || dc != 0 || applied != 0 {
+                return Err(AssistantError::Action("power scheme rejected brightness".into()));
+            }
+        }
+        Ok(())
     }
     pub fn set_radio(kind: &str, on: bool) -> Result<(), AssistantError> {
         let state = if on { "On" } else { "Off" };
@@ -770,6 +1039,45 @@ pub fn read_system_volume() -> Option<(f32, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn brightness_read_and_write_return_within_a_second() {
+        let started = std::time::Instant::now();
+        let current = platform::read_brightness();
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "reading brightness took {:?}",
+            started.elapsed()
+        );
+        let Some(level) = current else {
+            panic!("this machine did not report a brightness level");
+        };
+        let started = std::time::Instant::now();
+        let result = platform::set_brightness(level);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(800),
+            "setting brightness took {:?}: {result:?}",
+            started.elapsed()
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn known_commands_route_without_a_model() {
+        let started = std::time::Instant::now();
+        for _ in 0..2_000 {
+            assert!(matches!(
+                crate::intent::route("set brightness to 40"),
+                Some(crate::tools::Tool::SetBrightness { level: 40 })
+            ));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(200),
+            "routing took {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn chords_parse() {

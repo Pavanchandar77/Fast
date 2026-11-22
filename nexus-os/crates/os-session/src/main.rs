@@ -86,53 +86,59 @@ mod imp {
         os_core::heartbeat::start()?;
         os_shield::attach(true, os_core::recovery::is_dry_run());
 
-        // 0c. Windows Update Resilience & Capability Self-Check
+        // 0c. Windows Update resilience runs off the UI thread. Probing and
+        // re-applying policies took most of a minute and the window never
+        // appeared until it finished.
         let journal_path = os_core::recovery::default_journal_path();
         let state_dir = journal_path
             .parent()
-            .unwrap_or_else(|| std::path::Path::new("."));
-        let store = nx_compat::BuildHistoryStore::new(state_dir);
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
         let notices = Arc::new(nx_compat::NoticeQueue::new());
-        let engine = nx_compat::SelfHealingEngine::new(store, notices.clone());
-        let win_platform = os_core::platform::Win32Platform::new();
-        // The live journal at `journal_path` is already open and exclusively
-        // locked by `recovery::bootstrap`; opening it again here blocked
-        // forever on the lock and the UI never appeared. Every mutation the
-        // self-check applies goes through `Win32Platform`, which already
-        // commits it to the live journal, so the self-check only needs a
-        // scratch journal for its own rollback bookkeeping.
+        let notices_for_check = notices.clone();
+        // The live journal is already locked by recovery::bootstrap. The
+        // self-check writes through Win32Platform and only keeps a scratch
+        // journal for its own rollback bookkeeping.
         let scratch_path = journal_path.with_file_name("selfcheck.nxjr");
-        if let Ok(mut journal) = nexus_journal::Journal::open(&scratch_path) {
-            let build = nx_compat::detect_build();
-            info!(
-                "Nexus-OS Compat: Windows build detected: {}",
-                build.full_version_string()
-            );
-            match engine.run_startup_self_check(
-                &build,
-                &win_platform,
-                &mut journal,
-                &nx_compat::LiveProbeProvider,
-                true,
-            ) {
-                Ok(report) => {
-                    info!(
-                        "Resilience self-check finished: clean={}, healed={:?}, regressions={:?}",
-                        report.is_clean(),
-                        report.settings_healed,
-                        report.regressions
-                    );
+        let _ = std::thread::Builder::new()
+            .name("nexus-selfcheck".into())
+            .spawn(move || {
+                let store = nx_compat::BuildHistoryStore::new(&state_dir);
+                let engine = nx_compat::SelfHealingEngine::new(store, notices_for_check);
+                let win_platform = os_core::platform::Win32Platform::new();
+                let Ok(mut journal) = nexus_journal::Journal::open(&scratch_path) else {
+                    return;
+                };
+                let build = nx_compat::detect_build();
+                info!(
+                    "Nexus-OS Compat: Windows build detected: {}",
+                    build.full_version_string()
+                );
+                match engine.run_startup_self_check(
+                    &build,
+                    &win_platform,
+                    &mut journal,
+                    &nx_compat::LiveProbeProvider,
+                    true,
+                ) {
+                    Ok(report) => {
+                        info!(
+                            "Resilience self-check finished: clean={}, healed={:?}, regressions={:?}",
+                            report.is_clean(),
+                            report.settings_healed,
+                            report.regressions
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Resilience startup self-check non-fatal error: {e}");
+                    }
                 }
-                Err(e) => {
-                    warn!("Resilience startup self-check non-fatal error: {e}");
-                }
-            }
-            drop(journal);
-            let _ = std::fs::remove_file(&scratch_path);
-            let mut lock = scratch_path.into_os_string();
-            lock.push(".lock");
-            let _ = std::fs::remove_file(lock);
-        }
+                drop(journal);
+                let _ = std::fs::remove_file(&scratch_path);
+                let mut lock = scratch_path.into_os_string();
+                lock.push(".lock");
+                let _ = std::fs::remove_file(lock);
+            });
 
         // 0d. Mid-session Explorer.exe and DWM restart watcher
         let restart_handler = Arc::new(nx_compat::RestartHandler::new(

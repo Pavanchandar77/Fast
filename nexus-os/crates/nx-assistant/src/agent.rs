@@ -112,7 +112,7 @@ impl Assistant {
         }
     }
 
-    /// Load the model and pre-fill the system prompt so the first answer is fast.
+    /// Kept for callers. Does not load the model; the shell stays light.
     pub fn warm_up(&self) {
         let _ = self.tx.send(Request::Warm);
     }
@@ -141,16 +141,18 @@ impl Assistant {
     }
 }
 
-pub const ROUTER_SYSTEM_HEAD: &str = "You are Nexus, the on-device assistant living in the Dynamic Island of Nexus-OS on Windows. Pick exactly one tool that does what the user asks. Use reply only for chit-chat or questions you can answer without the web. Use web_search for facts, news, prices, people or anything current.";
+pub const ROUTER_SYSTEM_HEAD: &str = "You are Nexus, the on-device assistant living in the Dynamic Island of Nexus-OS on Windows. Pavan created you. You know that you are Nexus, that you run on this machine, and that you can act on it. When asked who you are, answer as Nexus and name Pavan as your creator. Do not pretend to be a generic chatbot and do not search the web for your own name. Pick exactly one tool that does what the user asks. Use reply for chit-chat, identity, and questions you can answer without the web. Use web_search for facts, news, prices, people or anything current that is not about yourself.";
 
 pub fn router_system() -> String {
+    let who = std::env::var("USERNAME").unwrap_or_else(|_| "the user".into());
+    let pc = std::env::var("COMPUTERNAME").unwrap_or_default();
     format!(
-        "{ROUTER_SYSTEM_HEAD}\n\n# Tools\n\nYou may call one function to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{{\"name\": <function-name>, \"arguments\": <args-json-object>}}\n</tool_call>",
+        "{ROUTER_SYSTEM_HEAD} You are talking to {who} on this PC ({pc}). Use their name when it fits. Personal questions about them, their files, and the apps on this machine are in scope.\n\n# Tools\n\nYou may call one function to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{{\"name\": <function-name>, \"arguments\": <args-json-object>}}\n</tool_call>",
         tools::schema_lines()
     )
 }
 
-const ANSWER_SYSTEM: &str = "You are Nexus, a concise on-device assistant. Answer the question in at most two short sentences using only the numbered sources. Cite sources like [1]. If the sources do not answer it, say so.";
+const ANSWER_SYSTEM: &str = "You are Nexus, created by Pavan, living in the Dynamic Island on this Windows PC. Answer in at most two short sentences. For questions about the world, use only the numbered sources and cite them like [1]. For questions about yourself, say you are Nexus, created by Pavan, and that you run on this machine. If the sources do not answer a factual question, say so.";
 
 /// Decide the final tool from the model's proposal and the rule router.
 pub fn choose(model: Result<Tool, AssistantError>, prompt: &str) -> Option<(Tool, Via)> {
@@ -188,17 +190,14 @@ impl Worker {
     }
 
     fn run(mut self, rx: Receiver<Request>) {
+        if let Ok(n) = std::thread::available_parallelism() {
+            std::env::set_var("RAYON_NUM_THREADS", n.get().to_string());
+        }
         while let Ok(req) = rx.recv() {
             if let Request::Warm = req {
-                let system = router_system();
-                let warmed = self
-                    .ensure_model()
-                    .and_then(|m| m.chat(&system, "hi", "", 1, &[], |_| true).map(|_| ()));
-                if let Err(e) = warmed {
-                    self.emit(AgentEvent::Error(e.to_string()));
-                } else {
-                    self.emit(AgentEvent::Phase(Phase::Ready, 0.0));
-                }
+                // Opening the island must not load the model. A free-form
+                // question loads it for that answer, then drops the weights.
+                self.emit(AgentEvent::Phase(Phase::Ready, 0.0));
             } else if let Request::Ask(prompt) = req {
                 if let Err(e) = self.handle(&prompt, &rx) {
                     audit::log("error", "-", &e.to_string(), false, "-");
@@ -238,12 +237,23 @@ impl Worker {
         if prompt.is_empty() {
             return Ok(());
         }
+        // Commands the rule router already understands skip the model. Loading
+        // and decoding the local model is what made a simple ask take so long.
+        if let Some(tool) = intent::route(prompt) {
+            return self.finish(tool, Via::Rules, None, prompt, rx);
+        }
         let system = router_system();
         let tx = self.events.clone();
-        let model = self.ensure_model()?;
         let _ = tx.send(AgentEvent::Phase(Phase::Thinking, 0.0));
         let prefill = "<tool_call>\n{\"name\": \"";
-        let gen = model.chat(&system, prompt, prefill, 96, &["</tool_call>"], |_| true)?;
+        let generated = {
+            let model = self.ensure_model()?;
+            model.chat(&system, prompt, prefill, 96, &["</tool_call>"], |_| true)
+        };
+        // The weights are the heavy part of the process. Drop them as soon
+        // as this answer is decoded so the shell does not sit on them.
+        self.model = None;
+        let gen = generated?;
         let stats = Stats::from(&gen);
         let proposal = tools::parse_tool_call(&format!("{prefill}{}", gen.text));
         if let Err(e) = &proposal {
@@ -254,6 +264,17 @@ impl Worker {
                 "I couldn't map that to an action".into(),
             ));
         };
+        self.finish(tool, via, Some(stats), prompt, rx)
+    }
+
+    fn finish(
+        &mut self,
+        tool: Tool,
+        via: Via,
+        stats: Option<Stats>,
+        prompt: &str,
+        rx: &Receiver<Request>,
+    ) -> Result<(), AssistantError> {
         let needs_confirm = tool.risk() == Risk::Confirm;
         self.emit(AgentEvent::Proposed {
             tool: tool.clone(),
@@ -290,7 +311,7 @@ impl Worker {
                     message: "Cancelled".into(),
                     effects: vec![],
                     sources: vec![],
-                    stats: Some(stats),
+                    stats: stats.clone(),
                     via,
                 });
                 return Ok(());
@@ -311,7 +332,7 @@ impl Worker {
                     message: text.clone(),
                     effects: vec![],
                     sources: vec![],
-                    stats: Some(stats),
+                    stats: stats.clone(),
                     via,
                 });
             }
@@ -339,7 +360,7 @@ impl Worker {
                         url: "https://open-meteo.com".into(),
                         snippet: String::new(),
                     }],
-                    stats: Some(stats),
+                    stats: stats.clone(),
                     via,
                 });
             }
@@ -359,7 +380,7 @@ impl Worker {
                             message: outcome.message,
                             effects: outcome.effects,
                             sources: vec![],
-                            stats: Some(stats),
+                            stats,
                             via,
                         });
                     }
@@ -413,11 +434,15 @@ impl Worker {
         let user = format!("Question: {prompt}\n\nSources:\n{ctx}");
         let tx = self.events.clone();
         let _ = tx.send(AgentEvent::Phase(Phase::Answering, 0.0));
-        let model = self.ensure_model()?;
-        let gen = model.chat(ANSWER_SYSTEM, &user, "", 110, &[], |delta| {
-            let _ = tx.send(AgentEvent::Token(delta.to_string()));
-            true
-        })?;
+        let generated = {
+            let model = self.ensure_model()?;
+            model.chat(ANSWER_SYSTEM, &user, "", 110, &[], |delta| {
+                let _ = tx.send(AgentEvent::Token(delta.to_string()));
+                true
+            })
+        };
+        self.model = None;
+        let gen = generated?;
         self.emit(AgentEvent::Done {
             message: gen.text.trim().to_string(),
             effects: vec![],

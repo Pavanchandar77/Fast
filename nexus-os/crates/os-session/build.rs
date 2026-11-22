@@ -3,7 +3,6 @@
 //! is not installed so a plain `cargo check` never fails because of it.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -30,27 +29,11 @@ fn main() {
         nums.get(2).copied().unwrap_or(0),
     );
     let rc = out.join("nexus.rc");
-    let icon_path = icon
-        .canonicalize()
-        .unwrap_or(icon)
-        .display()
-        .to_string()
-        .replace('\\', "/");
-    // gpui embeds its own manifest only when the build host is Windows; when
-    // cross-compiling, add ours (PerMonitorV2 DPI, Common Controls 6, Win10+).
-    let manifest = manifest.join("../../packaging/windows/nexus.manifest.xml");
-    let host_is_windows = std::env::var("HOST").is_ok_and(|h| h.contains("windows"));
-    let manifest_line = if !host_is_windows && manifest.exists() {
-        let m = manifest
-            .canonicalize()
-            .unwrap_or(manifest)
-            .display()
-            .to_string()
-            .replace('\\', "/");
-        format!("1 24 \"{m}\"\n")
-    } else {
-        String::new()
-    };
+    let icon_path = rc_path(icon);
+    // gpui already embeds the Common Controls 6 manifest. A second one makes
+    // the linker reject the exe. The icon and version still come from here.
+    let _ = manifest;
+    let manifest_line = "";
     let body = format!(
         r#"{manifest_line}1 ICON "{icon_path}"
 1 VERSIONINFO
@@ -80,21 +63,17 @@ END
     if std::fs::write(&rc, body).is_err() {
         return;
     }
-    let obj = out.join("nexus-res.o");
-    for tool in ["x86_64-w64-mingw32-windres", "windres"] {
-        let ok = Command::new(tool)
-            .arg(&rc)
-            .arg("-O")
-            .arg("coff")
-            .arg("-o")
-            .arg(&obj)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            println!("cargo:rustc-link-arg-bin=nexus-os={}", obj.display());
-            return;
-        }
-    }
-    println!("cargo:warning=windres not found; nexus-os.exe will have no icon");
+    embed_resource::compile(&rc, embed_resource::NONE)
+        .manifest_optional()
+        .unwrap();
+}
+
+fn rc_path(path: PathBuf) -> String {
+    let path = path.canonicalize().unwrap_or(path);
+    let text = path.display().to_string();
+    let text = text
+        .strip_prefix(r"\\?\")
+        .or_else(|| text.strip_prefix("//?/"))
+        .unwrap_or(&text);
+    text.replace('\\', "/")
 }

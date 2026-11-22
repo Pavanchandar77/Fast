@@ -55,3 +55,6 @@ parking_lot.workspace = true
 crossbeam-channel.workspace = true
 windows.workspace = true
 raw-window-handle.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"

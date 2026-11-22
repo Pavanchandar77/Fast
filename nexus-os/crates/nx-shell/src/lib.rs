@@ -9,6 +9,7 @@ pub mod error;
 pub mod expose;
 pub mod gpui_views;
 pub mod host;
+pub mod icons;
 pub mod island;
 pub mod island_view;
 pub mod live;

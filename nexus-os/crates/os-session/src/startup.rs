@@ -174,6 +174,8 @@ fn start_shell() -> Result<ShellSession, String> {
     menu_bar.set_clock(nx_shell::ClockSample::now_local());
     let mut dock = DockModel::new(DockPlacement::bottom(MonitorId(1), canvas));
     dock.pin_defaults();
+    dock.pin_taskbar();
+    dock.set_auto_hide(true);
     dock.set_running("explorer", true);
     dock.set_running("privacy", true);
     Ok(ShellSession {
@@ -334,10 +336,13 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     // The island hugs the top edge so the fullscreen slit can sit flush.
     let island_y = sy;
 
-    let dock_w = 960.0;
-    let dock_h = 96.0;
-    let dock_x = sx + ((sw - dock_w) * 0.5).max(0.0);
-    let dock_y = sy + sh - dock_h - 8.0;
+    // Full width. Icons are stored at 128px and drawn at 44, so a slightly
+    // taller bar stays sharp.
+    let dock_w = sw.max(320.0);
+    // Tall enough for the hover bloom (icons grow to about 1.55x) without clipping.
+    let dock_h = 112.0;
+    let dock_x = sx;
+    let dock_y = sy + sh - dock_h;
 
     let spot_w = 1000.0;
     let spot_h = 580.0;
@@ -373,12 +378,26 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 ),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    #[cfg(windows)]
+                    nx_shell::capture::raise_topmost(window);
                     cx.new(|cx| IslandView::new(island_model, cx))
                 },
             )
             .ok();
 
-        let dock_model = shell.dock.clone();
+        let mut dock_model = shell.dock.clone();
+        let mut place = dock_model.placement;
+        place.bounds = Rect::new(sx, sy, sw, sh);
+        place.reveal_px = 64.0;
+        place.margin = 0.0;
+        dock_model.set_placement(place);
+        // Keep the dock on screen. Auto-hide was parking the shelf off the
+        // window, so hover and clicks never reached an icon.
+        dock_model.set_auto_hide(false);
+        dock_model.mag.rest = 44.0;
+        dock_model.mag.max_scale = 1.55;
+        dock_model.mag.padding = 8.0;
+        dock_model.mag.gap = 8.0;
         windows.dock_window = cx
             .open_window(
                 theme.shell_window_options(
@@ -392,6 +411,8 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 ),
                 move |window, cx| {
                     apply_rounded_native_corners(window);
+                    #[cfg(windows)]
+                    nx_shell::capture::raise_topmost(window);
                     cx.new(|_cx| DockView::new(dock_model))
                 },
             )
@@ -470,7 +491,9 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             .ok();
     }
 
-    // Opened last so it stacks above every other Nexus surface.
+    // Opened last so it stacks above every other Nexus surface, but it stays
+    // hidden until an effect is actually playing. A visible full-screen layer
+    // catches every click, including Privacy Shield, Files, and the dock.
     let work = Rect::new(sx, sy, sw, sh);
     let mut motion_opts = theme.shell_window_options(
         gpui::Bounds {
@@ -479,17 +502,41 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         },
         false,
         true,
-        true,
+        false,
     );
     motion_opts.focus = false;
     windows.motion_window = cx
-        .open_window(motion_opts, move |_window, cx| {
+        .open_window(motion_opts, move |window, cx| {
+            #[cfg(windows)]
+            {
+                nx_shell::capture::set_overlay_visible(window, false);
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                if let Ok(handle) = HasWindowHandle::window_handle(window) {
+                    if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                        nx_shell::capture::keep_overlay_hidden(win32.hwnd.get());
+                    }
+                }
+            }
             cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
         })
         .ok();
 
     install_shell_launch(&windows, cx);
     install_island_hooks(&windows, cx);
+    // The motion overlay is created last and would cover the pill. Lift the
+    // island after every other window exists.
+    if let Some(island) = windows.island_window {
+        let _ = island.update(cx, |_, window, _| {
+            #[cfg(windows)]
+            nx_shell::capture::raise_topmost(window);
+        });
+    }
+    if let Some(dock) = windows.dock_window {
+        let _ = dock.update(cx, |_, window, _| {
+            #[cfg(windows)]
+            nx_shell::capture::raise_topmost(window);
+        });
+    }
     windows
 }
 
@@ -644,20 +691,13 @@ fn apply_rounded_native_corners(window: &mut gpui::Window) {
     window.set_client_inset(gpui::px(WINDOW_FRAME_INSET));
     #[cfg(windows)]
     {
-        use nx_ui::platform::{apply_hwnd, BackdropRequest, CornerPreference, SystemBackdrop};
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
         if let Ok(handle) = window.window_handle() {
             if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                let hwnd = win32.hwnd.get();
-                let _ = apply_hwnd(
-                    hwnd,
-                    BackdropRequest {
-                        kind: SystemBackdrop::None,
-                        dark: true,
-                        corners: CornerPreference::Round,
-                    },
-                );
+                // Client chrome only. The system frame is the blue bar and the
+                // reason clicks never reach the buttons drawn inside.
+                let _ = nx_ui::platform::present_client_window(win32.hwnd.get());
             }
         }
     }

@@ -15,10 +15,12 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, GetWindowRect, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow,
-    SystemParametersInfoW, GWL_EXSTYLE, LWA_ALPHA, SPI_GETCLIENTAREAANIMATION, SW_HIDE,
-    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    GetWindowLongPtrW, GetWindowRect, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA,
+    SPI_GETCLIENTAREAANIMATION, SW_HIDE, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// `PW_RENDERFULLCONTENT`: capture DirectComposition / GPU content too.
@@ -153,21 +155,81 @@ pub fn disable_dwm_transitions(raw: isize) -> bool {
 
 /// Make the overlay click-through, non-activating, topmost, and hidden from
 /// Alt+Tab. Idempotent.
+///
+/// `SetLayeredWindowAttributes` is intentionally not used. On a DirectComposition
+/// window it replaces the per-pixel surface with a solid plate, which is the
+/// dark box, and it keeps the plate on top of every click.
 pub fn make_click_through(raw: isize) {
     unsafe {
         let h = hwnd(raw);
         let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
-        let bits = WS_EX_LAYERED.0
-            | WS_EX_TRANSPARENT.0
-            | WS_EX_NOACTIVATE.0
-            | WS_EX_TOOLWINDOW.0
-            | WS_EX_TOPMOST.0;
+        let bits = WS_EX_TRANSPARENT.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
         let want = ex | bits as isize;
         if want != ex {
             SetWindowLongPtrW(h, GWL_EXSTYLE, want);
-            let _ = SetLayeredWindowAttributes(h, COLORREF(0), 255, LWA_ALPHA);
+            let _ = SetWindowPos(
+                h,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
     }
+}
+
+/// Keep a shell window above fullscreen apps without activating it.
+pub fn raise_topmost(window: &mut gpui::Window) {
+    if let Some(raw) = gpui_hwnd(window) {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd(raw),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+        }
+    }
+}
+
+/// Let clicks fall through the dock while it is hidden. Does not move or
+/// resize the window: `SetWindowPos` from inside a GPUI update re-enters the
+/// window procedure and aborts the process.
+pub fn set_click_through(raw: isize, on: bool) {
+    unsafe {
+        let h = hwnd(raw);
+        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        let bit = WS_EX_TRANSPARENT.0 as isize;
+        let want = if on { ex | bit } else { ex & !bit };
+        if want == ex {
+            return;
+        }
+        SetWindowLongPtrW(h, GWL_EXSTYLE, want);
+    }
+    // Apply the extended style on the window's thread without borrowing GPUI.
+    // A synchronous SetWindowPos from the view update re-enters the window
+    // procedure and the process exits.
+    std::thread::spawn(move || unsafe {
+        let _ = SetWindowPos(
+            hwnd(raw),
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOACTIVATE
+                | SWP_FRAMECHANGED
+                | SWP_ASYNCWINDOWPOS,
+        );
+    });
 }
 
 fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
@@ -181,6 +243,20 @@ fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
 
 /// Show the overlay only while an effect runs. Even if click-through were
 /// refused, input is blocked at most for the length of one animation.
+/// GPUI can show a `show: false` window after the open callback returns.
+/// Hide the fullscreen overlay again once that has happened, or it sits on
+/// top of every click and paints a dark sheet.
+pub fn keep_overlay_hidden(raw: isize) {
+    // One hide after GPUI's first show. Repeating it fought the open animation
+    // and made windows appear to open and close several times.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        unsafe {
+            let _ = ShowWindow(hwnd(raw), SW_HIDE);
+        }
+    });
+}
+
 pub fn set_overlay_visible(window: &mut gpui::Window, visible: bool) {
     if let Some(raw) = gpui_hwnd(window) {
         make_click_through(raw);

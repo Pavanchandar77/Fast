@@ -61,6 +61,10 @@ pub fn route(text: &str) -> Option<Tool> {
     let l = lower.as_str();
     let has = |k: &str| l.contains(k);
 
+    if let Some(about) = about_self(l) {
+        return Some(about);
+    }
+
     if has("search the web")
         || has("google ")
         || has("look up")
@@ -224,6 +228,30 @@ pub fn route(text: &str) -> Option<Tool> {
     None
 }
 
+/// Identity questions must not be sent to the web. The model was answering
+/// from search snippets and could not say who it is.
+fn about_self(l: &str) -> Option<Tool> {
+    let asks = l.contains("who are you")
+        || l.contains("what are you")
+        || l.contains("your name")
+        || l.contains("who made you")
+        || l.contains("who created")
+        || l.contains("your creator")
+        || l.contains("who built you")
+        || l.contains("what is nexus")
+        || l.contains("what's nexus")
+        || l.contains("who is nexus")
+        || l == "nexus"
+        || l.contains("are you an ai")
+        || l.contains("are you ai");
+    if !asks {
+        return None;
+    }
+    Some(Tool::Reply {
+        text: "I'm Nexus. I live in the Dynamic Island on this Windows machine. Pavan created me. I know this computer: the apps that are open, what's playing, your files, volume, brightness, and the things you ask me to do. I am not a web search wearing a name.".into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +283,13 @@ mod tests {
                 label: String::new()
             })
         );
+        assert_eq!(
+            route("who are you"),
+            Some(Tool::Reply {
+                text: "I'm Nexus. I live in the Dynamic Island on this Windows machine. Pavan created me. I know this computer: the apps that are open, what's playing, your files, volume, brightness, and the things you ask me to do. I am not a web search wearing a name.".into(),
+            })
+        );
+        assert!(matches!(route("who is the president"), Some(Tool::WebSearch { .. })));
         assert_eq!(
             route("open notepad"),
             Some(Tool::OpenApp {

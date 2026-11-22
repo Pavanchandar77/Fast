@@ -126,7 +126,7 @@ impl PrivacyDashboardView {
             .items_center()
             .justify_between()
             .w_full()
-            .px(px(20.0 * theme.scale))
+            .pl(px(20.0 * theme.scale))
             .py(px(14.0 * theme.scale))
             .bg(theme.window_bg_hsla())
             .border_b_1()
@@ -140,7 +140,6 @@ impl PrivacyDashboardView {
                     .flex_row()
                     .items_center()
                     .gap(px(14.0 * theme.scale))
-                    .child(window_chrome(theme, theme.scale))
                     // App / Hub Title
                     .child(
                         div()
@@ -216,6 +215,7 @@ impl PrivacyDashboardView {
                             )
                     })),
             )
+            .child(window_chrome(theme, true))
     }
 
     fn render_tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {

@@ -9,7 +9,8 @@ use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PostThreadMessageW, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE,
-    EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW,
+    EVENT_OBJECT_UNCLOAKED,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART,
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
     WINEVENT_SKIPOWNPROCESS, WM_QUIT,
@@ -25,6 +26,8 @@ pub enum WindowEvent {
     WindowCloaked(WindowHandle),
     WindowUncloaked(WindowHandle),
     MoveSizeEnd(WindowHandle),
+    /// The window moved or changed size without a drag (maximize, restore).
+    Location(WindowHandle),
     /// The user grabbed a window's title bar or border.
     MoveSizeStart(WindowHandle),
     MinimizeStart(WindowHandle),
@@ -37,6 +40,7 @@ unsafe impl Send for SendWinEventHook {}
 unsafe impl Sync for SendWinEventHook {}
 
 static EVENT_SENDER: Mutex<Option<Sender<WindowEvent>>> = Mutex::new(None);
+static LAST_LOC: Mutex<Option<(isize, std::time::Instant)>> = Mutex::new(None);
 static HOOK_HANDLES: Mutex<Vec<SendWinEventHook>> = Mutex::new(Vec::new());
 static OWN_PID: AtomicU32 = AtomicU32::new(0);
 
@@ -62,6 +66,7 @@ impl WinEventListener {
                 (EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND),
                 (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
                 (EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE),
+                (EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
                 (EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
             ];
 
@@ -133,6 +138,16 @@ impl WinEventListener {
         if handle.pid() == own_pid {
             return;
         }
+        if event == EVENT_OBJECT_LOCATIONCHANGE {
+            let now = std::time::Instant::now();
+            let mut last = LAST_LOC.lock();
+            if let Some((hwnd_prev, at)) = *last {
+                if hwnd_prev == hwnd.0 as isize && now.duration_since(at).as_millis() < 90 {
+                    return;
+                }
+            }
+            *last = Some((hwnd.0 as isize, now));
+        }
 
         let event_opt = match event {
             EVENT_SYSTEM_FOREGROUND => Some(WindowEvent::ForegroundChanged(handle)),
@@ -140,6 +155,7 @@ impl WinEventListener {
             EVENT_OBJECT_DESTROY => Some(WindowEvent::WindowDestroyed(handle)),
             EVENT_OBJECT_SHOW => Some(WindowEvent::WindowShow(handle)),
             EVENT_OBJECT_HIDE => Some(WindowEvent::WindowHide(handle)),
+            EVENT_OBJECT_LOCATIONCHANGE => Some(WindowEvent::Location(handle)),
             EVENT_OBJECT_CLOAKED => Some(WindowEvent::WindowCloaked(handle)),
             EVENT_OBJECT_UNCLOAKED => Some(WindowEvent::WindowUncloaked(handle)),
             EVENT_SYSTEM_MOVESIZEEND => Some(WindowEvent::MoveSizeEnd(handle)),

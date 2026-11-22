@@ -22,7 +22,7 @@ suppress_native_taskbar = true
 [compositor.motion]
 reduce_motion = false             # Crossfades only; also forced on when Windows animations are off
 speed = 1.0                       # 0.25 - 4.0
-animate_foreign_windows = true    # Bloom/dust/ink other apps' windows from snapshots
+animate_foreign_windows = true    # One bloom, ink, or dust per open, size change, or close
 
 [compositor.spring]
 stiffness = 280.0                 # Spring tension (k)

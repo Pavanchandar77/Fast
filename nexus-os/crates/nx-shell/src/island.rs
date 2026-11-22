@@ -80,6 +80,8 @@ pub struct IslandModel {
     pub cpu: f32,
     pub ram_used: u64,
     pub ram_total: u64,
+    /// Used fraction of the system drive, 0..1.
+    pub disk: f32,
     pub now_playing: Option<(String, String)>,
     pub notifications: Vec<String>,
     cpu_prev: Option<(u64, u64)>,
@@ -112,10 +114,12 @@ impl IslandModel {
             cpu: 0.0,
             ram_used: 0,
             ram_total: 0,
+            disk: 0.0,
             now_playing: None,
             notifications: Vec::new(),
             cpu_prev: None,
         };
+        model.cpu_prev = sample_cpu();
         model.tick();
         model
     }
@@ -223,6 +227,7 @@ impl IslandModel {
         let (pct, charging) = sample_battery();
         self.battery_pct = pct;
         self.charging = charging;
+        self.disk = sample_disk();
     }
 
     pub fn ram_ratio(&self) -> f32 {
@@ -257,11 +262,98 @@ fn sample_memory() -> (u64, u64) {
                 available = parse_kb(rest);
             }
         }
-        (total.saturating_sub(available), total)
+        return (total.saturating_sub(available), total);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut status = MEMORYSTATUSEX {
+            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            ..MEMORYSTATUSEX::default()
+        };
+        if unsafe { GlobalMemoryStatusEx(&raw mut status) }.is_err() {
+            return (0, 0);
+        }
+        let total = status.ullTotalPhys;
+        return (total.saturating_sub(status.ullAvailPhys), total);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         (0, 0)
+    }
+}
+
+/// Current clipboard text, read straight from Windows. Empty when nothing
+/// text-like is on the clipboard.
+pub fn system_clipboard() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HGLOBAL;
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, GetClipboardData, OpenClipboard,
+        };
+        use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+        const CF_UNICODETEXT: u32 = 13;
+        unsafe {
+            if OpenClipboard(None).is_err() {
+                return None;
+            }
+            let Some(handle) = GetClipboardData(CF_UNICODETEXT).ok() else {
+                let _ = CloseClipboard();
+                return None;
+            };
+            let mem = HGLOBAL(handle.0);
+            let ptr = GlobalLock(mem);
+            if ptr.is_null() {
+                let _ = CloseClipboard();
+                return None;
+            }
+            let words = ptr as *const u16;
+            let mut len = 0usize;
+            while len < 8_000 && *words.add(len) != 0 {
+                len += 1;
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(words, len));
+            let _ = GlobalUnlock(mem);
+            let _ = CloseClipboard();
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn sample_disk() -> f32 {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        use windows::core::w;
+        let mut free = 0u64;
+        let mut total = 0u64;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                w!("C:\\"),
+                None,
+                Some(&raw mut total),
+                Some(&raw mut free),
+            )
+            .is_ok()
+        };
+        if ok && total > 0 {
+            return (1.0 - free as f32 / total as f32).clamp(0.0, 1.0);
+        }
+        return 0.0;
+    }
+    #[cfg(not(windows))]
+    {
+        0.0
     }
 }
 
@@ -292,7 +384,28 @@ fn sample_cpu() -> Option<(u64, u64)> {
         let total = nums.iter().sum();
         Some((idle, total))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::GetSystemTimes;
+        unsafe {
+            let mut idle = FILETIME::default();
+            let mut kernel = FILETIME::default();
+            let mut user = FILETIME::default();
+            GetSystemTimes(
+                Some(&raw mut idle),
+                Some(&raw mut kernel),
+                Some(&raw mut user),
+            )
+            .ok()?;
+            let idle = ((idle.dwHighDateTime as u64) << 32) | idle.dwLowDateTime as u64;
+            // Kernel time already includes idle.
+            let kernel = ((kernel.dwHighDateTime as u64) << 32) | kernel.dwLowDateTime as u64;
+            let user = ((user.dwHighDateTime as u64) << 32) | user.dwLowDateTime as u64;
+            Some((idle, kernel.saturating_add(user)))
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         None
     }
@@ -448,5 +561,99 @@ mod tests {
         assert!((model.ram_ratio() - 0.5).abs() < f32::EPSILON);
         model.ram_total = 0;
         assert_eq!(model.ram_ratio(), 0.0);
+    }
+
+    #[test]
+    fn windows_meters_read_the_machine() {
+        if !cfg!(windows) {
+            return;
+        }
+        let (used, total) = sample_memory();
+        assert!(
+            total > 512 * 1024 * 1024,
+            "RAM total was {total}, used {used}"
+        );
+        assert!(used > 0, "RAM used was 0");
+        let disk = sample_disk();
+        assert!(
+            disk > 0.01 && disk < 0.999,
+            "disk used fraction was {disk}"
+        );
+        let first = sample_cpu().expect("GetSystemTimes");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let second = sample_cpu().expect("GetSystemTimes again");
+        assert!(second.1 > first.1, "CPU counters did not move");
+    }
+
+    #[test]
+    fn meters_stay_honest_across_a_burst() {
+        if !cfg!(windows) {
+            return;
+        }
+        let mut model = IslandModel::new();
+        let started = std::time::Instant::now();
+        for _ in 0..300 {
+            model.tick();
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(400),
+            "300 meter ticks took {elapsed:?}"
+        );
+        assert!(model.ram_total > 512 * 1024 * 1024);
+        assert!(model.ram_used > 0);
+        assert!(model.disk > 0.01 && model.disk < 0.999);
+        assert!((0.0..=1.0).contains(&model.cpu));
+    }
+
+    #[test]
+    fn clipboard_roundtrip_is_instant() {
+        if !cfg!(windows) {
+            return;
+        }
+        let previous = system_clipboard();
+        let marker = format!("nexus-stress-{}", std::process::id());
+        let started = std::time::Instant::now();
+        set_clipboard(&marker);
+        let read = system_clipboard();
+        if let Some(text) = previous {
+            set_clipboard(&text);
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(250),
+            "clipboard took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(read.as_deref(), Some(marker.as_str()));
+    }
+
+    #[cfg(windows)]
+    fn set_clipboard(text: &str) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        };
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            for _ in 0..8 {
+                if OpenClipboard(None).is_ok() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let _ = EmptyClipboard();
+            let mem = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).expect("clipboard alloc");
+            let ptr = GlobalLock(mem);
+            assert!(!ptr.is_null());
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr.cast(), wide.len());
+            let _ = GlobalUnlock(mem);
+            let _ = SetClipboardData(13, windows::Win32::Foundation::HANDLE(mem.0));
+            let _ = CloseClipboard();
+        }
     }
 }

@@ -43,8 +43,8 @@ impl DockPlacement {
             monitor,
             edge: DockEdge::Bottom,
             bounds,
-            margin: 6.0,
-            reveal_px: 8.0,
+            margin: 0.0,
+            reveal_px: 48.0,
         }
     }
 }
@@ -95,6 +95,8 @@ pub struct DockApp {
     pub frontmost: bool,
     pub windows: Vec<WindowId>,
     pub jumps: Vec<String>,
+    /// What to start when the icon is clicked. Empty means `id`.
+    pub launch: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,9 +161,10 @@ impl IconMotion {
 }
 
 fn scale_spring() -> Spring {
-    let mut reveal = Spring::new(1.0, SpringConfig::macos(0.34, 1.0));
-    reveal.config.rest_pos = 0.01;
-    reveal.config.rest_vel = 0.04;
+    // Short period, a little overshoot: the shelf pops instead of gliding.
+    let mut reveal = Spring::new(1.0, SpringConfig::macos(0.16, 0.58));
+    reveal.config.rest_pos = 0.008;
+    reveal.config.rest_vel = 0.25;
     reveal
 }
 
@@ -330,12 +333,27 @@ impl DockModel {
     }
 
     pub fn pin(&mut self, id: impl Into<String>, label: impl Into<String>) {
+        self.pin_launch(id, label, "");
+    }
+
+    /// Pin an app. `launch` is the path started on click (a taskbar shortcut).
+    /// `id` is the exe name used to light the running dot.
+    pub fn pin_launch(
+        &mut self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        launch: impl Into<String>,
+    ) {
         let id = id.into();
         let label = label.into();
+        let launch = launch.into();
         if let Some(existing) = self.items.iter_mut().find(|item| item.id == id) {
             existing.pinned = true;
             if existing.label.is_empty() {
                 existing.label = label;
+            }
+            if !launch.is_empty() {
+                existing.launch = launch;
             }
         } else {
             self.items.push(DockApp {
@@ -346,24 +364,100 @@ impl DockModel {
                 frontmost: false,
                 windows: Vec::new(),
                 jumps: Vec::new(),
+                launch: if launch.is_empty() { id } else { launch },
             });
         }
         self.reconcile_motion();
         self.retarget();
     }
 
-    /// Default shelf when the host has not yet published running apps:
-    /// Explorer, Spotlight, Privacy, Terminal, Settings, then Trash.
+    /// Nexus surfaces only. The user's own apps come from the Windows taskbar.
     pub fn pin_defaults(&mut self) {
-        for (id, label) in [
-            ("explorer", "Explorer"),
-            ("spotlight", "Spotlight"),
-            ("privacy", "Privacy"),
-            ("terminal", "Terminal"),
-            ("settings", "Settings"),
-            ("trash", "Trash"),
-        ] {
+        for (id, label) in [("explorer", "Explorer"), ("privacy", "Privacy"), ("trash", "Trash")] {
             self.pin(id, label);
+        }
+    }
+
+    /// Pins the user added to the Windows taskbar, in name order.
+    pub fn pin_taskbar(&mut self) {
+        for (id, label, launch) in taskbar_pins() {
+            self.pin_launch(id, label, launch);
+        }
+    }
+
+    pub fn reveal(&self) -> f32 {
+        self.reveal.position
+    }
+
+    /// Light the running dot for pinned apps whose exe is in `names`.
+    /// The built-in shelf is left to the session.
+    pub fn note_running_exes(&mut self, names: &[String]) {
+        for item in &mut self.items {
+            if matches!(item.id.as_str(), "explorer" | "privacy" | "trash") {
+                continue;
+            }
+            if item.windows.is_empty() {
+                item.running = names.iter().any(|n| n == &item.id);
+            }
+        }
+    }
+
+    /// Show every app currently on the taskbar, pinned or not.
+    /// Pinned icons stay put. An app that closes drops off unless it is pinned.
+    pub fn note_taskbar(&mut self, buttons: &[(String, String, String)]) {
+        let mut live = std::collections::HashSet::new();
+        let mut changed = false;
+        for (id, label, launch) in buttons {
+            live.insert(id.clone());
+            if let Some(item) = self.items.iter_mut().find(|item| &item.id == id) {
+                if item.windows.is_empty() && !item.running {
+                    item.running = true;
+                    changed = true;
+                }
+                if item.launch.is_empty() || item.launch == item.id {
+                    if !launch.is_empty() {
+                        item.launch = launch.clone();
+                    }
+                }
+            } else {
+                self.items.push(DockApp {
+                    id: id.clone(),
+                    label: label.clone(),
+                    pinned: false,
+                    running: true,
+                    frontmost: false,
+                    windows: Vec::new(),
+                    jumps: Vec::new(),
+                    launch: if launch.is_empty() {
+                        id.clone()
+                    } else {
+                        launch.clone()
+                    },
+                });
+                changed = true;
+            }
+        }
+        let before = self.items.len();
+        self.items.retain(|item| {
+            item.pinned
+                || matches!(item.id.as_str(), "explorer" | "privacy" | "trash")
+                || live.contains(&item.id)
+        });
+        if self.items.len() != before {
+            changed = true;
+        }
+        for item in &mut self.items {
+            if item.pinned || matches!(item.id.as_str(), "explorer" | "privacy" | "trash") {
+                continue;
+            }
+            if item.windows.is_empty() && !live.contains(&item.id) && item.running {
+                item.running = false;
+                changed = true;
+            }
+        }
+        if changed {
+            self.reconcile_motion();
+            self.retarget();
         }
     }
 
@@ -390,6 +484,11 @@ impl DockModel {
 
     pub fn set_auto_hide(&mut self, enabled: bool) {
         self.auto_hide = enabled;
+        if enabled && self.pointer.is_none() && self.context.is_none() {
+            self.reveal.position = 0.0;
+            self.reveal.velocity = 0.0;
+            self.reveal.set_target(0.0);
+        }
         self.retarget();
     }
 
@@ -449,13 +548,14 @@ impl DockModel {
                 continue;
             }
             self.items.push(DockApp {
-                id,
+                id: id.clone(),
                 label,
                 pinned: false,
                 running: true,
                 frontmost: is_front,
                 windows: wins,
                 jumps: Vec::new(),
+                launch: id,
             });
         }
         self.items.retain(|item| item.pinned || item.running);
@@ -473,6 +573,12 @@ impl DockModel {
     pub fn pointer_left(&mut self) {
         self.pointer = None;
         self.retarget();
+    }
+
+    /// The pointer is on the physical bottom edge. `retarget` can disagree
+    /// with that and park the shelf; this puts the target back to open.
+    pub fn force_reveal(&mut self) {
+        self.reveal.set_target(1.0);
     }
 
     pub fn step(&mut self, dt: f32) {
@@ -654,7 +760,10 @@ impl DockModel {
         let reach = self.placement.reveal_px.max(0.0) + self.placement.margin;
         match self.placement.edge {
             DockEdge::Bottom => {
-                point.y >= bounds.bottom() - reach && point.y <= bounds.bottom() + 2.0
+                // The pointer is in physical pixels divided by the window scale.
+                // The screen edge can sit a few dozen px past the logical bottom
+                // (taskbar, DPI). A 2px slop made the shelf stay hidden.
+                point.y >= bounds.bottom() - reach && point.y <= bounds.bottom() + 96.0
             }
             DockEdge::Left => point.x <= bounds.x + reach,
             DockEdge::Right => point.x >= bounds.right() - reach,
@@ -667,6 +776,281 @@ impl DockModel {
             .map(|motion| motion.bounce.position)
             .unwrap_or(0.0)
     }
+}
+
+/// Shortcuts the user pinned to the Windows taskbar.
+pub fn taskbar_pins() -> Vec<(String, String, String)> {
+    #[cfg(windows)]
+    {
+        let Some(appdata) = std::env::var_os("APPDATA") else {
+            return Vec::new();
+        };
+        let dir = std::path::PathBuf::from(appdata)
+            .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+        let mut pins = Vec::new();
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_none_or(|ext| !ext.eq_ignore_ascii_case("lnk"))
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().to_string()) else {
+                continue;
+            };
+            if stem.eq_ignore_ascii_case("File Explorer") {
+                continue;
+            }
+            let id = exe_id_from_lnk(&path).unwrap_or_else(|| stem.to_ascii_lowercase());
+            if matches!(id.as_str(), "explorer" | "nexus" | "nexus-os") {
+                continue;
+            }
+            pins.push((id, stem, path.to_string_lossy().to_string()));
+        }
+        pins.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+        pins
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// Apps that currently have a taskbar button: (exe id, window title, exe path).
+pub fn taskbar_buttons() -> Vec<(String, String, String)> {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowTextLengthW,
+            GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_OWNER,
+            WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+        };
+
+        struct Row {
+            id: String,
+            label: String,
+            launch: String,
+        }
+        let mut rows: Vec<Row> = Vec::new();
+        unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            // A panic inside EnumWindows is delivered as a fatal callback
+            // exception and the process disappears.
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                each_window(hwnd, lparam)
+            }));
+            caught.unwrap_or(BOOL(1))
+        }
+        unsafe fn each_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let rows = &mut *(lparam.0 as *mut Vec<Row>);
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let owned = GetWindow(hwnd, GW_OWNER).unwrap_or(HWND(std::ptr::null_mut()));
+            let tool = ex & WS_EX_TOOLWINDOW.0 != 0;
+            let app = ex & WS_EX_APPWINDOW.0 != 0;
+            if tool && !app {
+                return BOOL(1);
+            }
+            if !owned.0.is_null() && !app {
+                return BOOL(1);
+            }
+            let mut class = [0u16; 64];
+            let n = GetClassNameW(hwnd, &mut class) as usize;
+            let class = String::from_utf16_lossy(&class[..n]);
+            if matches!(
+                class.as_str(),
+                "Shell_TrayWnd"
+                    | "Shell_SecondaryTrayWnd"
+                    | "Progman"
+                    | "WorkerW"
+                    | "DV2ControlHost"
+                    | "MsgrIMEWindowClass"
+                    | "Windows.UI.Core.CoreWindow"
+            ) {
+                return BOOL(1);
+            }
+            let len = GetWindowTextLengthW(hwnd);
+            if len <= 0 {
+                return BOOL(1);
+            }
+            let len = len.min(512);
+            let mut title = vec![0u16; len as usize + 1];
+            let got = GetWindowTextW(hwnd, &mut title) as usize;
+            let label = String::from_utf16_lossy(&title[..got]).trim().to_string();
+            if label.is_empty() {
+                return BOOL(1);
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == 0 || pid == std::process::id() {
+                return BOOL(1);
+            }
+            let Ok(proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return BOOL(1);
+            };
+            let mut buf = [0u16; 1024];
+            let mut size = buf.len() as u32;
+            let path = if QueryFullProcessImageNameW(
+                proc,
+                PROCESS_NAME_WIN32,
+                windows::core::PWSTR(buf.as_mut_ptr()),
+                &raw mut size,
+            )
+            .is_ok()
+            {
+                OsString::from_wide(&buf[..size as usize])
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                String::new()
+            };
+            let _ = CloseHandle(proc);
+            let mut id = normalize_id(&path);
+            if id.is_empty() {
+                id = label.to_ascii_lowercase();
+            }
+            if matches!(
+                id.as_str(),
+                "explorer" | "nexus" | "nexus-os" | "searchhost" | "startmenuexperiencehost"
+                    | "textinputhost" | "systemsettings"
+            ) {
+                return BOOL(1);
+            }
+            // One process hosts every Store app. Keep each window.
+            if id == "applicationframehost" {
+                id = format!("app-{}", label.to_ascii_lowercase());
+            }
+            rows.push(Row {
+                id,
+                label,
+                launch: path,
+            });
+            BOOL(1)
+        }
+        unsafe {
+            let _ = EnumWindows(Some(each), LPARAM(&raw mut rows as isize));
+        }
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for row in rows {
+            if seen.insert(row.id.clone()) {
+                out.push((row.id, row.label, row.launch));
+            }
+        }
+        out
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// Image names of running processes, lowercased and without `.exe`.
+pub fn running_exe_ids() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+        let mut out = Vec::new();
+        unsafe {
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+                return out;
+            };
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..PROCESSENTRY32W::default()
+            };
+            if Process32FirstW(snap, &mut entry).is_ok() {
+                loop {
+                    let end = entry
+                        .szExeFile
+                        .iter()
+                        .position(|c| *c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                    let id = normalize_id(&name);
+                    if !id.is_empty() {
+                        out.push(id);
+                    }
+                    if Process32NextW(snap, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snap);
+        }
+        out
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// Best-effort exe stem from a `.lnk`. The shortcut's target is stored as
+/// UTF-16 near the `.exe` marker.
+fn exe_id_from_lnk(path: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut i = 0;
+    while i + 8 <= bytes.len() {
+        let exe = bytes[i] == b'.'
+            && bytes[i + 1] == 0
+            && bytes[i + 2].eq_ignore_ascii_case(&b'e')
+            && bytes[i + 3] == 0
+            && bytes[i + 4].eq_ignore_ascii_case(&b'x')
+            && bytes[i + 5] == 0
+            && bytes[i + 6].eq_ignore_ascii_case(&b'e')
+            && bytes[i + 7] == 0;
+        if exe {
+            let mut start = i;
+            while start >= 2 {
+                let prev = u16::from_le_bytes([bytes[start - 2], bytes[start - 1]]);
+                if prev == 0 || prev < 32 {
+                    break;
+                }
+                start -= 2;
+            }
+            let mut name_at = start;
+            let mut k = start;
+            while k + 1 < i {
+                let ch = u16::from_le_bytes([bytes[k], bytes[k + 1]]);
+                if ch == u16::from(b'\\') || ch == u16::from(b'/') {
+                    name_at = k + 2;
+                }
+                k += 2;
+            }
+            let mut name = String::new();
+            let mut k = name_at;
+            while k + 1 < i {
+                let ch = u16::from_le_bytes([bytes[k], bytes[k + 1]]);
+                if ch == 0 {
+                    break;
+                }
+                name.push(char::from_u32(u32::from(ch)).unwrap_or('?'));
+                k += 2;
+            }
+            if !name.is_empty() {
+                return Some(name.to_ascii_lowercase());
+            }
+        }
+        i += 2;
+    }
+    None
 }
 
 fn normalize_id(process: &str) -> String {
@@ -927,18 +1311,88 @@ mod tests {
         dock.pin_defaults();
         dock.set_running("explorer", true);
         let ids: Vec<&str> = dock.items().iter().map(|i| i.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            [
-                "explorer",
-                "spotlight",
-                "privacy",
-                "terminal",
-                "settings",
-                "trash"
-            ]
-        );
+        assert_eq!(ids, ["explorer", "privacy", "trash"]);
         assert!(dock.items()[0].running);
         assert!(dock.items().last().is_some_and(|i| i.id == "trash"));
+        assert!(dock.items().iter().all(|item| item.id != "terminal"));
+    }
+
+    #[test]
+    fn auto_hide_starts_parked() {
+        let mut dock = DockModel::new(placement());
+        dock.pin("chrome", "Chrome");
+        dock.set_auto_hide(true);
+        assert!(dock.reveal() < 0.05);
+        assert!(!dock.wants_visible());
+    }
+
+    #[test]
+    fn real_taskbar_is_on_the_dock_and_the_shelf_pops_fast() {
+        if !cfg!(windows) {
+            return;
+        }
+        let pins = taskbar_pins();
+        for (_id, _label, path) in &pins {
+            assert!(
+                std::path::Path::new(path).is_file(),
+                "pinned shortcut missing: {path}"
+            );
+        }
+        let buttons = taskbar_buttons();
+        let started = std::time::Instant::now();
+        for _ in 0..40 {
+            let _ = taskbar_buttons();
+            let _ = running_exe_ids();
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "taskbar scan took {:?}",
+            started.elapsed()
+        );
+
+        let mut dock = DockModel::new(DockPlacement::bottom(
+            MonitorId(0),
+            Rect::new(0.0, 0.0, 1920.0, 1080.0),
+        ));
+        dock.pin_defaults();
+        dock.pin_taskbar();
+        dock.note_taskbar(&buttons);
+        dock.set_auto_hide(true);
+        let ids: Vec<&str> = dock.items().iter().map(|item| item.id.as_str()).collect();
+        assert!(ids.contains(&"explorer"));
+        assert!(ids.contains(&"privacy"));
+        assert!(ids.contains(&"trash"));
+        assert!(!ids.iter().any(|id| *id == "terminal"));
+        for (id, _label, path) in &pins {
+            let item = dock
+                .items()
+                .iter()
+                .find(|item| &item.id == id)
+                .unwrap_or_else(|| panic!("pin {id} missing"));
+            assert_eq!(&item.launch, path);
+        }
+        for (id, _label, path) in &buttons {
+            let item = dock
+                .items()
+                .iter()
+                .find(|item| &item.id == id)
+                .unwrap_or_else(|| panic!("running app {id} missing"));
+            assert!(item.running, "{id} has no running dot");
+            if !path.is_empty() {
+                assert!(std::path::Path::new(path).is_file(), "{path}");
+            }
+        }
+        assert!(dock.reveal() < 0.05);
+        dock.pointer_moved(Point::new(960.0, 1076.0));
+        let mut shown_at = None;
+        for step in 0..30 {
+            dock.step(0.008);
+            if dock.reveal() > 0.8 {
+                shown_at = Some(step);
+                break;
+            }
+        }
+        let step = shown_at.expect("dock did not pop");
+        assert!(step * 8 <= 200, "dock took {}ms to pop", step * 8);
     }
 }

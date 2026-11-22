@@ -376,6 +376,7 @@ impl WindowManager {
                 }
             }
             WindowEvent::MoveSizeStart(_) => {}
+            WindowEvent::Location(_) => {}
             WindowEvent::MoveSizeEnd(hwnd) => {
                 if let Some(win) = self.windows.get_mut(&hwnd) {
                     if let Ok(rect) = hwnd.rect() {

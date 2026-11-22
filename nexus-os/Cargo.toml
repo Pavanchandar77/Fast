@@ -77,6 +77,7 @@ gpui = { version = "0.2.2", features = ["test-support"] }
 
 [patch.crates-io]
 xattr = { path = "patches/xattr" }
+gpui = { path = "patches/gpui" }
 
 # The on-device assistant runs a quantized LLM on CPU; keep its math hot even
 # in dev builds so the island answers in real time.

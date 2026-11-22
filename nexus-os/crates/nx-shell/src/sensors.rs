@@ -199,14 +199,14 @@ pub fn windows_build_status() -> Option<SensorEvent> {
         .filter(|p| !p.is_empty() && *p != version);
     let _ = std::fs::create_dir_all(marker.parent().unwrap_or(Path::new(".")));
     let _ = std::fs::write(&marker, &version);
-    let probes = nx_compat::global_probe_manager().probe_all();
-    let probes_ok = probes.iter().filter(|p| p.status.is_operational()).count();
+    // Capability probes walk a lot of Win32 and used to run on the island's
+    // UI tick. The build string is a registry read; the probe pass is not.
     Some(SensorEvent::WindowsBuild {
         version,
         previous,
         reboot_pending: platform::reboot_pending(),
-        probes_ok,
-        probes_total: probes.len(),
+        probes_ok: 0,
+        probes_total: 0,
     })
 }
 
@@ -736,7 +736,7 @@ mod platform {
             GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
         use windows::Win32::UI::Shell::{
-            SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE,
+            SHQueryUserNotificationState, QUNS_PRESENTATION_MODE,
             QUNS_RUNNING_D3D_FULL_SCREEN,
         };
         use windows::Win32::UI::WindowsAndMessaging::{
@@ -744,10 +744,10 @@ mod platform {
         };
         unsafe {
             if let Ok(state) = SHQueryUserNotificationState() {
-                if state == QUNS_RUNNING_D3D_FULL_SCREEN
-                    || state == QUNS_BUSY
-                    || state == QUNS_PRESENTATION_MODE
-                {
+                // QUNS_BUSY is also reported for an ordinary desktop. Treating
+                // it as fullscreen collapsed the island to a slit, so the pill
+                // looked like it was not there.
+                if state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE {
                     return Some(true);
                 }
             }
@@ -835,8 +835,29 @@ mod platform {
 
     fn session() -> Option<windows::Media::Control::GlobalSystemMediaTransportControlsSession> {
         use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Mgr;
+        use windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus as St;
         let mgr = Mgr::RequestAsync().ok()?.get().ok()?;
-        mgr.GetCurrentSession().ok()
+        let sessions = mgr.GetSessions().ok()?;
+        let count = sessions.Size().ok()?;
+        let mut idle = None;
+        for i in 0..count {
+            let Ok(s) = sessions.GetAt(i) else {
+                continue;
+            };
+            let playing = s
+                .GetPlaybackInfo()
+                .ok()
+                .and_then(|p| p.PlaybackStatus().ok())
+                .map(|st| st == St::Playing)
+                .unwrap_or(false);
+            if playing {
+                return Some(s);
+            }
+            if idle.is_none() {
+                idle = Some(s);
+            }
+        }
+        idle.or_else(|| mgr.GetCurrentSession().ok())
     }
 
     pub fn now_playing() -> Option<NowPlaying> {

@@ -18,7 +18,7 @@ use os_compositor::hooks::WindowEvent;
 use os_core::window::WindowHandle;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, SetForegroundWindow, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    GetCursorPos, SetForegroundWindow,
 };
 
 use crate::motion_plan::{LifeEvent, MotionPlanner, Plan};
@@ -62,6 +62,14 @@ pub enum UiMotion {
         px: Pixels,
         hide: Option<BloomHide>,
     },
+    /// Maximize or restore-down. `from` is where it was, `to` is where it lands.
+    Zoom {
+        key: u64,
+        from: Rect,
+        to: Rect,
+        px: Pixels,
+        hide: Option<BloomHide>,
+    },
     Ripple {
         rect: Rect,
     },
@@ -102,6 +110,8 @@ pub struct MotionBridge {
     foreground: Option<u64>,
     dragging: Option<u64>,
     pub animate_foreign: bool,
+    /// Show/hide events caused by our own hide are ignored until this time.
+    fx_quiet: HashMap<u64, Instant>,
 }
 
 fn handle(key: u64) -> WindowHandle {
@@ -110,6 +120,10 @@ fn handle(key: u64) -> WindowHandle {
 
 fn key_of(h: &WindowHandle) -> u64 {
     h.raw().0 as isize as u64
+}
+
+fn sane_window(r: &Rect) -> bool {
+    r.w >= 120.0 && r.h >= 80.0 && r.w <= 8_000.0 && r.h <= 8_000.0
 }
 
 fn cursor() -> (f32, f32) {
@@ -165,7 +179,19 @@ impl MotionBridge {
             foreground: None,
             dragging: None,
             animate_foreign,
+            fx_quiet: HashMap::new(),
         }
+    }
+
+    fn quiet(&self, key: u64) -> bool {
+        self.fx_quiet
+            .get(&key)
+            .is_some_and(|until| Instant::now() < *until)
+    }
+
+    fn arm(&mut self, key: u64) {
+        self.fx_quiet
+            .insert(key, Instant::now() + Duration::from_millis(700));
     }
 
     /// Windows already on screen at startup: no open animation, but cache
@@ -226,8 +252,63 @@ impl MotionBridge {
         }
     }
 
+    /// Maximize and restore-down. One bloom, then the real window is shown
+    /// again at the size Windows already chose. We never resize it ourselves.
+    fn on_location(&mut self, h: &WindowHandle) -> Vec<UiMotion> {
+        if !self.animate_foreign {
+            return Vec::new();
+        }
+        let key = key_of(h);
+        if self.quiet(key) || self.dragging == Some(key) || !h.is_manageable() {
+            return Vec::new();
+        }
+        let Some(now) = capture::window_rect(key as isize) else {
+            return Vec::new();
+        };
+        let Some(old) = self.cache.get(&key).map(|c| c.rect) else {
+            return Vec::new();
+        };
+        if !sane_window(&now) || !sane_window(&old) {
+            return Vec::new();
+        }
+        let old_area = old.w * old.h;
+        let now_area = now.w * now.h;
+        let grew = now_area > old_area * 1.55 && now.w > old.w + 100.0;
+        let shrank = old_area > now_area * 1.55 && old.w > now.w + 100.0;
+        if let Some(cached) = self.cache.get_mut(&key) {
+            cached.rect = now;
+        }
+        if !grew && !shrank {
+            return Vec::new();
+        }
+        let Some((_, px)) = self.cached_px(key) else {
+            return Vec::new();
+        };
+        self.arm(key);
+        let from = if grew {
+            old
+        } else {
+            Rect::new(
+                now.x + now.w * 0.5 - 36.0,
+                now.y + now.h * 0.5 - 36.0,
+                72.0,
+                72.0,
+            )
+        };
+        vec![UiMotion::Zoom {
+            key,
+            from,
+            to: now,
+            px,
+            hide: BloomHide::new(key as isize),
+        }]
+    }
+
     /// Feed one WinEvent. Only manageable top-level windows animate.
     pub fn on_window_event(&mut self, ev: &WindowEvent, floating: bool) -> Vec<UiMotion> {
+        if let WindowEvent::Location(h) = ev {
+            return self.on_location(h);
+        }
         let (life, h) = match ev {
             WindowEvent::ForegroundChanged(h) => (LifeEvent::Foreground(key_of(h)), h),
             WindowEvent::WindowShow(h) => (LifeEvent::Shown(key_of(h)), h),
@@ -239,6 +320,17 @@ impl MotionBridge {
             WindowEvent::MoveSizeEnd(h) => (LifeEvent::DragEnd(key_of(h)), h),
             _ => return Vec::new(),
         };
+        let key = key_of(h);
+        let echo = matches!(
+            ev,
+            WindowEvent::WindowShow(_)
+                | WindowEvent::WindowHide(_)
+                | WindowEvent::WindowCloaked(_)
+                | WindowEvent::WindowUncloaked(_)
+        );
+        if echo && self.quiet(key) {
+            return Vec::new();
+        }
         // Destroyed windows can no longer be queried; trust the planner.
         let destroyed = matches!(ev, WindowEvent::WindowDestroyed(_));
         if !destroyed && !h.is_manageable() && !matches!(ev, WindowEvent::WindowHide(_)) {
@@ -262,43 +354,52 @@ impl MotionBridge {
                     }
                 }
                 Plan::Open(k) if self.animate_foreign => {
-                    let hide = BloomHide::new(k as isize);
                     if let Some((rect, px)) = self.fresh_px(k) {
-                        out.push(UiMotion::Open {
-                            key: k,
-                            app: app_id(h),
-                            rect,
-                            px,
-                            hide,
-                        });
+                        if sane_window(&rect) {
+                            self.arm(k);
+                            out.push(UiMotion::Open {
+                                key: k,
+                                app: app_id(h),
+                                rect,
+                                px,
+                                hide: BloomHide::new(k as isize),
+                            });
+                        }
                     }
-                    // No pixels: `hide` drops here and the window reappears.
                 }
                 Plan::Restore(k) if self.animate_foreign => {
-                    let hide = BloomHide::new(k as isize);
                     if let Some((rect, px)) = self.fresh_px(k) {
-                        out.push(UiMotion::Restore {
-                            key: k,
-                            app: app_id(h),
-                            rect,
-                            px,
-                            hide,
-                        });
+                        if sane_window(&rect) {
+                            self.arm(k);
+                            out.push(UiMotion::Restore {
+                                key: k,
+                                app: app_id(h),
+                                rect,
+                                px,
+                                hide: BloomHide::new(k as isize),
+                            });
+                        }
                     }
                 }
                 Plan::Close(k) if self.animate_foreign => {
                     if let Some((rect, px)) = self.cached_px(k) {
-                        out.push(UiMotion::Close { key: k, rect, px });
+                        if sane_window(&rect) {
+                            self.arm(k);
+                            out.push(UiMotion::Close { key: k, rect, px });
+                        }
                     }
                 }
                 Plan::Minimize(k) if self.animate_foreign => {
                     if let Some((rect, px)) = self.cached_px(k) {
-                        out.push(UiMotion::Minimize {
-                            key: k,
-                            app: app_id(h),
-                            rect,
-                            px,
-                        });
+                        if sane_window(&rect) {
+                            self.arm(k);
+                            out.push(UiMotion::Minimize {
+                                key: k,
+                                app: app_id(h),
+                                rect,
+                                px,
+                            });
+                        }
                     }
                 }
                 Plan::DragBegin(k) => {
@@ -466,6 +567,18 @@ pub fn apply(
                 o.minimize(key, s, rect, anchor, None);
             });
         }
+        UiMotion::Zoom {
+            key,
+            from,
+            to,
+            px,
+            hide,
+        } => {
+            let s = snap(px);
+            with_motion(windows, cx, move |o| {
+                o.grow(key, s, to, from, Some(Box::new(move |_| drop(hide))));
+            });
+        }
         UiMotion::Ripple { rect } => with_motion(windows, cx, |o| o.focus_ripple(rect)),
         UiMotion::DragBegin {
             key,
@@ -485,21 +598,9 @@ pub fn apply(
             state.set_peek(false);
             let mut target = None;
             with_motion(windows, cx, |o| target = o.drag_end(None));
-            if let (true, Some(t), Some(k)) = (may_snap, target, state.drag_key.take()) {
-                if k == key {
-                    unsafe {
-                        let _ = SetWindowPos(
-                            HWND(k as isize as *mut _),
-                            HWND::default(),
-                            t.x as i32,
-                            t.y as i32,
-                            t.w as i32,
-                            t.h as i32,
-                            SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
-                    }
-                }
-            }
+            // The snap rect was landing on a screen edge and leaving the
+            // window there. The real window stays where Windows put it.
+            let _ = (may_snap, target, key);
         }
         UiMotion::Switcher { cards } => {
             if cards.is_empty() {

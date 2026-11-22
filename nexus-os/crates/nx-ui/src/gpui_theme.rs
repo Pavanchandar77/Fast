@@ -8,8 +8,9 @@ use crate::spring::Spring;
 use crate::theme::Theme;
 use crate::tokens::{TypeStep, Weight, CORNER_SMOOTHING};
 use gpui::{
-    div, px, Bounds, FontWeight, Global, Hsla, IntoElement, ParentElement, Pixels, Rgba,
-    SharedString, Styled, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    div, px, App, Bounds, ClickEvent, FontWeight, Global, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Rgba, SharedString, StatefulInteractiveElement, Styled, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowKind,
     WindowOptions,
 };
 
@@ -223,31 +224,81 @@ impl Theme {
     }
 }
 
-/// Monochrome window-control cluster: close / minimize / zoom as glyphs, no traffic-light colors.
-pub fn window_chrome(theme: &Theme, scale: f32) -> impl IntoElement {
-    let glyph = |mark: &'static str| {
+/// Windows caption button. 46×32 is the default title-bar hit target.
+pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
+/// Windows caption button height.
+pub const CAPTION_BUTTON_HEIGHT: f32 = 32.0;
+
+/// Minimize, maximize, close, in that order, flush on the right.
+///
+/// `live` wires the buttons to this window. Preview tiles pass `false` so a
+/// picture of a window does not minimize the shell.
+pub fn window_chrome(theme: &Theme, live: bool) -> impl IntoElement {
+    let text = theme.text_primary_hsla();
+    let hover = theme.hover_hsla();
+    let close_hover = Hsla::from(Rgba {
+        r: 0.91,
+        g: 0.067,
+        b: 0.137,
+        a: 1.0,
+    });
+    let on_close = Hsla::from(Rgba {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let button = move |id: &'static str, mark: &'static str, close: bool| {
+        let text = text;
+        let hover = hover;
+        let close_hover = close_hover;
+        let on_close = on_close;
+        let area = match id {
+            "min" => WindowControlArea::Min,
+            "max" => WindowControlArea::Max,
+            _ => WindowControlArea::Close,
+        };
         div()
-            .w(px(18.0 * scale))
-            .h(px(18.0 * scale))
-            .rounded(px(theme.radii.xs))
-            .border_1()
-            .border_color(theme.separator_hsla())
+            .id(id)
+            .window_control_area(area)
+            .w(px(CAPTION_BUTTON_WIDTH))
+            .h(px(CAPTION_BUTTON_HEIGHT))
             .flex()
+            .flex_none()
             .items_center()
             .justify_center()
-            .text_size(px(10.0 * scale))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(theme.text_secondary_hsla())
+            .text_size(px(12.0))
+            .font_weight(FontWeight::NORMAL)
+            .text_color(text)
+            .hover(move |style| {
+                if close {
+                    style.bg(close_hover).text_color(on_close)
+                } else {
+                    style.bg(hover)
+                }
+            })
+            .on_click(move |_: &ClickEvent, window: &mut Window, _: &mut App| {
+                if !live {
+                    return;
+                }
+                match id {
+                    "min" => window.minimize_window(),
+                    "max" => window.zoom_window(),
+                    "close" => window.remove_window(),
+                    _ => {}
+                }
+            })
             .child(mark)
     };
     div()
         .flex()
         .flex_row()
+        .flex_none()
         .items_center()
-        .gap(px(6.0 * scale))
-        .child(glyph("×"))
-        .child(glyph("–"))
-        .child(glyph("□"))
+        .h(px(CAPTION_BUTTON_HEIGHT))
+        .child(button("min", "–", false))
+        .child(button("max", "□", false))
+        .child(button("close", "×", true))
 }
 
 /// Inset around the rounded window body so the hairline and soft shadow can

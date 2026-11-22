@@ -8,4 +8,4 @@ pub use backdrop::{BackdropRequest, CornerPreference, SystemBackdrop};
 mod win;
 
 #[cfg(windows)]
-pub use win::apply_hwnd;
+pub use win::{apply_hwnd, present_client_window};
