@@ -268,6 +268,19 @@ impl Spotlight {
         self.add_item(id, title, subtitle, ProviderKind::App);
     }
 
+    pub fn add_file(&mut self, id: &str, title: &str, subtitle: &str) {
+        self.add_item(id, title, subtitle, ProviderKind::File);
+    }
+
+    /// Only the System Settings entries; the host adds real apps and files.
+    pub fn with_settings() -> Self {
+        let mut spotlight = Self::with_builtins();
+        spotlight
+            .items
+            .retain(|item| item.kind != ProviderKind::App);
+        spotlight
+    }
+
     pub fn add_setting(&mut self, id: &str, title: &str, subtitle: &str) {
         self.add_item(id, title, subtitle, ProviderKind::Setting);
     }

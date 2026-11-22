@@ -107,6 +107,14 @@ fn shell_open(path: &str) {
     }
 }
 
+/// Open a file, shortcut, folder or URI the way Explorer would.
+pub fn open_target(path: &str) {
+    #[cfg(windows)]
+    shell_open(path);
+    #[cfg(not(windows))]
+    tracing::info!("open_target (preview only): {path}");
+}
+
 pub fn request_shell_launch(cx: &mut App, id: &str) {
     let handler = cx
         .try_global::<ShellLaunch>()
@@ -1274,7 +1282,7 @@ impl Render for SpotlightView {
                             .font_family(mono_font_family())
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary_hsla())
-                            .child("Ctrl Space"),
+                            .child("Alt Space"),
                     )
                     .child(window_chrome(&theme, true)),
             )

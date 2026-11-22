@@ -448,7 +448,8 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             .ok();
 
         // Spotlight starts hidden; HotkeyAction::CommandBar toggles it.
-        let mut spotlight_model = Spotlight::with_builtins();
+        let mut spotlight_model = Spotlight::with_settings();
+        nx_shell::catalog::populate(&mut spotlight_model);
         spotlight_model.query = shell.spotlight.query.clone();
         let mut spotlight_opts = theme.shell_window_options(
             gpui::Bounds {
@@ -615,7 +616,7 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
                     bring_back(&all, handle.into(), "explorer", cx);
                 }
             }
-            "privacy" => {
+            "privacy" | "camera" | "microphone" | "location" => {
                 if let Some(handle) = privacy {
                     bring_back(&all, handle.into(), "privacy", cx);
                 }
@@ -623,7 +624,14 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
             other => {
                 // "files:<folder>" opens Files at that folder (dock menu
                 // "Show in Files", recent-items stack).
-                if let (Some(path), Some(handle)) = (other.strip_prefix("files:"), explorer) {
+                if other.starts_with("app:") || other.starts_with("doc:") {
+                    if let Some(target) = nx_shell::catalog::target_of(other) {
+                        nx_shell::gpui_views::open_target(&target);
+                    }
+                } else if let Some(uri) = nx_shell::catalog::settings_uri(other) {
+                    nx_shell::gpui_views::open_target(uri);
+                } else if let (Some(path), Some(handle)) = (other.strip_prefix("files:"), explorer)
+                {
                     let path = std::path::PathBuf::from(path);
                     let _ = handle.update(cx, |view, _window, cx| {
                         view.navigate_to(path);

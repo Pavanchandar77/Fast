@@ -3,6 +3,7 @@
 pub mod backdrop;
 #[cfg(windows)]
 pub mod capture;
+pub mod catalog;
 pub mod clock;
 pub mod dock;
 pub mod error;
