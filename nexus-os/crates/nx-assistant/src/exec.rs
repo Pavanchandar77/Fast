@@ -781,61 +781,7 @@ mod platform {
     /// Current power scheme brightness. Applied immediately by Windows, and it
     /// does not start PowerShell.
     fn set_scheme_brightness(level: u8) -> Result<(), AssistantError> {
-        use std::ffi::c_void;
-        use windows::core::{s, w, GUID};
-        use windows::Win32::Foundation::LocalFree;
-        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-
-        type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
-        type WriteIndex = unsafe extern "system" fn(
-            *mut c_void,
-            *const GUID,
-            *const GUID,
-            *const GUID,
-            u32,
-        ) -> u32;
-        type SetScheme = unsafe extern "system" fn(*mut c_void, *const GUID) -> u32;
-
-        unsafe {
-            let lib = LoadLibraryW(w!("powrprof.dll"))
-                .map_err(|e| AssistantError::Action(e.to_string()))?;
-            let get: GetScheme = std::mem::transmute(
-                GetProcAddress(lib, s!("PowerGetActiveScheme"))
-                    .ok_or_else(|| AssistantError::Action("PowerGetActiveScheme missing".into()))?,
-            );
-            let write: WriteIndex = std::mem::transmute(
-                GetProcAddress(lib, s!("PowerWriteACValueIndex")).ok_or_else(|| {
-                    AssistantError::Action("PowerWriteACValueIndex missing".into())
-                })?,
-            );
-            let write_dc: WriteIndex = std::mem::transmute(
-                GetProcAddress(lib, s!("PowerWriteDCValueIndex")).ok_or_else(|| {
-                    AssistantError::Action("PowerWriteDCValueIndex missing".into())
-                })?,
-            );
-            let set: SetScheme = std::mem::transmute(
-                GetProcAddress(lib, s!("PowerSetActiveScheme"))
-                    .ok_or_else(|| AssistantError::Action("PowerSetActiveScheme missing".into()))?,
-            );
-            let mut scheme = std::ptr::null_mut();
-            if get(std::ptr::null_mut(), &mut scheme) != 0 || scheme.is_null() {
-                return Err(AssistantError::Action("no active power scheme".into()));
-            }
-            // VIDEO subgroup and the display brightness setting.
-            let subgroup = GUID::from_u128(0x7516_b95f_f776_4464_8c53_0616_7f40_cc99);
-            let setting = GUID::from_u128(0xaded_5e82_b909_4619_9949_f5d7_1dac_0bcb);
-            let value = u32::from(level);
-            let ac = write(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
-            let dc = write_dc(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
-            let applied = set(std::ptr::null_mut(), scheme);
-            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(scheme.cast()));
-            if ac != 0 || dc != 0 || applied != 0 {
-                return Err(AssistantError::Action(
-                    "power scheme rejected brightness".into(),
-                ));
-            }
-        }
-        Ok(())
+        os_core::platform::set_scheme_brightness(level).map_err(AssistantError::Action)
     }
     pub fn set_radio(kind: &str, on: bool) -> Result<(), AssistantError> {
         let state = if on { "On" } else { "Off" };

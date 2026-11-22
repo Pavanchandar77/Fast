@@ -4544,6 +4544,7 @@ dependencies = [
  "nx-privacy-dash",
  "nx-ui",
  "nx-wm",
+ "os-core",
  "proptest",
  "raw-window-handle",
  "thiserror 1.0.69",

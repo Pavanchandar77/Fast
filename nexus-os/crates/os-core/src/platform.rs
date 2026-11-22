@@ -943,3 +943,56 @@ impl Platform for Win32Platform {
         Err(PlatformError::Unsupported)
     }
 }
+
+/// Set display brightness through the active power scheme (VIDEO /
+/// brightness, AC and DC) and re-apply the scheme so Windows takes it at
+/// once. Used by the assistant's brightness action; lives here because
+/// re-applying a power scheme is a system mutation.
+#[cfg(windows)]
+pub fn set_scheme_brightness(level: u8) -> Result<(), String> {
+    use std::ffi::c_void;
+    use windows::core::{s, w, GUID};
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+    type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
+    type WriteIndex =
+        unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID, *const GUID, u32) -> u32;
+    type SetScheme = unsafe extern "system" fn(*mut c_void, *const GUID) -> u32;
+
+    unsafe {
+        let lib = LoadLibraryW(w!("powrprof.dll")).map_err(|e| e.to_string())?;
+        let get: GetScheme = std::mem::transmute(
+            GetProcAddress(lib, s!("PowerGetActiveScheme"))
+                .ok_or_else(|| "PowerGetActiveScheme missing".to_string())?,
+        );
+        let write: WriteIndex = std::mem::transmute(
+            GetProcAddress(lib, s!("PowerWriteACValueIndex"))
+                .ok_or_else(|| "PowerWriteACValueIndex missing".to_string())?,
+        );
+        let write_dc: WriteIndex = std::mem::transmute(
+            GetProcAddress(lib, s!("PowerWriteDCValueIndex"))
+                .ok_or_else(|| "PowerWriteDCValueIndex missing".to_string())?,
+        );
+        let set: SetScheme = std::mem::transmute(
+            GetProcAddress(lib, s!("PowerSetActiveScheme"))
+                .ok_or_else(|| "PowerSetActiveScheme missing".to_string())?,
+        );
+        let mut scheme = std::ptr::null_mut();
+        if get(std::ptr::null_mut(), &mut scheme) != 0 || scheme.is_null() {
+            return Err("no active power scheme".to_string());
+        }
+        // VIDEO subgroup and the display brightness setting.
+        let subgroup = GUID::from_u128(0x7516_b95f_f776_4464_8c53_0616_7f40_cc99);
+        let setting = GUID::from_u128(0xaded_5e82_b909_4619_9949_f5d7_1dac_0bcb);
+        let value = u32::from(level);
+        let ac = write(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
+        let dc = write_dc(std::ptr::null_mut(), scheme, &subgroup, &setting, value);
+        let applied = set(std::ptr::null_mut(), scheme);
+        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(scheme.cast()));
+        if ac != 0 || dc != 0 || applied != 0 {
+            return Err("power scheme rejected brightness".to_string());
+        }
+    }
+    Ok(())
+}

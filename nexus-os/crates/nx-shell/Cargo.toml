@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 tracing.workspace = true
+os-core = { path = "../os-core" }
 gpui = { workspace = true }
 nx-compat = { path = "../nx-compat" }
 nx-ui = { path = "../nx-ui" }

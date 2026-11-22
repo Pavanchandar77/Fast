@@ -16,11 +16,10 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, GetWindowRect, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA,
-    SPI_GETCLIENTAREAANIMATION, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    ShowWindow, SystemParametersInfoW, GWL_EXSTYLE, LWA_ALPHA, SPI_GETCLIENTAREAANIMATION,
+    SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// `PW_RENDERFULLCONTENT`: capture DirectComposition / GPU content too.
@@ -169,13 +168,15 @@ pub fn make_click_through(raw: isize) {
             SetWindowLongPtrW(h, GWL_EXSTYLE, want);
             let _ = SetWindowPos(
                 h,
-                HWND_TOPMOST,
+                None,
                 0,
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
+            // Topmost goes through os-core (own windows only).
+            os_core::window::WindowHandle::new(h).set_own_topmost();
         }
     }
 }
@@ -183,15 +184,17 @@ pub fn make_click_through(raw: isize) {
 /// Keep a shell window above fullscreen apps without activating it.
 pub fn raise_topmost(window: &mut gpui::Window) {
     if let Some(raw) = gpui_hwnd(window) {
+        // Topmost goes through os-core (own windows only), then show.
+        os_core::window::WindowHandle::new(hwnd(raw)).set_own_topmost();
         unsafe {
             let _ = SetWindowPos(
                 hwnd(raw),
-                HWND_TOPMOST,
+                None,
                 0,
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
         }
     }
