@@ -133,6 +133,10 @@ impl PrivacyDashboardView {
             .border_color(theme.separator_hsla())
             .rounded_t(px(theme.radii.window))
             .overflow_hidden()
+            // Drag by the header; caption buttons on the right keep their click.
+            .on_mouse_down(gpui::MouseButton::Left, |ev, window, _| {
+                nx_ui::gpui_theme::begin_window_drag(ev, window);
+            })
             // Title & Window Controls
             .child(
                 div()

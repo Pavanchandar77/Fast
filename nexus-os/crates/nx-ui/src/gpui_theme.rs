@@ -229,6 +229,71 @@ pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
 /// Windows caption button height.
 pub const CAPTION_BUTTON_HEIGHT: f32 = 32.0;
 
+/// Close through the OS so the window's `on_window_should_close` hook runs
+/// (Nexus app windows hide instead of being destroyed, so the dock can bring
+/// them back). Off Windows, remove the window directly.
+pub fn close_window(window: &mut Window) {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+        if let Ok(handle) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(w) = handle.as_raw() {
+                let hwnd = HWND(w.hwnd.get() as *mut std::ffi::c_void);
+                if unsafe { PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_ok() {
+                    return;
+                }
+            }
+        }
+    }
+    window.remove_window();
+}
+
+/// Start dragging the window from a title/tool bar, unless the press landed
+/// on the caption buttons flush right (those must get their click). A
+/// mouse-down on a caption button also bubbles to the bar, and starting a
+/// move there swallowed the close/minimize click.
+pub fn begin_window_drag(event: &gpui::MouseDownEvent, window: &mut Window) {
+    if event.click_count > 1 {
+        window.zoom_window();
+        return;
+    }
+    let width = f32::from(window.viewport_size().width);
+    let chrome = 3.0 * CAPTION_BUTTON_WIDTH + WINDOW_FRAME_INSET + 4.0;
+    if f32::from(event.position.x) >= width - chrome {
+        return;
+    }
+    // GPUI's Windows backend has no `start_window_move` (it is a no-op).
+    // Hand the press to the system move loop instead: release GPUI's mouse
+    // capture and *post* SC_MOVE|HTCAPTION, so the loop starts after this
+    // handler returns rather than re-entering the window procedure.
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SC_MOVE, WM_SYSCOMMAND};
+        const HTCAPTION: usize = 2;
+        if let Ok(handle) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(w) = handle.as_raw() {
+                let hwnd = HWND(w.hwnd.get() as *mut std::ffi::c_void);
+                unsafe {
+                    let _ = ReleaseCapture();
+                    let _ = PostMessageW(
+                        hwnd,
+                        WM_SYSCOMMAND,
+                        WPARAM(SC_MOVE as usize | HTCAPTION),
+                        LPARAM(0),
+                    );
+                }
+                return;
+            }
+        }
+    }
+    window.start_window_move();
+}
+
 /// Minimize, maximize, close, in that order, flush on the right.
 ///
 /// `live` wires the buttons to this window. Preview tiles pass `false` so a
@@ -284,7 +349,7 @@ pub fn window_chrome(theme: &Theme, live: bool) -> impl IntoElement {
                 match id {
                     "min" => window.minimize_window(),
                     "max" => window.zoom_window(),
-                    "close" => window.remove_window(),
+                    "close" => close_window(window),
                     _ => {}
                 }
             })

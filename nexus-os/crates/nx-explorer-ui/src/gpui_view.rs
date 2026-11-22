@@ -203,8 +203,8 @@ impl Render for ExplorerView {
                         .rounded_t(px(theme.radii.window))
                         .overflow_hidden()
                         // Drag the window by its toolbar (buttons stop propagation).
-                        .on_mouse_down(MouseButton::Left, |_, window, _| {
-                            window.start_window_move();
+                        .on_mouse_down(MouseButton::Left, |ev, window, _| {
+                            nx_ui::gpui_theme::begin_window_drag(ev, window);
                         })
                         // Left: Traffic lights and navigation buttons
                         .child(

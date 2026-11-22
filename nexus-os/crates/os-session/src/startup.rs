@@ -410,12 +410,16 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         let mut dock_model = shell.dock.clone();
         let mut place = dock_model.placement;
         place.bounds = Rect::new(sx, sy, sw, sh);
-        place.reveal_px = 64.0;
+        // Edge-only reveal (macOS). The view also holds the dock open from
+        // a physical-pixel edge test, so DPI rounding cannot strand it.
+        place.reveal_px = 2.0;
         place.margin = 0.0;
         dock_model.set_placement(place);
-        // Keep the dock on screen. Auto-hide was parking the shelf off the
-        // window, so hover and clicks never reached an icon.
-        dock_model.set_auto_hide(false);
+        // Auto-hide: parked until the pointer touches the bottom edge, held
+        // open while the pointer is over the shelf (physical-pixel test in
+        // the view, so hover and clicks reach the icons), click-through
+        // whenever the pointer is not over the shelf.
+        dock_model.set_auto_hide(true);
         dock_model.mag.rest = 44.0;
         dock_model.mag.max_scale = 1.55;
         dock_model.mag.padding = 8.0;
@@ -495,6 +499,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 move |window, cx| {
                     apply_rounded_native_corners(window);
                     native_chrome(window, "files");
+                    hide_on_close(window, cx);
                     cx.new(|_cx| ExplorerView::new(explorer.window))
                 },
             )
@@ -512,6 +517,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 move |window, cx| {
                     apply_rounded_native_corners(window);
                     native_chrome(window, "privacy");
+                    hide_on_close(window, cx);
                     cx.new(|_cx| PrivacyDashboardView::new(dash_vm))
                 },
             )
@@ -603,14 +609,14 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
             "explorer" | "finder" => {
                 if let Some(handle) = explorer {
                     let _ = handle.update(cx, |_, window, _cx| {
-                        window.activate_window();
+                        show_app_window(window);
                     });
                 }
             }
             "privacy" => {
                 if let Some(handle) = privacy {
                     let _ = handle.update(cx, |_, window, _cx| {
-                        window.activate_window();
+                        show_app_window(window);
                     });
                 }
             }
@@ -810,6 +816,46 @@ mod win_chrome {
             _ => DefSubclassProc(hwnd, msg, wparam, lparam),
         }
     }
+}
+
+/// Nexus app windows (Files, Privacy) hide on close, like a macOS app whose
+/// last window closed: the dock icon brings the same window back. Destroying
+/// it left the dock holding a dead handle, so the icon did nothing.
+fn hide_on_close(window: &mut gpui::Window, cx: &mut gpui::App) {
+    window.on_window_should_close(cx, |window, _cx| {
+        #[cfg(windows)]
+        if let Some(raw) = window_hwnd(window) {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+            unsafe {
+                let _ = ShowWindow(HWND(raw as *mut std::ffi::c_void), SW_HIDE);
+            }
+            info!("window {raw:#x} hidden on close");
+            return false;
+        }
+        let _ = window;
+        true
+    });
+}
+
+/// Bring a Nexus app window back: unhide, restore from minimized, focus.
+fn show_app_window(window: &mut gpui::Window) {
+    #[cfg(windows)]
+    if let Some(raw) = window_hwnd(window) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsIconic, IsWindowVisible, ShowWindow, SW_RESTORE, SW_SHOW,
+        };
+        let h = HWND(raw as *mut std::ffi::c_void);
+        unsafe {
+            if IsIconic(h).as_bool() {
+                let _ = ShowWindow(h, SW_RESTORE);
+            } else if !IsWindowVisible(h).as_bool() {
+                let _ = ShowWindow(h, SW_SHOW);
+            }
+        }
+    }
+    window.activate_window();
 }
 
 fn apply_rounded_native_corners(window: &mut gpui::Window) {

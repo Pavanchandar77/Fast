@@ -4559,6 +4559,7 @@ dependencies = [
  "criterion",
  "gpui",
  "nx-compat",
+ "raw-window-handle",
  "windows 0.58.0",
 ]
 
