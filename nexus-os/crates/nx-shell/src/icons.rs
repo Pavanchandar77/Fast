@@ -31,8 +31,26 @@ fn load_icon(path: &str) -> Option<windows::Win32::UI::WindowsAndMessaging::HICO
 
     // A pinned shortcut's own icon includes the little arrow. Draw the
     // target program's icon instead.
-    let source = if path.to_ascii_lowercase().ends_with(".lnk") {
-        exe_path_from_lnk(path).unwrap_or_else(|| path.to_string())
+    let is_lnk = path.to_ascii_lowercase().ends_with(".lnk");
+    let link = if is_lnk { read_shell_link(path) } else { None };
+    // A custom icon on the shortcut (web apps, Store app shims) wins.
+    if let Some((file, index)) = link.as_ref().and_then(|l| l.icon.clone()) {
+        let mut wide: Vec<u16> = std::ffi::OsStr::new(&file).encode_wide().collect();
+        wide.push(0);
+        let mut large = HICON(std::ptr::null_mut());
+        unsafe {
+            if SHDefExtractIconW(PCWSTR(wide.as_ptr()), index, 0, Some(&mut large), None, 128)
+                .is_ok()
+                && !large.0.is_null()
+            {
+                return Some(large);
+            }
+        }
+    }
+    let source = if is_lnk {
+        link.and_then(|l| l.target)
+            .or_else(|| exe_path_from_lnk(path))
+            .unwrap_or_else(|| path.to_string())
     } else {
         path.to_string()
     };
@@ -94,6 +112,72 @@ fn load_icon(path: &str) -> Option<windows::Win32::UI::WindowsAndMessaging::HICO
             return Some(info.hIcon);
         }
         None
+    }
+}
+
+#[cfg(windows)]
+struct ShellLinkInfo {
+    target: Option<String>,
+    icon: Option<(String, i32)>,
+}
+
+/// Resolve a `.lnk` with the shell's own parser (IShellLinkW): the target
+/// program and any custom icon. Icon threads are short-lived, so COM is
+/// initialised here for the calling thread.
+#[cfg(windows)]
+fn read_shell_link(path: &str) -> Option<ShellLinkInfo> {
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    let text = |buf: &[u16]| {
+        let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        let s = String::from_utf16_lossy(&buf[..n]);
+        let s = s.trim().to_string();
+        (!s.is_empty()).then_some(s)
+    };
+    let expand = |s: String| -> String {
+        // %SystemRoot%-style paths in icon locations.
+        let mut out = s.clone();
+        while let (Some(a), true) = (out.find('%'), out.matches('%').count() >= 2) {
+            let Some(b) = out[a + 1..].find('%').map(|b| a + 1 + b) else {
+                break;
+            };
+            let var = &out[a + 1..b];
+            match std::env::var(var) {
+                Ok(v) => out = format!("{}{}{}", &out[..a], v, &out[b + 1..]),
+                Err(_) => break,
+            }
+        }
+        out
+    };
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let file: IPersistFile = link.cast().ok()?;
+        let mut wide: Vec<u16> =
+            std::os::windows::ffi::OsStrExt::encode_wide(std::ffi::OsStr::new(path)).collect();
+        wide.push(0);
+        file.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+        let mut buf = [0u16; 1024];
+        let target = link
+            .GetPath(&mut buf, std::ptr::null_mut(), 0)
+            .ok()
+            .and_then(|_| text(&buf))
+            .map(expand)
+            .filter(|p| std::path::Path::new(p).is_file());
+        let mut ibuf = [0u16; 1024];
+        let mut index = 0i32;
+        let icon = link
+            .GetIconLocation(&mut ibuf, &mut index)
+            .ok()
+            .and_then(|_| text(&ibuf))
+            .map(expand)
+            .filter(|p| std::path::Path::new(p).is_file())
+            .map(|p| (p, index));
+        Some(ShellLinkInfo { target, icon })
     }
 }
 

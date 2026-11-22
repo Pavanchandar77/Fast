@@ -12,7 +12,7 @@ use nx_ui::geom::{Point, Rect};
 use nx_ui::spring::{Spring, SpringConfig};
 use nx_wm::{MonitorId, WindowId, WindowManagerModel};
 
-use crate::util::{finite_f32, smoothstep};
+use crate::util::finite_f32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockEdge {
@@ -179,7 +179,9 @@ pub fn magnification_target(center: f32, axis: f32, mag: Magnification) -> f32 {
     if distance >= influence {
         return 1.0;
     }
-    let t = smoothstep(1.0 - distance / influence);
+    // Cosine falloff, as on macOS: full size under the pointer, easing to
+    // rest at `influence` with a zero slope at both ends.
+    let t = 0.5 * (1.0 + (std::f32::consts::PI * distance / influence).cos());
     1.0 + (max_scale - 1.0) * t
 }
 
@@ -308,6 +310,7 @@ pub struct DockModel {
     items: Vec<DockApp>,
     motion: Vec<IconMotion>,
     reveal: Spring,
+    hold: bool,
     pointer: Option<Point>,
     pub context: Option<JumpMenu>,
     pub last_command: Option<(usize, DockCommand)>,
@@ -322,6 +325,7 @@ impl DockModel {
             items: Vec::new(),
             motion: Vec::new(),
             reveal: scale_spring(),
+            hold: false,
             pointer: None,
             context: None,
             last_command: None,
@@ -583,6 +587,20 @@ impl DockModel {
         self.reveal.set_target(1.0);
     }
 
+    /// Keep an auto-hidden dock open while the pointer is on the screen edge
+    /// or over the shelf (physical-pixel test done by the view).
+    pub fn set_hold(&mut self, hold: bool) {
+        if self.hold != hold {
+            self.hold = hold;
+            self.retarget();
+        }
+    }
+
+    /// A jump menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.context.is_some()
+    }
+
     pub fn step(&mut self, dt: f32) {
         self.retarget();
         for motion in &mut self.motion {
@@ -745,7 +763,7 @@ impl DockModel {
         if !self.auto_hide {
             return true;
         }
-        if self.context.is_some() {
+        if self.context.is_some() || self.hold {
             return true;
         }
         if self.motion.iter().any(|motion| !motion.bounce.settled()) {
@@ -824,6 +842,53 @@ pub fn taskbar_pins() -> Vec<(String, String, String)> {
 
 /// Apps that currently have a taskbar button: (exe id, window title, exe path).
 pub fn taskbar_buttons() -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (id, label, launch, _) in taskbar_rows() {
+        if seen.insert(id.clone()) {
+            out.push((id, label, launch));
+        }
+    }
+    out
+}
+
+/// Bring a running app's windows forward: restore minimized ones and focus
+/// the first. Returns false when the app has no taskbar window (launch it).
+pub fn focus_app(id: &str) -> bool {
+    let hwnds: Vec<isize> = taskbar_rows()
+        .into_iter()
+        .filter(|row| row.0 == id)
+        .map(|row| row.3)
+        .collect();
+    if hwnds.is_empty() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsIconic, SetForegroundWindow, ShowWindow, SwitchToThisWindow, SW_RESTORE,
+        };
+        unsafe {
+            for raw in hwnds.iter().rev() {
+                let h = HWND(*raw as *mut std::ffi::c_void);
+                if IsIconic(h).as_bool() {
+                    let _ = ShowWindow(h, SW_RESTORE);
+                }
+            }
+            let first = HWND(hwnds[0] as *mut std::ffi::c_void);
+            // The dock does not take focus, so Windows may refuse a plain
+            // SetForegroundWindow; Alt+Tab's switch is allowed.
+            if !SetForegroundWindow(first).as_bool() {
+                SwitchToThisWindow(first, true);
+            }
+        }
+    }
+    true
+}
+
+/// Every taskbar-style window: (app id, title, exe path, hwnd).
+fn taskbar_rows() -> Vec<(String, String, String, isize)> {
     #[cfg(windows)]
     {
         use std::ffi::OsString;
@@ -843,6 +908,7 @@ pub fn taskbar_buttons() -> Vec<(String, String, String)> {
             id: String,
             label: String,
             launch: String,
+            hwnd: isize,
         }
         let mut rows: Vec<Row> = Vec::new();
         unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -943,20 +1009,16 @@ pub fn taskbar_buttons() -> Vec<(String, String, String)> {
                 id,
                 label,
                 launch: path,
+                hwnd: hwnd.0 as isize,
             });
             BOOL(1)
         }
         unsafe {
             let _ = EnumWindows(Some(each), LPARAM(&raw mut rows as isize));
         }
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for row in rows {
-            if seen.insert(row.id.clone()) {
-                out.push((row.id, row.label, row.launch));
-            }
-        }
-        out
+        rows.into_iter()
+            .map(|row| (row.id, row.label, row.launch, row.hwnd))
+            .collect()
     }
     #[cfg(not(windows))]
     {
@@ -1402,5 +1464,44 @@ mod tests {
         }
         let step = shown_at.expect("dock did not pop");
         assert!(step * 8 <= 200, "dock took {}ms to pop", step * 8);
+    }
+
+    #[test]
+    fn magnification_uses_a_cosine_falloff() {
+        let mag = Magnification::macos(1.0);
+        let peak = magnification_target(100.0, 100.0, mag);
+        assert!((peak - mag.max_scale).abs() < 1e-4);
+        let half = magnification_target(100.0 + mag.influence * 0.5, 100.0, mag);
+        let expected = 1.0 + (mag.max_scale - 1.0) * 0.5;
+        assert!((half - expected).abs() < 1e-3, "half-way scale {half}");
+        assert!((magnification_target(100.0 + mag.influence, 100.0, mag) - 1.0).abs() < 1e-4);
+        let mut last = peak;
+        for step in 1..=20 {
+            let s = magnification_target(100.0 + step as f32 * mag.influence / 20.0, 100.0, mag);
+            assert!(s <= last + 1e-5, "falloff must not rise");
+            last = s;
+        }
+    }
+
+    #[test]
+    fn auto_hidden_dock_stays_open_while_held() {
+        let mut dock = DockModel::new(placement());
+        dock.pin_defaults();
+        dock.set_auto_hide(true);
+        for _ in 0..120 {
+            dock.step(1.0 / 60.0);
+        }
+        assert!(dock.reveal() < 0.05, "parked by default");
+        dock.set_hold(true);
+        for _ in 0..120 {
+            dock.step(1.0 / 60.0);
+        }
+        assert!(dock.reveal() > 0.95, "edge/hover hold reveals");
+        dock.set_hold(false);
+        dock.pointer_left();
+        for _ in 0..120 {
+            dock.step(1.0 / 60.0);
+        }
+        assert!(dock.reveal() < 0.05, "hides after the pointer leaves");
     }
 }

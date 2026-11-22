@@ -48,7 +48,12 @@ impl ShellLaunch {
 }
 
 /// Fire the host launch hook, if the session installed one.
-fn launch_dock_target(id: &str, launch: &str, cx: &mut App) {
+fn launch_dock_target(id: &str, launch: &str, running: bool, cx: &mut App) {
+    // A running app comes forward (restored if minimized) instead of
+    // starting a second copy.
+    if running && crate::dock::focus_app(id) {
+        return;
+    }
     let path = if launch.is_empty() { id } else { launch };
     let external = path.contains('\\')
         || path.contains('/')
@@ -57,11 +62,9 @@ fn launch_dock_target(id: &str, launch: &str, cx: &mut App) {
     if external {
         #[cfg(windows)]
         {
-            // `start` follows the shortcut the user pinned, so the dock icon
-            // opens that app rather than a folder of links.
-            let _ = std::process::Command::new("cmd.exe")
-                .args(["/C", "start", "", path])
-                .spawn();
+            // ShellExecute follows the shortcut the user pinned (arguments,
+            // working folder, run-as) without flashing a console window.
+            shell_open(path);
         }
         #[cfg(not(windows))]
         {
@@ -70,6 +73,32 @@ fn launch_dock_target(id: &str, launch: &str, cx: &mut App) {
         return;
     }
     request_shell_launch(cx, id);
+}
+
+#[cfg(windows)]
+fn shell_open(path: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let path = path.to_string();
+    let code = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(wide.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if code.0 as isize <= 32 {
+        tracing::warn!("dock: ShellExecute failed ({}) for {path}", code.0 as isize);
+    }
 }
 
 pub fn request_shell_launch(cx: &mut App, id: &str) {
@@ -353,8 +382,9 @@ impl DockView {
                         windows::Win32::UI::WindowsAndMessaging::SM_CYSCREEN,
                     )
                 } as f32;
-                // Hoverdock's rule: the physical bottom edge opens the dock.
-                let at_bottom = point.y >= screen_h - 120.0;
+                // The physical bottom edge opens the dock (macOS rule), also
+                // over a fullscreen app since the dock is topmost.
+                let at_bottom = point.y >= screen_h - 3.0;
                 let bounds = self.model.placement.bounds;
                 let reach = self.model.placement.reveal_px.max(28.0) + self.model.placement.margin;
                 let near = point.y >= bounds.bottom() - reach && point.y <= bounds.bottom() + 96.0;
@@ -364,8 +394,9 @@ impl DockView {
                 } else if self.model.auto_hide {
                     self.model.pointer_left();
                 }
-                self.hold_open = at_bottom || (near && over_x);
                 self.hover_from_cursor(window, point);
+                self.hold_open = at_bottom || self.hovered_index.is_some();
+                self.model.set_hold(self.hold_open);
             }
         }
         while let Ok((path, image)) = self.icon_rx.try_recv() {
@@ -418,7 +449,11 @@ impl DockView {
         let mut click = None;
         #[cfg(windows)]
         {
-            let hidden = self.model.auto_hide && self.model.reveal() < 0.08;
+            // Clicks pass through unless the pointer is over the shelf: the
+            // dock window spans the screen width, and its transparent sides
+            // must not swallow clicks meant for the app underneath.
+            let hidden = (self.model.auto_hide && self.model.reveal() < 0.08)
+                || (self.hovered_index.is_none() && !self.model.menu_open());
             if self.click_through != Some(hidden) {
                 self.click_through = Some(hidden);
                 let raw = {
@@ -552,7 +587,10 @@ impl Render for DockView {
                                     let _ = this.model.activate_index(idx);
                                     let launch = item.launch.clone();
                                     let id = item.id.clone();
-                                    cx.defer(move |cx| launch_dock_target(&id, &launch, cx));
+                                    let running = item.running;
+                                    cx.defer(move |cx| {
+                                        launch_dock_target(&id, &launch, running, cx)
+                                    });
                                 }
                                 cx.notify();
                             }))
