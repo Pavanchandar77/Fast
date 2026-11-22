@@ -57,7 +57,7 @@ EXE="$CARGO_TARGET_DIR/$TARGET/release/nexus-os.exe"
 
 echo "==> Checking imports (only Windows system DLLs allowed)"
 # All of these ship in System32 on Windows 10 1709+ (icuuc: Windows ICU, ktmw32: KTM).
-SYSTEM_DLLS='^(kernel32|user32|gdi32|advapi32|shell32|ole32|oleaut32|ws2_32|ntdll|bcrypt|bcryptprimitives|crypt32|secur32|userenv|dwmapi|d3d11|d3dcompiler_47|dxgi|dcomp|uxtheme|shlwapi|imm32|winmm|version|comctl32|comdlg32|setupapi|cfgmgr32|powrprof|psapi|iphlpapi|dwrite|d2d1|windowscodecs|propsys|opengl32|msvcrt|ncrypt|winhttp|wininet|dbghelp|netapi32|wtsapi32|mf|mfplat|mfreadwrite|hid|ktmw32|icuuc|icuin|icu|api-ms-win-.*|ext-ms-win-.*)\.dll$'
+SYSTEM_DLLS='^(kernel32|user32|gdi32|advapi32|shell32|ole32|oleaut32|ws2_32|ntdll|bcrypt|bcryptprimitives|crypt32|secur32|userenv|dwmapi|d3d11|d3dcompiler_47|dxgi|dcomp|uxtheme|shlwapi|imm32|winmm|version|comctl32|comdlg32|setupapi|cfgmgr32|powrprof|dxva2|psapi|iphlpapi|dwrite|d2d1|windowscodecs|propsys|opengl32|msvcrt|ncrypt|winhttp|wininet|dbghelp|netapi32|wtsapi32|mf|mfplat|mfreadwrite|hid|ktmw32|icuuc|icuin|icu|api-ms-win-.*|ext-ms-win-.*)\.dll$'
 BAD=$(x86_64-w64-mingw32-objdump -p "$EXE" | awk '/DLL Name:/{print tolower($3)}' | grep -Ev "$SYSTEM_DLLS" || true)
 if [ -n "$BAD" ]; then
   echo "Non-system DLL imports found: $BAD" >&2
