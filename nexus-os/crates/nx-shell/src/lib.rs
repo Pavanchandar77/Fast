@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod clip_history;
 pub mod clock;
 pub mod dock;
+pub mod dock_popup;
 pub mod error;
 pub mod expose;
 pub mod gpui_views;

@@ -610,6 +610,13 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
     let spotlight = windows.spotlight_window;
     let all = windows.clone();
     install_window_controls(windows, cx);
+    // Dock menus and stacks open as their own small pop-up windows.
+    cx.set_global(nx_shell::gpui_views::PopupWindowHook(std::sync::Arc::new(
+        |window: &mut gpui::Window| {
+            apply_rounded_native_corners(window);
+            native_chrome(window, "dock-popup");
+        },
+    )));
     cx.set_global(ShellLaunch::new(move |id, cx| {
         match id {
             "explorer" | "finder" => {
