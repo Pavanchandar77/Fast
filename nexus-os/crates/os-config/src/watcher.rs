@@ -18,7 +18,7 @@ impl ConfigWatcher {
     ) -> anyhow::Result<(Self, crossbeam_channel::Receiver<SystemConfig>)> {
         let path_buf = path.as_ref().to_path_buf();
         let initial_config = if path_buf.exists() {
-            match SystemConfig::load_from_file(&path_buf) {
+            match crate::defaults::load_with_defaults(&path_buf) {
                 Ok(cfg) => cfg,
                 Err(err) => {
                     warn!(
@@ -54,7 +54,7 @@ impl ConfigWatcher {
                     if event.kind.is_modify() || event.kind.is_create() {
                         // Small sleep to ensure write completion (debounce)
                         std::thread::sleep(Duration::from_millis(50));
-                        match SystemConfig::load_from_file(&watch_path) {
+                        match crate::defaults::load_with_defaults(&watch_path) {
                             Ok(new_cfg) => {
                                 info!("System config hot-reloaded successfully in <10ms");
                                 *config_clone.write() = new_cfg.clone();

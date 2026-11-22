@@ -63,38 +63,67 @@ impl HotCorners {
     }
 }
 
-/// Windows: sample the pointer against the primary monitor and report a
-/// corner whose dwell just completed.
+/// The point one pixel diagonally outward from `corner` at (x, y).
+pub fn outward(corner: Corner, x: i32, y: i32) -> (i32, i32) {
+    match corner {
+        Corner::TopLeft => (x - 1, y - 1),
+        Corner::TopRight => (x + 1, y - 1),
+        Corner::BottomLeft => (x - 1, y + 1),
+        Corner::BottomRight => (x + 1, y + 1),
+    }
+}
+
+/// Windows: sample the pointer against the monitor it is on (every
+/// display has its own corners). A corner that touches another display is
+/// not a corner the pointer can rest in, so it is skipped.
 #[cfg(windows)]
 pub fn poll(state: &mut HotCorners, now_ms: u64) -> Option<Corner> {
     use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        MONITOR_DEFAULTTONULL,
+    };
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect, SM_CXSCREEN,
-        SM_CYSCREEN,
+        GetCursorPos, GetForegroundWindow, GetWindowRect,
     };
     let mut p = POINT::default();
     if unsafe { GetCursorPos(&mut p) }.is_err() {
         return None;
     }
-    let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-    let corner = corner_at(p.x, p.y, 0, 0, w, h);
+    let mon = unsafe { MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(mon, &mut info) }.as_bool() {
+        return state.update(None, now_ms, false);
+    }
+    let m = info.rcMonitor;
+    let mut corner = corner_at(p.x, p.y, m.left, m.top, m.right, m.bottom);
+    if let Some(c) = corner {
+        let (ox, oy) = outward(c, p.x, p.y);
+        let beyond = unsafe { MonitorFromPoint(POINT { x: ox, y: oy }, MONITOR_DEFAULTTONULL) };
+        if !beyond.is_invalid() {
+            corner = None;
+        }
+    }
     let mut blocked = false;
     if corner.is_some() {
         let held = unsafe {
             (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0
                 || (GetAsyncKeyState(VK_RBUTTON.0 as i32) as u16 & 0x8000) != 0
         };
-        // A fullscreen game or video in front owns the corners.
+        // A fullscreen game or video on this display owns its corners.
         let fullscreen = unsafe {
             let fg = GetForegroundWindow();
             let mut r = RECT::default();
             !fg.0.is_null()
                 && GetWindowRect(fg, &mut r).is_ok()
-                && r.left <= 0
-                && r.top <= 0
-                && r.right >= w
-                && r.bottom >= h
+                && r.left <= m.left
+                && r.top <= m.top
+                && r.right >= m.right
+                && r.bottom >= m.bottom
                 && !crate::capture::is_own_window(fg.0 as isize)
                 && !is_desktop(fg)
         };
@@ -155,6 +184,20 @@ mod tests {
         assert_eq!(hc.update(None, 410, false), None);
         assert_eq!(hc.update(c, 420, false), None);
         assert_eq!(hc.update(c, 600, false), c);
+    }
+
+    #[test]
+    fn second_monitor_corners_use_its_own_rect() {
+        // A display to the right of a 1920-wide primary.
+        assert_eq!(
+            corner_at(3839, 0, 1920, 0, 3840, 1080),
+            Some(Corner::TopRight)
+        );
+        assert_eq!(
+            corner_at(1920, 0, 1920, 0, 3840, 1080),
+            Some(Corner::TopLeft)
+        );
+        assert_eq!(outward(Corner::TopLeft, 1920, 0), (1919, -1));
     }
 
     #[test]
