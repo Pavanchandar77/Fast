@@ -7,7 +7,8 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
+    div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window,
 };
 use nx_ui::gpui_theme::{rounded_window_frame, sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
@@ -114,6 +115,30 @@ impl PrivacyDashboardView {
             ),
             true,
             self.current_time_ms,
+        );
+    }
+
+    /// Flip one capability for one app profile (Allowed <-> Denied; Restricted stays),
+    /// recompute its risk and record the change in the audit log.
+    pub fn toggle_permission(&mut self, profile_key: &str, cap: PermissionCapability) {
+        let now = self.current_time_ms;
+        let Some(profile) = self.view_model.permissions.profiles.get_mut(profile_key) else {
+            return;
+        };
+        let old = profile.permissions.get(&cap).copied().unwrap_or_default();
+        let new = old.toggle();
+        if new == old {
+            return;
+        }
+        profile.set_permission(cap, new);
+        profile.recalculate_risk(now);
+        let app = profile.app.display_name().to_string();
+        self.view_model.log_event(
+            "Permission",
+            "UserInterface",
+            format!("{app}: {} {:?} -> {:?}", cap.display_name(), old, new),
+            true,
+            now,
         );
     }
 
@@ -262,7 +287,7 @@ impl PrivacyDashboardView {
             }))
     }
 
-    fn render_overview(&self, theme: &Theme) -> impl IntoElement {
+    fn render_overview(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let all_switches = KillSwitchKind::all();
 
         div()
@@ -377,6 +402,13 @@ impl PrivacyDashboardView {
                                     )
                                     .child(
                                         div()
+                                            .id(SharedString::from(format!("ks-{kind:?}")))
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle_kill_switch(kind);
+                                                cx.notify();
+                                            }))
                                             .px(px(10.0 * theme.scale))
                                             .py(px(4.0 * theme.scale))
                                             .rounded(theme.corner_radius_px(6.0))
@@ -402,7 +434,7 @@ impl PrivacyDashboardView {
             )
     }
 
-    fn render_permissions(&self, theme: &Theme) -> impl IntoElement {
+    fn render_permissions(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let profiles = &self.view_model.permissions.profiles;
 
         div()
@@ -435,9 +467,10 @@ impl PrivacyDashboardView {
                     ),
             )
             .child(div().flex().flex_col().gap(px(8.0 * theme.scale)).children(
-                profiles.values().map(|profile| {
+                profiles.iter().map(|(profile_key, profile)| {
                     let risk_col = risk_color(profile.risk_level);
                     let app_name = profile.app.display_name().to_string();
+                    let key = profile_key.clone();
 
                     div()
                         .flex()
@@ -495,7 +528,15 @@ impl PrivacyDashboardView {
                                         )
                                     };
 
+                                    let key = key.clone();
                                     div()
+                                        .id(SharedString::from(format!("perm-{key}-{cap:?}")))
+                                        .cursor_pointer()
+                                        .hover(|s| s.opacity(0.8))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_permission(&key, cap);
+                                            cx.notify();
+                                        }))
                                         .px(px(6.0 * theme.scale))
                                         .py(px(2.0 * theme.scale))
                                         .rounded(theme.corner_radius_px(4.0))
@@ -866,8 +907,10 @@ impl Render for PrivacyDashboardView {
                 .child(self.render_header(&theme))
                 .child(self.render_tabs(&theme, cx))
                 .child(match self.view_model.active_tab {
-                    DashboardTab::Overview => self.render_overview(&theme).into_any_element(),
-                    DashboardTab::Permissions => self.render_permissions(&theme).into_any_element(),
+                    DashboardTab::Overview => self.render_overview(&theme, cx).into_any_element(),
+                    DashboardTab::Permissions => {
+                        self.render_permissions(&theme, cx).into_any_element()
+                    }
                     DashboardTab::Network => self.render_network(&theme).into_any_element(),
                     DashboardTab::Clipboard => self.render_clipboard(&theme).into_any_element(),
                     DashboardTab::AuditLog => self.render_audit_log(&theme).into_any_element(),
@@ -920,6 +963,33 @@ mod tests {
 
                 this.set_tab(DashboardTab::AuditLog);
                 assert_eq!(this.view_model.active_tab, DashboardTab::AuditLog);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_privacy_dashboard_permission_toggle(cx: &mut TestAppContext) {
+        use crate::permissions::{AppPermissionProfile, PermissionState};
+        cx.update(|cx| {
+            let mut vm = DashboardViewModel::new();
+            let app = crate::consent_store::AppIdentifier::from_desktop_path("C:\\Apps\\x.exe");
+            vm.permissions
+                .profiles
+                .insert("x".into(), AppPermissionProfile::new(app));
+            let entity = cx.new(|_cx| PrivacyDashboardView::new(vm));
+            entity.update(cx, |this, _cx| {
+                this.toggle_permission("x", PermissionCapability::Camera);
+                let p = &this.view_model.permissions.profiles["x"];
+                assert_eq!(
+                    p.permissions[&PermissionCapability::Camera],
+                    PermissionState::Allowed
+                );
+                assert_eq!(this.view_model.audit_log.len(), 1);
+                this.toggle_permission("x", PermissionCapability::Camera);
+                assert!(!this.view_model.permissions.profiles["x"]
+                    .is_allowed(PermissionCapability::Camera));
+                this.toggle_permission("missing", PermissionCapability::Camera);
+                assert_eq!(this.view_model.audit_log.len(), 2);
             });
         });
     }
