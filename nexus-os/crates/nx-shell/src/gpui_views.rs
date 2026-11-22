@@ -1016,14 +1016,6 @@ impl Render for MissionControlView {
             .w_full()
             .h_full()
             .bg(Hsla::from(theme.palette.window_bg))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .w_full()
-                    .justify_end()
-                    .child(window_chrome(&theme, true)),
-            )
             .gap(px(24.0))
             .child(
                 div()
@@ -1064,9 +1056,8 @@ impl Render for MissionControlView {
                                     .flex()
                                     .flex_row()
                                     .items_center()
-                                    .justify_between()
+                                    .gap(px(4.0))
                                     .h(px(32.0))
-                                    .pl(px(12.0))
                                     .bg(Hsla::from(theme.palette.sidebar_bg))
                                     .border_b_1()
                                     .border_color(Hsla::from(theme.palette.separator))
@@ -1074,8 +1065,8 @@ impl Render for MissionControlView {
                                     .text_size(px(11.0))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme.text_primary_hsla())
-                                    .child(tile.title.to_ascii_uppercase())
-                                    .child(window_chrome(&theme, false)),
+                                    .child(window_chrome(&theme, false))
+                                    .child(tile.title.to_ascii_uppercase()),
                             )
                             .child(
                                 div()
@@ -1249,7 +1240,7 @@ impl Render for SpotlightView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .pl(px(22.0))
+                    .px(px(22.0))
                     .py(px(18.0))
                     .gap(px(14.0))
                     .border_b_1()
@@ -1285,8 +1276,7 @@ impl Render for SpotlightView {
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary_hsla())
                             .child("Alt Space"),
-                    )
-                    .child(window_chrome(&theme, true)),
+                    ),
             )
             .child(
                 div()

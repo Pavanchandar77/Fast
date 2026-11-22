@@ -254,9 +254,10 @@ pub fn begin_window_drag(event: &gpui::MouseDownEvent, window: &mut Window) {
         window.zoom_window();
         return;
     }
-    let width = f32::from(window.viewport_size().width);
+    // The traffic lights sit top-left; a press there is a button, not a drag.
     let chrome = CHROME_WIDTH + WINDOW_FRAME_INSET + 4.0;
-    if f32::from(event.position.x) >= width - chrome {
+    let top = WINDOW_FRAME_INSET + CAPTION_BUTTON_HEIGHT + 16.0;
+    if f32::from(event.position.x) <= chrome && f32::from(event.position.y) <= top {
         return;
     }
     // GPUI's Windows backend has no `start_window_move` (it is a no-op).
@@ -425,6 +426,7 @@ pub fn window_chrome(theme: &Theme, live: bool) -> impl IntoElement {
             .text_color(Hsla::transparent_black())
             .group_hover("nx-traffic", move |s| s.text_color(glyph))
             .hover(move |s| s.bg(hot))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 if live {
                     run_window_control(id, window, cx);

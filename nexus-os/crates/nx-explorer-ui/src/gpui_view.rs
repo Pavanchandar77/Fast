@@ -206,7 +206,7 @@ impl Render for ExplorerView {
                         .items_center()
                         .justify_between()
                         .h(px(52.0))
-                        .pl(px(16.0))
+                        .pl(px(4.0))
                         .bg(Hsla::from(theme.palette.sidebar_bg))
                         .border_b_1()
                         .border_color(Hsla::from(theme.palette.separator))
@@ -223,6 +223,7 @@ impl Render for ExplorerView {
                                 .flex_row()
                                 .items_center()
                                 .gap(px(12.0))
+                                .child(window_chrome(&theme, true))
                                 // Nav buttons (Back, Forward)
                                 .child(
                                     div()
@@ -322,8 +323,7 @@ impl Render for ExplorerView {
                                                 .child("≡"),
                                         )
                                         .child(div().px(px(8.0)).py(px(2.0)).child("⊞")),
-                                )
-                                .child(window_chrome(&theme, true)),
+                                ),
                         ),
                 )
                 // 2. Middle Split: Sidebar + Main File Content
