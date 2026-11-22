@@ -479,23 +479,20 @@ impl DirectWriteState {
                     target_font.fallbacks.as_ref(),
                 )
                 .unwrap_or_else(|| {
-                    #[cfg(any(test, feature = "test-support"))]
-                    {
-                        panic!("ERROR: {} font not found!", target_font.family);
-                    }
-                    #[cfg(not(any(test, feature = "test-support")))]
-                    {
-                        log::error!("{} not found, use {} instead.", target_font.family, family);
-                        self.get_font_id_from_font_collection(
-                            family.as_ref(),
-                            target_font.weight,
-                            target_font.style,
-                            &target_font.features,
-                            target_font.fallbacks.as_ref(),
-                            true,
-                        )
-                        .unwrap()
-                    }
+                    // Nexus: never panic on a missing font (upstream panics when built
+                    // with test-support). A panic here runs inside the window procedure,
+                    // cannot unwind and aborts the process, e.g. on Windows 10 without
+                    // Cascadia Mono / Segoe UI Variable. Fall back to the system UI font.
+                    log::error!("{} not found, use {} instead.", target_font.family, family);
+                    self.get_font_id_from_font_collection(
+                        family.as_ref(),
+                        target_font.weight,
+                        target_font.style,
+                        &target_font.features,
+                        target_font.fallbacks.as_ref(),
+                        true,
+                    )
+                    .unwrap()
                 })
             }
         }

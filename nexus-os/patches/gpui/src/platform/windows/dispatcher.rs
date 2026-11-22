@@ -44,27 +44,58 @@ impl WindowsDispatcher {
         }
     }
 
+    // Nexus: if the WinRT thread pool is unavailable (CreateTimer/RunAsync fail,
+    // e.g. a stripped-down Windows or wine), the runnable used to be dropped,
+    // which cancels the task and makes whoever awaits it panic with "Task
+    // polled after completion" inside the window procedure (abort, silent exit).
+    // Fall back to a plain thread instead.
     fn dispatch_on_threadpool(&self, runnable: Runnable) {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(runnable)));
         let handler = {
-            let mut task_wrapper = Some(runnable);
+            let slot = slot.clone();
             WorkItemHandler::new(move |_| {
-                task_wrapper.take().unwrap().run();
+                if let Some(r) = slot.lock().ok().and_then(|mut s| s.take()) {
+                    r.run();
+                }
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
+        if let Err(err) = ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High) {
+            warn_fallback_once(&err);
+            if let Some(r) = slot.lock().ok().and_then(|mut s| s.take()) {
+                std::thread::spawn(move || r.run());
+            }
+        }
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: Runnable, duration: Duration) {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(runnable)));
         let handler = {
-            let mut task_wrapper = Some(runnable);
+            let slot = slot.clone();
             TimerElapsedHandler::new(move |_| {
-                task_wrapper.take().unwrap().run();
+                if let Some(r) = slot.lock().ok().and_then(|mut s| s.take()) {
+                    r.run();
+                }
                 Ok(())
             })
         };
-        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+        if let Err(err) = ThreadPoolTimer::CreateTimer(&handler, duration.into()) {
+            warn_fallback_once(&err);
+            if let Some(r) = slot.lock().ok().and_then(|mut s| s.take()) {
+                std::thread::spawn(move || {
+                    std::thread::sleep(duration);
+                    r.run();
+                });
+            }
+        }
     }
+}
+
+fn warn_fallback_once(err: &windows::core::Error) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::warn!("WinRT thread pool unavailable ({err:?}); using std threads for GPUI tasks");
+    });
 }
 
 impl PlatformDispatcher for WindowsDispatcher {

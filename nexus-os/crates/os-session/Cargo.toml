@@ -61,3 +61,6 @@ raw-window-handle.workspace = true
 # too. `build.rs` only calls it when CARGO_CFG_TARGET_OS is windows.
 [build-dependencies]
 embed-resource = "3"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

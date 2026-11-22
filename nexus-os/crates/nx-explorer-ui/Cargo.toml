@@ -24,6 +24,7 @@ notify = { workspace = true }
 windows = { workspace = true }
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 tempfile = "3.10"
 proptest = "1.5"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

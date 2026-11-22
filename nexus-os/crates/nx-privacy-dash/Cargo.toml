@@ -18,4 +18,5 @@ regex = "1.10"
 windows = { workspace = true, features = ["Win32_System_Registry"] }
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 proptest = "1.5"

@@ -301,6 +301,15 @@ pub struct GpuiSessionWindows {
 }
 
 impl GpuiSessionWindows {
+    /// True when not a single shell window could be created (nothing visible).
+    pub fn none_open(&self) -> bool {
+        self.island_window.is_none()
+            && self.dock_window.is_none()
+            && self.spotlight_window.is_none()
+            && self.explorer_window.is_none()
+            && self.privacy_dashboard_window.is_none()
+    }
+
     /// One-line summary for the startup log.
     pub fn describe(&self) -> String {
         let yn = |b: bool| if b { "ok" } else { "MISSING" };
@@ -408,6 +417,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     cx.new(|cx| IslandView::new(island_model, cx))
                 },
             )
+            .inspect_err(|e| error!("window 'island' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("island", open_t);
 
@@ -448,6 +458,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     cx.new(|_cx| DockView::new(dock_model))
                 },
             )
+            .inspect_err(|e| error!("window 'dock' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("dock", open_t);
 
@@ -474,6 +485,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 hide_auxiliary_window(window);
                 cx.new(|_cx| SpotlightView::new(spotlight_model))
             })
+            .inspect_err(|e| error!("window 'spotlight' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("spotlight", open_t);
         // Index apps and recent files off the UI thread; Spotlight opens at
@@ -523,6 +535,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 hide_auxiliary_window(window);
                 cx.new(|_cx| MissionControlView::new(expose_model))
             })
+            .inspect_err(|e| error!("window 'expose' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("expose", open_t);
     }
@@ -542,6 +555,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     cx.new(|_cx| ExplorerView::new(explorer.window))
                 },
             )
+            .inspect_err(|e| error!("window 'explorer' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("explorer", open_t);
     }
@@ -562,6 +576,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     cx.new(|_cx| PrivacyDashboardView::new(dash_vm))
                 },
             )
+            .inspect_err(|e| error!("window 'privacy_dashboard' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("privacy_dashboard", open_t);
     }
@@ -599,6 +614,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 }
                 cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
             })
+            .inspect_err(|e| error!("window 'motion' failed to open: {e:#}"))
             .ok();
         crate::diag::window_opened("motion", open_t);
     }

@@ -16,6 +16,7 @@ raw-window-handle.workspace = true
 nx-compat.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 criterion = "0.5"
 
 [[bench]]

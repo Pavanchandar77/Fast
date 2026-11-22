@@ -40,22 +40,30 @@ mod imp {
 
     pub fn run() -> anyhow::Result<()> {
         let process_t0 = Instant::now();
-        // `nexus-os.exe --restore`: put back anything a killed session left
-        // changed (e.g. the hidden taskbar) and exit. Used by the uninstaller
-        // and the "Restore Windows desktop" Start Menu shortcut.
-        if std::env::args().any(|arg| arg == "--restore") {
-            os_core::recovery::restore_journal_file()?;
-            return Ok(());
-        }
-
+        // First: the log file, panic/crash reporting and (for --diag) a
+        // console, so nothing after this can end the process silently.
         // Release builds have no console: everything goes to
         // %LOCALAPPDATA%\Nexus\logs\nexus.log so a real-PC run leaves data.
+        let diag_mode = diag::parse_diag_mode(std::env::args());
+        diag::set_diag_mode(diag_mode);
+        if diag_mode {
+            diag::attach_console();
+            if std::env::var_os("RUST_LOG").is_none() {
+                std::env::set_var("RUST_LOG", "debug,wgpu_core=warn,wgpu_hal=warn,naga=warn");
+            }
+            std::env::set_var("NEXUS_STARTUP_TRACE", "1");
+        }
+        let log_path = diag::open_log_file();
+        // Restore journaled mutations on panic, then record the panic in the
+        // log and (when it ends the process) show the reason.
+        os_core::recovery::install_panic_hook();
+        diag::install_panic_logging();
+        diag::install_crash_filter();
         let safe = diag::parse_safe_mode(
             std::env::args(),
             std::env::var("NEXUS_SAFE").ok().as_deref(),
         );
         diag::set_safe_mode(safe);
-        let log_path = diag::open_log_file();
         tracing_subscriber::fmt()
             .with_env_filter(
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -65,12 +73,21 @@ mod imp {
             .with_writer(|| diag::LogWriter)
             .init();
         info!(
-            "==== Nexus {} starting (pid {}, safe_mode={safe}, log={:?}) ====",
+            "==== Nexus {} starting (pid {}, safe_mode={safe}, diag={diag_mode}, log={:?}) ====",
             env!("CARGO_PKG_VERSION"),
             std::process::id(),
             log_path
         );
         info!("args: {:?}", std::env::args().collect::<Vec<_>>());
+
+        // `nexus-os.exe --restore`: put back anything a killed session left
+        // changed (e.g. the hidden taskbar) and exit. Used by the uninstaller
+        // and the "Restore Windows desktop" Start Menu shortcut.
+        if std::env::args().any(|arg| arg == "--restore") {
+            os_core::recovery::restore_journal_file()?;
+            info!("--restore finished");
+            return Ok(());
+        }
 
         // One session per user: a second launch (shortcut + sign-in entry)
         // must not attach a second set of hooks.
@@ -78,14 +95,19 @@ mod imp {
             Some(guard) => guard,
             None => {
                 warn!("another Nexus session already holds Local\\NexusOS.Session; exiting");
+                diag::show_message(
+                    "Nexus",
+                    &format!(
+                        "Nexus is already running in this Windows session, so this launch closed.\n\n\
+                         If you can't see it, end nexus-os.exe in Task Manager (or run Start menu > Nexus > \
+                         Restore Windows desktop) and start Nexus again.\n\nLog: {}",
+                        diag::log_path().display()
+                    ),
+                    false,
+                );
                 return Ok(());
             }
         };
-
-        // Restore journaled mutations on panic before anything else runs,
-        // and record the panic in the log first.
-        os_core::recovery::install_panic_hook();
-        diag::install_panic_logging();
 
         // 0b. Enforce Per-Monitor DPI V2 scaling
         unsafe {
@@ -207,6 +229,10 @@ mod imp {
                     tracing::error!(
                         "keyboard hook failed ({err}); restoring the session and aborting startup"
                     );
+                    diag::fatal(
+                        "startup",
+                        &format!("the global keyboard hook could not be installed ({err})"),
+                    );
                     return Ok(());
                 }
             }
@@ -289,6 +315,15 @@ mod imp {
                 os_session::startup::open_gpui_windows(cx, &mut session)
             });
             info!("GPUI windows: {}", windows.describe());
+            if windows.none_open() {
+                // Nothing on screen would be a silent "vanish": say so and quit.
+                diag::fatal(
+                    "startup",
+                    "none of the Nexus windows could be created (see the 'failed to open' lines in the log)",
+                );
+                cx.quit();
+                return;
+            }
             info!(
                 "startup: shell windows ready {} ms after process start",
                 process_t0.elapsed().as_millis()
@@ -717,8 +752,20 @@ mod imp {
 }
 
 #[cfg(windows)]
-fn main() -> anyhow::Result<()> {
-    imp::run()
+fn main() -> std::process::ExitCode {
+    // A startup error used to be returned from main and printed to a stderr
+    // that a GUI exe does not have: the process just vanished.
+    let code = match imp::run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!("startup failed: {err:#}");
+            os_session::diag::fatal("startup error", &format!("{err:#}"));
+            std::process::ExitCode::FAILURE
+        }
+    };
+    tracing::info!("nexus-os exiting");
+    os_session::diag::pause_console();
+    code
 }
 
 #[cfg(not(windows))]

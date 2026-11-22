@@ -8,6 +8,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static PANICS: AtomicU32 = AtomicU32::new(0);
 
+thread_local! {
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// True while this thread is inside a [`guard`]: a panic here will be caught,
+/// so crash reporting should not treat it as fatal.
+pub fn in_guard() -> bool {
+    DEPTH.with(|d| d.get() > 0)
+}
+
 /// How many guarded panics this session has absorbed.
 pub fn panic_count() -> u32 {
     PANICS.load(Ordering::Relaxed)
@@ -15,7 +25,10 @@ pub fn panic_count() -> u32 {
 
 /// Run `f`; on panic log it, count it and return `None`.
 pub fn guard<T>(what: &str, f: impl FnOnce() -> T) -> Option<T> {
-    match catch_unwind(AssertUnwindSafe(f)) {
+    DEPTH.with(|d| d.set(d.get() + 1));
+    let result = catch_unwind(AssertUnwindSafe(f));
+    DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    match result {
         Ok(v) => Some(v),
         Err(err) => {
             let n = PANICS.fetch_add(1, Ordering::Relaxed) + 1;
