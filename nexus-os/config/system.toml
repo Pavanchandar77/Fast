@@ -188,6 +188,7 @@ mod_key = "Super"
 "Shift+5"      = "move_to_workspace:5"
 "Space"        = "shell:command_bar"
 "Alt+Space"    = "shell:command_bar"      # Spotlight, macOS-style
+"Ctrl+Alt+V"   = "shell:clipboard"        # clipboard history in Spotlight
 "Shift+Space"  = "shell:assistant"
 "Tab"          = "motion:switcher"         # 3D card switcher; pause to commit
 "Shift+Tab"    = "motion:mission_control"  # fan windows out / back

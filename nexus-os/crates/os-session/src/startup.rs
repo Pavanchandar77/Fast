@@ -450,6 +450,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         // Spotlight starts hidden; HotkeyAction::CommandBar toggles it.
         let mut spotlight_model = Spotlight::with_settings();
         nx_shell::catalog::populate(&mut spotlight_model);
+        nx_shell::clip_history::start_watcher();
         spotlight_model.query = shell.spotlight.query.clone();
         let mut spotlight_opts = theme.shell_window_options(
             gpui::Bounds {
@@ -624,7 +625,9 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
             other => {
                 // "files:<folder>" opens Files at that folder (dock menu
                 // "Show in Files", recent-items stack).
-                if other.starts_with("app:") || other.starts_with("doc:") {
+                if other.starts_with("clip:") {
+                    nx_shell::clip_history::copy_back(other);
+                } else if other.starts_with("app:") || other.starts_with("doc:") {
                     if let Some(target) = nx_shell::catalog::target_of(other) {
                         nx_shell::gpui_views::open_target(&target);
                     }
@@ -808,6 +811,25 @@ pub fn set_island_expanded(
             view.model.expanded
         })
         .unwrap_or(false)
+}
+
+/// Open Spotlight with a prefilled query (Ctrl+Alt+V → clipboard history).
+pub fn open_gpui_spotlight_with(
+    handle: gpui::WindowHandle<SpotlightView>,
+    query: &str,
+    cx: &mut gpui::App,
+) {
+    let query = query.to_string();
+    let _ = handle.update(cx, |view, window, cx| {
+        if !view.model.is_open() {
+            view.toggle();
+        }
+        view.model.query = query;
+        view.selected = 0;
+        apply_spotlight_visibility(window, true);
+        window.activate_window();
+        cx.notify();
+    });
 }
 
 pub fn toggle_gpui_spotlight(

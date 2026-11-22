@@ -1159,6 +1159,7 @@ fn kind_tag(kind: ProviderKind) -> &'static str {
         ProviderKind::App => "APP",
         ProviderKind::Setting => "SET",
         ProviderKind::File => "FILE",
+        ProviderKind::Clipboard => "CLIP",
     }
 }
 
@@ -1168,6 +1169,7 @@ fn kind_mark(kind: ProviderKind) -> &'static str {
         ProviderKind::App => "▶",
         ProviderKind::Setting => "⚙",
         ProviderKind::File => "▣",
+        ProviderKind::Clipboard => "⧉",
     }
 }
 

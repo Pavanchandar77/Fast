@@ -27,6 +27,7 @@ pub enum ProviderKind {
     App = 1,
     Setting = 2,
     File = 3,
+    Clipboard = 4,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -344,6 +345,26 @@ impl Spotlight {
         let limit = self.limit.max(1);
         if clipped.is_empty() {
             return self.recents(limit);
+        }
+        // "cb …" lists clipboard history instead of the catalog.
+        if let Some(rest) = clipped
+            .strip_prefix(crate::clip_history::PREFIX)
+            .filter(|rest| rest.is_empty() || rest.starts_with(' '))
+        {
+            let n = crate::clip_history::matching(rest.trim(), limit.max(12));
+            let total = n.len() as u32;
+            return n
+                .into_iter()
+                .enumerate()
+                .map(|(i, (id, text))| SpotlightHit {
+                    id: format!("clip:{id}"),
+                    title: crate::clip_history::preview(&text),
+                    subtitle: format!("{} chars · Enter to copy", text.chars().count()),
+                    kind: ProviderKind::Clipboard,
+                    score: total - i as u32,
+                    value: None,
+                })
+                .collect();
         }
         let folded = clipped.to_ascii_lowercase();
         let tokens: Vec<&[u8]> = folded

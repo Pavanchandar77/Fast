@@ -4,6 +4,7 @@ pub mod backdrop;
 #[cfg(windows)]
 pub mod capture;
 pub mod catalog;
+pub mod clip_history;
 pub mod clock;
 pub mod dock;
 pub mod error;

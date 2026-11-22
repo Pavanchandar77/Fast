@@ -28,6 +28,7 @@ mod imp {
     enum SessionUiEvent {
         FailSafeQuit,
         ToggleSpotlight,
+        SpotlightWith(&'static str),
         ToggleAssistant,
         Motion(os_session::motion_bridge::UiMotion),
     }
@@ -353,6 +354,15 @@ mod imp {
                                 }
                             });
                         }
+                        SessionUiEvent::SpotlightWith(query) => {
+                            let _ = cx.update(|cx| {
+                                if let Some(handle) = spotlight {
+                                    os_session::startup::open_gpui_spotlight_with(
+                                        handle, query, cx,
+                                    );
+                                }
+                            });
+                        }
                         SessionUiEvent::ToggleAssistant => {
                             let _ = cx.update(|cx| {
                                 if let Some(handle) = island {
@@ -493,6 +503,10 @@ mod imp {
                         HotkeyAction::CommandBar => {
                             info!("Hotkey: Toggle GPUI SpotlightView");
                             let _ = ui_tx.send(SessionUiEvent::ToggleSpotlight);
+                        }
+                        HotkeyAction::Custom(ref name) if name == "shell:clipboard" => {
+                            info!("Hotkey: clipboard history");
+                            let _ = ui_tx.send(SessionUiEvent::SpotlightWith("cb "));
                         }
                         HotkeyAction::Custom(ref name) if name == "shell:assistant" => {
                             info!("Hotkey: Toggle island assistant");
