@@ -482,6 +482,107 @@ impl DockModel {
         self.retarget();
     }
 
+    /// macOS order: pinned apps, then running apps that are not kept in the
+    /// dock, then Trash last. Stable within each group.
+    fn normalize_order(&mut self) {
+        let rank = |item: &DockApp| {
+            if item.id == "trash" {
+                2
+            } else if item.pinned {
+                0
+            } else {
+                1
+            }
+        };
+        self.items.sort_by_key(rank);
+    }
+
+    /// Index of the first running-but-not-kept app (where the separator goes).
+    pub fn first_unpinned(&self) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|item| !item.pinned && item.id != "trash")
+    }
+
+    /// Nexus surfaces that cannot be removed from the dock.
+    pub fn is_builtin(id: &str) -> bool {
+        matches!(id, "explorer" | "privacy" | "trash")
+    }
+
+    /// Drag-to-reorder among kept apps. A running app dragged into the kept
+    /// group is kept. Returns the item's new index.
+    pub fn move_item(&mut self, from: usize, to: usize) -> usize {
+        if from >= self.items.len() {
+            return from;
+        }
+        let kept = self
+            .items
+            .iter()
+            .filter(|i| i.pinned && i.id != "trash")
+            .count();
+        let to = to.min(kept.saturating_sub(1)).min(self.items.len() - 1);
+        if from == to || self.items[from].id == "trash" {
+            return from;
+        }
+        let mut item = self.items.remove(from);
+        item.pinned = true;
+        self.items.insert(to, item);
+        self.reconcile_motion();
+        self.retarget();
+        self.items
+            .iter()
+            .position(|i| i.id == self.items[to].id)
+            .unwrap_or(to)
+    }
+
+    /// "Keep in Dock" / "Remove from Dock".
+    pub fn set_kept(&mut self, index: usize, keep: bool) {
+        let Some(item) = self.items.get_mut(index) else {
+            return;
+        };
+        if Self::is_builtin(&item.id) {
+            return;
+        }
+        item.pinned = keep;
+        let id = item.id.clone();
+        if !keep {
+            self.unpin(&id);
+        } else {
+            self.reconcile_motion();
+            self.retarget();
+        }
+    }
+
+    /// Kept apps in dock order, for [`save_dock_pins`].
+    pub fn kept(&self) -> Vec<(String, String, String)> {
+        self.items
+            .iter()
+            .filter(|i| i.pinned)
+            .map(|i| (i.id.clone(), i.label.clone(), i.launch.clone()))
+            .collect()
+    }
+
+    /// Apply the user's saved dock (order and kept set) over the defaults
+    /// and taskbar pins. Built-ins always stay.
+    pub fn apply_saved(&mut self, saved: &[(String, String, String)]) {
+        if saved.is_empty() {
+            return;
+        }
+        for item in &mut self.items {
+            if !Self::is_builtin(&item.id) && !saved.iter().any(|s| s.0 == item.id) {
+                item.pinned = false;
+            }
+        }
+        self.items.retain(|i| i.pinned || i.running);
+        for (id, label, launch) in saved {
+            self.pin_launch(id.clone(), label.clone(), launch.clone());
+        }
+        let order = |id: &str| saved.iter().position(|s| s.0 == id).unwrap_or(usize::MAX);
+        self.items.sort_by_key(|i| order(&i.id));
+        self.reconcile_motion();
+        self.retarget();
+    }
+
     pub fn set_jumps(&mut self, id: &str, jumps: Vec<String>) {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.jumps = jumps;
@@ -727,6 +828,7 @@ impl DockModel {
     }
 
     fn reconcile_motion(&mut self) {
+        self.normalize_order();
         let mut old = std::mem::take(&mut self.motion);
         for item in &self.items {
             if let Some(pos) = old.iter().position(|motion| motion.id == item.id) {
@@ -1162,6 +1264,118 @@ fn rest_centers(count: usize, placement: DockPlacement, mag: Magnification) -> V
         .collect()
 }
 
+/// Where the user's dock order and kept apps live.
+pub fn dock_prefs_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+        })?;
+    Some(base.join("Nexus").join("dock.tsv"))
+}
+
+/// One kept app per line: `id<TAB>label<TAB>launch`.
+pub fn format_dock_pins(pins: &[(String, String, String)]) -> String {
+    let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+    let mut out = String::new();
+    for (id, label, launch) in pins {
+        out.push_str(&format!(
+            "{}\t{}\t{}\n",
+            clean(id),
+            clean(label),
+            clean(launch)
+        ));
+    }
+    out
+}
+
+pub fn parse_dock_pins(text: &str) -> Vec<(String, String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let id = parts.next()?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            let label = parts.next().unwrap_or("").to_string();
+            let launch = parts.next().unwrap_or("").to_string();
+            Some((id.to_string(), label, launch))
+        })
+        .collect()
+}
+
+pub fn load_dock_pins() -> Vec<(String, String, String)> {
+    dock_prefs_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| parse_dock_pins(&t))
+        .unwrap_or_default()
+}
+
+pub fn save_dock_pins(pins: &[(String, String, String)]) {
+    let Some(path) = dock_prefs_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, format_dock_pins(pins));
+}
+
+/// Ask a running app to quit: WM_CLOSE to each of its taskbar windows, the
+/// same as clicking their close buttons (the app can still ask to save).
+pub fn quit_app(id: &str) -> bool {
+    let hwnds: Vec<isize> = taskbar_rows()
+        .into_iter()
+        .filter(|row| row.0 == id)
+        .map(|row| row.3)
+        .collect();
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+        for raw in &hwnds {
+            let _ = PostMessageW(
+                HWND(*raw as *mut std::ffi::c_void),
+                WM_CLOSE,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+    !hwnds.is_empty()
+}
+
+/// Recently used files and folders (newest first), from the shell's Recent
+/// list: `(display name, shortcut path)`.
+pub fn recent_items(limit: usize) -> Vec<(String, String)> {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return Vec::new();
+    };
+    let dir = std::path::PathBuf::from(appdata).join("Microsoft\\Windows\\Recent");
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut items: Vec<(std::time::SystemTime, String, String)> = read
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+            if ext != "lnk" {
+                return None;
+            }
+            let when = e.metadata().ok()?.modified().ok()?;
+            let name = path.file_stem()?.to_string_lossy().to_string();
+            Some((when, name, path.to_string_lossy().to_string()))
+        })
+        .collect();
+    items.sort_by_key(|a| std::cmp::Reverse(a.0));
+    items
+        .into_iter()
+        .take(limit)
+        .map(|(_, name, path)| (name, path))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1464,6 +1678,45 @@ mod tests {
         }
         let step = shown_at.expect("dock did not pop");
         assert!(step * 8 <= 200, "dock took {}ms to pop", step * 8);
+    }
+
+    #[test]
+    fn dock_pins_round_trip_and_reorder() {
+        let pins = vec![
+            ("explorer".to_string(), "Files".to_string(), String::new()),
+            (
+                "code".to_string(),
+                "Code".to_string(),
+                "C:\\x\\Code.lnk".to_string(),
+            ),
+        ];
+        assert_eq!(parse_dock_pins(&format_dock_pins(&pins)), pins);
+        let mut dock = DockModel::new(placement());
+        dock.pin_defaults();
+        dock.pin_launch("code", "Code", "c.lnk");
+        dock.pin_launch("chrome", "Chrome", "g.lnk");
+        // Trash stays last.
+        assert_eq!(dock.items().last().unwrap().id, "trash");
+        let code = dock.items().iter().position(|i| i.id == "code").unwrap();
+        let at = dock.move_item(code, 0);
+        assert_eq!(dock.items()[at].id, "code");
+        assert_eq!(dock.items()[0].id, "code");
+        assert_eq!(dock.items().last().unwrap().id, "trash");
+        let saved = dock.kept();
+        let mut again = DockModel::new(placement());
+        again.pin_defaults();
+        again.pin_launch("chrome", "Chrome", "g.lnk");
+        again.pin_launch("code", "Code", "c.lnk");
+        again.apply_saved(&saved);
+        let ids: Vec<_> = again.items().iter().map(|i| i.id.clone()).collect();
+        let want: Vec<_> = dock.items().iter().map(|i| i.id.clone()).collect();
+        assert_eq!(ids, want);
+        let chrome = again.items().iter().position(|i| i.id == "chrome").unwrap();
+        again.set_kept(chrome, false);
+        assert!(!again.items().iter().any(|i| i.id == "chrome"));
+        let trash = again.items().iter().position(|i| i.id == "trash").unwrap();
+        again.set_kept(trash, false);
+        assert!(again.items().iter().any(|i| i.id == "trash"));
     }
 
     #[test]

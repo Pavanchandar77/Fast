@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::{
     div, img, px, App, Context, FontWeight, Hsla, ImageSource, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, RenderImage, StatefulInteractiveElement, Styled, Window,
+    KeyDownEvent, ParentElement, Render, RenderImage, SharedString, StatefulInteractiveElement,
+    Styled, Window,
 };
 use nx_ui::gpui_theme::{mono_font_family, sf_font_family, window_chrome, ThemeStyledExt};
 use nx_ui::theme::Theme;
@@ -52,6 +53,11 @@ fn launch_dock_target(id: &str, launch: &str, running: bool, cx: &mut App) {
     // A running app comes forward (restored if minimized) instead of
     // starting a second copy.
     if running && crate::dock::focus_app(id) {
+        return;
+    }
+    if id == "trash" {
+        #[cfg(windows)]
+        shell_open("shell:RecycleBinFolder");
         return;
     }
     let path = if launch.is_empty() { id } else { launch };
@@ -205,6 +211,28 @@ pub struct DockView {
     icon_pending: HashSet<String>,
     icon_tx: Sender<IconMsg>,
     icon_rx: Receiver<IconMsg>,
+    /// Right-click menu or the recent-items stack, drawn above the shelf.
+    popup: Option<DockPopup>,
+    /// Since when the pointer has been away from the dock with a popup open.
+    popup_away: Option<Instant>,
+    /// Drag-to-reorder in progress.
+    drag: Option<DockDrag>,
+    /// Swallow the click that ends a drag.
+    suppress_click_until: Option<Instant>,
+}
+
+#[derive(Clone, Debug)]
+enum DockPopup {
+    Menu(usize),
+    Stack(Vec<(String, String)>),
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct DockDrag {
+    index: usize,
+    start_x: Option<f32>,
+    moved: bool,
 }
 
 type IconMsg = (String, Option<(u32, u32, Vec<u8>)>);
@@ -227,6 +255,10 @@ impl DockView {
             cursor_axis: None,
             icons: HashMap::new(),
             icon_miss: HashSet::new(),
+            popup: None,
+            popup_away: None,
+            drag: None,
+            suppress_click_until: None,
             icon_pending: HashSet::new(),
             icon_tx,
             icon_rx,
@@ -395,7 +427,7 @@ impl DockView {
                     self.model.pointer_left();
                 }
                 self.hover_from_cursor(window, point);
-                self.hold_open = at_bottom || self.hovered_index.is_some();
+                self.hold_open = at_bottom || self.hovered_index.is_some() || self.popup.is_some();
                 self.model.set_hold(self.hold_open);
             }
         }
@@ -410,6 +442,7 @@ impl DockView {
                 }
             }
         }
+        self.poll_drag_and_popup(window);
         let mut missing = Vec::new();
         if self.last_procs.elapsed() > Duration::from_millis(400) {
             self.last_procs = Instant::now();
@@ -417,8 +450,16 @@ impl DockView {
             self.model.note_running_exes(&names);
             let buttons = taskbar_buttons();
             self.model.note_taskbar(&buttons);
-            for item in self.model.items() {
-                let path = item.launch.clone();
+            let mut wanted: Vec<String> = self
+                .model
+                .items()
+                .iter()
+                .map(|i| i.launch.clone())
+                .collect();
+            if let Some(DockPopup::Stack(entries)) = &self.popup {
+                wanted.extend(entries.iter().map(|e| e.1.clone()));
+            }
+            for path in wanted {
                 let looks_like_file = path.contains('\\') || path.contains('/');
                 if !looks_like_file
                     || self.icons.contains_key(&path)
@@ -453,7 +494,10 @@ impl DockView {
             // dock window spans the screen width, and its transparent sides
             // must not swallow clicks meant for the app underneath.
             let hidden = (self.model.auto_hide && self.model.reveal() < 0.08)
-                || (self.hovered_index.is_none() && !self.model.menu_open());
+                || (self.hovered_index.is_none()
+                    && !self.model.menu_open()
+                    && self.popup.is_none()
+                    && self.drag.is_none());
             if self.click_through != Some(hidden) {
                 self.click_through = Some(hidden);
                 let raw = {
@@ -494,6 +538,257 @@ fn raster_icon(w: u32, h: u32, bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
 }
 
+impl DockView {
+    /// Drag-to-reorder and popup auto-dismiss, driven from the cursor poll.
+    fn poll_drag_and_popup(&mut self, window: &Window) {
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+            let down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 != 0;
+            let cursor = {
+                let mut p = windows::Win32::Foundation::POINT::default();
+                unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) }
+                    .is_ok()
+                    .then_some((p.x as f32, p.y as f32))
+            };
+            if let (Some(mut drag), Some((x, _))) = (self.drag, cursor) {
+                if !down {
+                    if drag.moved {
+                        crate::dock::save_dock_pins(&self.model.kept());
+                        self.suppress_click_until =
+                            Some(Instant::now() + Duration::from_millis(400));
+                    }
+                    self.drag = None;
+                } else {
+                    let start = *drag.start_x.get_or_insert(x);
+                    if (x - start).abs() > 8.0 {
+                        drag.moved = true;
+                    }
+                    if drag.moved {
+                        if let Some(target) = self.hovered_index {
+                            let kept_target = self
+                                .model
+                                .items()
+                                .get(target)
+                                .is_some_and(|i| i.pinned && i.id != "trash");
+                            if target != drag.index && kept_target {
+                                drag.index = self.model.move_item(drag.index, target);
+                            }
+                        }
+                    }
+                    self.drag = Some(drag);
+                }
+            }
+            if self.popup.is_some() {
+                let b = window.bounds();
+                let inside = cursor.is_some_and(|(x, y)| {
+                    let s = window.scale_factor();
+                    let (l, t) = (f32::from(b.origin.x) * s, f32::from(b.origin.y) * s);
+                    let (w, h) = (f32::from(b.size.width) * s, f32::from(b.size.height) * s);
+                    x >= l && x <= l + w && y >= t - 8.0 && y <= t + h
+                });
+                if inside {
+                    self.popup_away = None;
+                } else {
+                    let since = *self.popup_away.get_or_insert_with(Instant::now);
+                    if since.elapsed() > Duration::from_millis(900) {
+                        self.popup = None;
+                        self.popup_away = None;
+                    }
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = window;
+        }
+    }
+
+    /// Recent items stack, at the right end of the shelf (before nothing,
+    /// after Trash, like the Downloads stack on macOS).
+    fn render_stack_tile(
+        &self,
+        theme: &Theme,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let open = matches!(self.popup, Some(DockPopup::Stack(_)));
+        div()
+            .id("dock-stack")
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(size))
+                    .h(px(size))
+                    .rounded(px(theme.radii.lg))
+                    .bg(Hsla::from(theme.palette.elevated))
+                    .border_1()
+                    .border_color(Hsla::from(theme.palette.separator))
+                    .hover(|s| s.bg(theme.selection_hsla()))
+                    .child(glyph_icon(
+                        GlyphIcon::Folder,
+                        theme.text_primary_hsla(),
+                        (size * 0.5).clamp(14.0, 30.0),
+                    )),
+            )
+            .child(
+                div()
+                    .w(px(4.0))
+                    .h(px(4.0))
+                    .rounded(px(2.0))
+                    .when(open, |d| d.bg(theme.text_primary_hsla())),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.popup = match this.popup {
+                    Some(DockPopup::Stack(_)) => None,
+                    _ => Some(DockPopup::Stack(crate::dock::recent_items(8))),
+                };
+                this.popup_away = None;
+                cx.notify();
+            }))
+    }
+
+    /// The popup row above the shelf: the right-click menu or the stack.
+    fn render_popup(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let popup = self.popup.clone()?;
+        let chip = |id: SharedString, label: String| {
+            div()
+                .id(id)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .h(px(28.0))
+                .px(px(12.0))
+                .rounded(px(14.0))
+                .text_size(px(12.5))
+                .text_color(theme.text_primary_hsla())
+                .hover(|s| s.bg(theme.selection_hsla()))
+                .child(label)
+        };
+        let row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.0))
+            .p(px(3.0))
+            .rounded(px(17.0))
+            .bg(Hsla::from(theme.palette.menu_bg))
+            .border_1()
+            .border_color(Hsla::from(theme.palette.separator))
+            .shadow_lg()
+            .font_family(sf_font_family());
+        let row = match popup {
+            DockPopup::Menu(index) => {
+                let item = self.model.items().get(index)?.clone();
+                let mut row = row.child(
+                    div()
+                        .px(px(10.0))
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_primary_hsla())
+                        .child(item.label.clone()),
+                );
+                if !DockModel::is_builtin(&item.id) {
+                    let keep = !item.pinned;
+                    let label = if keep {
+                        "Keep in Dock"
+                    } else {
+                        "Remove from Dock"
+                    };
+                    row = row.child(chip("dock-menu-keep".into(), label.to_string()).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.model.set_kept(index, keep);
+                            crate::dock::save_dock_pins(&this.model.kept());
+                            this.popup = None;
+                            cx.notify();
+                        }),
+                    ));
+                }
+                if let Some(folder) = show_in_files_target(&item.launch) {
+                    row = row.child(
+                        chip("dock-menu-files".into(), "Show in Files".into()).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.popup = None;
+                                let id = format!("files:{folder}");
+                                cx.defer(move |cx| request_shell_launch(cx, &id));
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                if item.running && !DockModel::is_builtin(&item.id) {
+                    let id = item.id.clone();
+                    row = row.child(chip("dock-menu-quit".into(), "Quit".into()).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            crate::dock::quit_app(&id);
+                            this.popup = None;
+                            cx.notify();
+                        }),
+                    ));
+                }
+                row
+            }
+            DockPopup::Stack(entries) => {
+                if entries.is_empty() {
+                    row.child(chip("dock-stack-empty".into(), "No recent items".into()))
+                } else {
+                    row.children(entries.into_iter().enumerate().map(|(i, (name, path))| {
+                        let icon = self.icons.get(&path).cloned();
+                        let short: String = if name.chars().count() > 18 {
+                            name.chars().take(17).chain(std::iter::once('…')).collect()
+                        } else {
+                            name.clone()
+                        };
+                        chip(SharedString::from(format!("dock-stack-{i}")), short)
+                            .when_some(icon, |d, img_src| {
+                                d.child(img(ImageSource::Render(img_src)).w(px(16.0)).h(px(16.0)))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.popup = None;
+                                #[cfg(windows)]
+                                shell_open(&path);
+                                cx.notify();
+                            }))
+                    }))
+                }
+            }
+        };
+        Some(
+            div()
+                .absolute()
+                .top(px(2.0))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.popup = None;
+                    cx.notify();
+                }))
+                .child(row)
+                .into_any_element(),
+        )
+    }
+}
+
+/// Folder for "Show in Files": the shortcut's target folder, else the
+/// launch path's own folder. `None` for Nexus built-ins.
+fn show_in_files_target(launch: &str) -> Option<String> {
+    if !(launch.contains('\\') || launch.contains('/')) {
+        return None;
+    }
+    let target = crate::icons::shortcut_target(launch).unwrap_or_else(|| launch.to_string());
+    let parent = std::path::Path::new(&target).parent()?;
+    Some(parent.to_string_lossy().to_string())
+}
+
 impl Render for DockView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_tracking(window, cx);
@@ -503,6 +798,7 @@ impl Render for DockView {
         let gap = self.model.mag.gap;
         let pad = self.model.mag.padding;
         let items = self.model.items().to_vec();
+        let first_unpinned = self.model.first_unpinned();
         if self.step_motion(items.len()) {
             window.request_animation_frame();
         }
@@ -552,7 +848,7 @@ impl Render for DockView {
                 let dot_alpha = dots.get(idx).copied().unwrap_or(1.0);
                 let icon_size = base_size * scale;
                 let _label = &item.label;
-                let before_trash = item.id == "trash";
+                let before_trash = item.id == "trash" || (idx > 0 && first_unpinned == Some(idx));
 
                 div()
                     .flex()
@@ -581,7 +877,36 @@ impl Render for DockView {
                                 this.hovered_index = if *hovered { Some(idx) } else { None };
                                 cx.notify();
                             }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, _cx| {
+                                    this.drag = Some(DockDrag {
+                                        index: idx,
+                                        start_x: None,
+                                        moved: false,
+                                    });
+                                }),
+                            )
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.popup = Some(DockPopup::Menu(idx));
+                                    this.popup_away = None;
+                                    cx.notify();
+                                }),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                let dragged = this.drag.take().map(|d| d.moved).unwrap_or(false);
+                                let suppressed = this
+                                    .suppress_click_until
+                                    .take()
+                                    .is_some_and(|t| Instant::now() < t);
+                                if dragged || suppressed {
+                                    crate::dock::save_dock_pins(&this.model.kept());
+                                    cx.notify();
+                                    return;
+                                }
+                                this.popup = None;
                                 let item = this.model.items().get(idx).cloned();
                                 if let Some(item) = item {
                                     let _ = this.model.activate_index(idx);
@@ -643,10 +968,13 @@ impl Render for DockView {
                                     }),
                             ),
                     )
-            }));
+            }))
+            .child(self.render_stack_tile(&theme, base_size, cx));
 
+        let popup = self.render_popup(&theme, cx);
         div()
             .id("dock-root")
+            .relative()
             .flex()
             .w_full()
             .h_full()
@@ -654,6 +982,7 @@ impl Render for DockView {
             .items_end()
             .justify_center()
             .child(shelf)
+            .when_some(popup, |d, p| d.child(p))
     }
 }
 

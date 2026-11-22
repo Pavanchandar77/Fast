@@ -175,6 +175,8 @@ fn start_shell() -> Result<ShellSession, String> {
     let mut dock = DockModel::new(DockPlacement::bottom(MonitorId(1), canvas));
     dock.pin_defaults();
     dock.pin_taskbar();
+    // The user's own order and "Keep in Dock" choices win over the defaults.
+    dock.apply_saved(&nx_shell::dock::load_dock_pins());
     dock.set_auto_hide(true);
     dock.set_running("explorer", true);
     dock.set_running("privacy", true);

@@ -115,6 +115,25 @@ fn load_icon(path: &str) -> Option<windows::Win32::UI::WindowsAndMessaging::HICO
     }
 }
 
+/// The program or file a `.lnk` points at (None off Windows or when the
+/// shortcut cannot be read).
+pub fn shortcut_target(path: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        if !path.to_ascii_lowercase().ends_with(".lnk") {
+            return None;
+        }
+        read_shell_link(path)
+            .and_then(|l| l.target)
+            .or_else(|| exe_path_from_lnk(path))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 #[cfg(windows)]
 struct ShellLinkInfo {
     target: Option<String>,
