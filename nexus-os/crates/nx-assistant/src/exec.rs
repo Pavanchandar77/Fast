@@ -556,6 +556,7 @@ mod platform {
                 .map_err(|e| AssistantError::Action(e.to_string()))
         }
     }
+    #[allow(dead_code)] // kept for the brightness intent; not wired yet
     pub fn read_brightness() -> Option<u8> {
         use windows::Win32::Devices::Display::{
             GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
@@ -595,15 +596,12 @@ mod platform {
                     let mut min = 0u32;
                     let mut cur = 0u32;
                     let mut max = 0u32;
-                    if GetMonitorBrightness(
-                        item.hPhysicalMonitor,
-                        &mut min,
-                        &mut cur,
-                        &mut max,
-                    ) != 0
+                    if GetMonitorBrightness(item.hPhysicalMonitor, &mut min, &mut cur, &mut max)
+                        != 0
                         && cur <= 100
                     {
-                        let _ = windows::Win32::Devices::Display::DestroyPhysicalMonitors(&physical);
+                        let _ =
+                            windows::Win32::Devices::Display::DestroyPhysicalMonitors(&physical);
                         return Some(cur as u8);
                     }
                 }
@@ -613,19 +611,26 @@ mod platform {
         read_scheme_brightness()
     }
 
+    #[allow(dead_code)]
     fn read_scheme_brightness() -> Option<u8> {
         use std::ffi::c_void;
+        use windows::core::{s, w, GUID};
         use windows::Win32::Foundation::LocalFree;
         use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-        use windows::core::{s, w, GUID};
 
         type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
-        type ReadIndex =
-            unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID, *const GUID, *mut u32) -> u32;
+        type ReadIndex = unsafe extern "system" fn(
+            *mut c_void,
+            *const GUID,
+            *const GUID,
+            *const GUID,
+            *mut u32,
+        ) -> u32;
 
         unsafe {
             let lib = LoadLibraryW(w!("powrprof.dll")).ok()?;
-            let get: GetScheme = std::mem::transmute(GetProcAddress(lib, s!("PowerGetActiveScheme"))?);
+            let get: GetScheme =
+                std::mem::transmute(GetProcAddress(lib, s!("PowerGetActiveScheme"))?);
             let read: ReadIndex =
                 std::mem::transmute(GetProcAddress(lib, s!("PowerReadACValueIndex"))?);
             let mut scheme = std::ptr::null_mut();
@@ -684,12 +689,7 @@ mod platform {
 
         let mut monitors: Vec<HMONITOR> = Vec::new();
         unsafe {
-            let _ = EnumDisplayMonitors(
-                None,
-                None,
-                Some(each),
-                LPARAM(&raw mut monitors as isize),
-            );
+            let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&raw mut monitors as isize));
         }
         if monitors.is_empty() {
             return Err(AssistantError::Action("no monitors".into()));
@@ -726,12 +726,12 @@ mod platform {
     /// this in one call.
     fn set_lcd_brightness(level: u8) -> Result<(), AssistantError> {
         use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::Storage::FileSystem::{
             CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
         };
         use windows::Win32::System::IO::DeviceIoControl;
-        use windows::core::PCWSTR;
 
         #[repr(C)]
         struct DisplayBrightness {
@@ -782,13 +782,18 @@ mod platform {
     /// does not start PowerShell.
     fn set_scheme_brightness(level: u8) -> Result<(), AssistantError> {
         use std::ffi::c_void;
+        use windows::core::{s, w, GUID};
         use windows::Win32::Foundation::LocalFree;
         use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-        use windows::core::{s, w, GUID};
 
         type GetScheme = unsafe extern "system" fn(*mut c_void, *mut *mut GUID) -> u32;
-        type WriteIndex =
-            unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID, *const GUID, u32) -> u32;
+        type WriteIndex = unsafe extern "system" fn(
+            *mut c_void,
+            *const GUID,
+            *const GUID,
+            *const GUID,
+            u32,
+        ) -> u32;
         type SetScheme = unsafe extern "system" fn(*mut c_void, *const GUID) -> u32;
 
         unsafe {
@@ -825,7 +830,9 @@ mod platform {
             let applied = set(std::ptr::null_mut(), scheme);
             let _ = LocalFree(windows::Win32::Foundation::HLOCAL(scheme.cast()));
             if ac != 0 || dc != 0 || applied != 0 {
-                return Err(AssistantError::Action("power scheme rejected brightness".into()));
+                return Err(AssistantError::Action(
+                    "power scheme rejected brightness".into(),
+                ));
             }
         }
         Ok(())
