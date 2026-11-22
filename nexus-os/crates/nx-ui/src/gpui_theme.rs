@@ -224,11 +224,6 @@ impl Theme {
     }
 }
 
-/// Windows caption button. 46×32 is the default title-bar hit target.
-pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
-/// Windows caption button height.
-pub const CAPTION_BUTTON_HEIGHT: f32 = 32.0;
-
 /// Close through the OS so the window's `on_window_should_close` hook runs
 /// (Nexus app windows hide instead of being destroyed, so the dock can bring
 /// them back). Off Windows, remove the window directly.
@@ -260,7 +255,7 @@ pub fn begin_window_drag(event: &gpui::MouseDownEvent, window: &mut Window) {
         return;
     }
     let width = f32::from(window.viewport_size().width);
-    let chrome = 3.0 * CAPTION_BUTTON_WIDTH + WINDOW_FRAME_INSET + 4.0;
+    let chrome = CHROME_WIDTH + WINDOW_FRAME_INSET + 4.0;
     if f32::from(event.position.x) >= width - chrome {
         return;
     }
@@ -294,76 +289,161 @@ pub fn begin_window_drag(event: &gpui::MouseDownEvent, window: &mut Window) {
     window.start_window_move();
 }
 
-/// Minimize, maximize, close, in that order, flush on the right.
+/// Host hook for the caption buttons. The session installs one so minimize
+/// and close can play the dock genie / dust animation before the window
+/// goes away. Return `true` when the action was handled.
+#[derive(Clone)]
+pub struct WindowControlHook(pub WindowControlFn);
+
+/// `(action, window, app) -> handled`, action is `close`, `min` or `max`.
+pub type WindowControlFn = std::sync::Arc<dyn Fn(&'static str, &mut Window, &mut App) -> bool>;
+
+impl Global for WindowControlHook {}
+
+fn run_window_control(action: &'static str, window: &mut Window, cx: &mut App) {
+    let hook = cx.try_global::<WindowControlHook>().cloned();
+    if let Some(hook) = hook {
+        if (hook.0)(action, window, cx) {
+            return;
+        }
+    }
+    match action {
+        "min" => window.minimize_window(),
+        "max" => window.zoom_window(),
+        "close" => close_window(window),
+        _ => {}
+    }
+}
+
+/// Diameter of one traffic light.
+pub const TRAFFIC_LIGHT: f32 = 12.0;
+/// Gap between traffic lights.
+pub const TRAFFIC_GAP: f32 = 8.0;
+/// Width of the whole traffic-light group including its padding. Drag
+/// handlers keep this zone clickable.
+pub const CHROME_WIDTH: f32 = 3.0 * TRAFFIC_LIGHT + 2.0 * TRAFFIC_GAP + 2.0 * 14.0;
+/// Kept for callers sized against the old caption buttons.
+pub const CAPTION_BUTTON_WIDTH: f32 = CHROME_WIDTH / 3.0;
+/// Height of the traffic-light strip.
+pub const CAPTION_BUTTON_HEIGHT: f32 = 32.0;
+
+/// macOS-style traffic lights (close, minimize, zoom), in the monochrome
+/// palette: three soft discs that show their glyphs when the group is
+/// hovered; close warms to red on its own hover. Each disc is also a
+/// Windows caption-button hit target, so snap layouts and the system menu
+/// keep working.
 ///
 /// `live` wires the buttons to this window. Preview tiles pass `false` so a
 /// picture of a window does not minimize the shell.
 pub fn window_chrome(theme: &Theme, live: bool) -> impl IntoElement {
-    let text = theme.text_primary_hsla();
-    let hover = theme.hover_hsla();
+    let dark =
+        theme.palette.window_bg.r + theme.palette.window_bg.g + theme.palette.window_bg.b < 1.5;
+    let disc = if dark {
+        Hsla::from(Rgba {
+            r: 0.36,
+            g: 0.36,
+            b: 0.38,
+            a: 1.0,
+        })
+    } else {
+        Hsla::from(Rgba {
+            r: 0.78,
+            g: 0.78,
+            b: 0.80,
+            a: 1.0,
+        })
+    };
+    let disc_hover = if dark {
+        Hsla::from(Rgba {
+            r: 0.62,
+            g: 0.62,
+            b: 0.64,
+            a: 1.0,
+        })
+    } else {
+        Hsla::from(Rgba {
+            r: 0.58,
+            g: 0.58,
+            b: 0.60,
+            a: 1.0,
+        })
+    };
     let close_hover = Hsla::from(Rgba {
-        r: 0.91,
-        g: 0.067,
-        b: 0.137,
-        a: 1.0,
-    });
-    let on_close = Hsla::from(Rgba {
         r: 1.0,
-        g: 1.0,
-        b: 1.0,
+        g: 0.37,
+        b: 0.34,
         a: 1.0,
     });
-    let button = move |id: &'static str, mark: &'static str, close: bool| {
-        let text = text;
-        let hover = hover;
-        let close_hover = close_hover;
-        let on_close = on_close;
+    let glyph = Hsla::from(Rgba {
+        r: 0.05,
+        g: 0.05,
+        b: 0.06,
+        a: 0.78,
+    });
+    let ring = if dark {
+        Hsla::from(Rgba {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 0.10,
+        })
+    } else {
+        Hsla::from(Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.12,
+        })
+    };
+    let light = move |id: &'static str, mark: &'static str| {
         let area = match id {
             "min" => WindowControlArea::Min,
             "max" => WindowControlArea::Max,
             _ => WindowControlArea::Close,
         };
+        let hot = if id == "close" {
+            close_hover
+        } else {
+            disc_hover
+        };
         div()
             .id(id)
             .window_control_area(area)
-            .w(px(CAPTION_BUTTON_WIDTH))
-            .h(px(CAPTION_BUTTON_HEIGHT))
+            .w(px(TRAFFIC_LIGHT))
+            .h(px(TRAFFIC_LIGHT))
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .text_size(px(12.0))
-            .font_weight(FontWeight::NORMAL)
-            .text_color(text)
-            .hover(move |style| {
-                if close {
-                    style.bg(close_hover).text_color(on_close)
-                } else {
-                    style.bg(hover)
-                }
-            })
-            .on_click(move |_: &ClickEvent, window: &mut Window, _: &mut App| {
-                if !live {
-                    return;
-                }
-                match id {
-                    "min" => window.minimize_window(),
-                    "max" => window.zoom_window(),
-                    "close" => close_window(window),
-                    _ => {}
+            .rounded_full()
+            .bg(disc)
+            .border_1()
+            .border_color(ring)
+            .text_size(px(9.0))
+            .line_height(px(TRAFFIC_LIGHT))
+            .font_weight(FontWeight::BOLD)
+            .text_color(Hsla::transparent_black())
+            .group_hover("nx-traffic", move |s| s.text_color(glyph))
+            .hover(move |s| s.bg(hot))
+            .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                if live {
+                    run_window_control(id, window, cx);
                 }
             })
             .child(mark)
     };
     div()
+        .group("nx-traffic")
         .flex()
         .flex_row()
         .flex_none()
         .items_center()
+        .gap(px(TRAFFIC_GAP))
+        .px(px(14.0))
         .h(px(CAPTION_BUTTON_HEIGHT))
-        .child(button("min", "–", false))
-        .child(button("max", "□", false))
-        .child(button("close", "×", true))
+        .child(light("close", "×"))
+        .child(light("min", "−"))
+        .child(light("max", "+"))
 }
 
 /// Inset around the rounded window body so the hairline and soft shadow can

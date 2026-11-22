@@ -669,3 +669,81 @@ pub fn rect_of(r: RECT) -> Rect {
         (r.bottom - r.top) as f32,
     )
 }
+
+// ---------------------------------------------------------------------------
+// Nexus's own windows (Files, Privacy): genie into the dock icon on
+// minimize, dust on close, bloom back out of the icon on restore.
+//
+// Foreign windows go through the WinEvent planner above. Our own windows are
+// excluded there (hiding them with a layered alpha made them ignore clicks),
+// so the caption buttons drive these directly: capture first, let the window
+// go away (async, never re-entering the window procedure), then play the
+// effect on the click-through overlay from the captured pixels.
+
+thread_local! {
+    static OWN_SNAPS: std::cell::RefCell<HashMap<isize, (Rect, Arc<Snapshot>)>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+fn own_capture(raw: isize) -> Option<(Rect, Arc<Snapshot>)> {
+    let rect = capture::window_rect(raw)?;
+    if !sane_window(&rect) {
+        return None;
+    }
+    let snap = match capture::capture_bgra(raw, CAPTURE_STEP) {
+        Some((w, h, bgra)) => snap(Pixels { w, h, bgra }),
+        None => Arc::new(Snapshot::placeholder(rect.w as u32 / 4, rect.h as u32 / 4)),
+    };
+    OWN_SNAPS.with(|m| m.borrow_mut().insert(raw, (rect, snap.clone())));
+    Some((rect, snap))
+}
+
+/// Minimize one of our windows into its dock icon. The caller minimizes the
+/// window itself (`Window::minimize_window`, which is async).
+pub fn own_minimize(windows: &GpuiSessionWindows, cx: &mut gpui::App, raw: isize, app: &str) {
+    let Some((rect, s)) = own_capture(raw) else {
+        return;
+    };
+    let anchor = motion_anchor(windows, cx, app);
+    let key = raw as u64;
+    with_motion(windows, cx, move |o| {
+        o.minimize(key, s, rect, anchor, None);
+    });
+}
+
+/// Dust effect for closing one of our windows (it hides; see `hide_on_close`).
+pub fn own_close(windows: &GpuiSessionWindows, cx: &mut gpui::App, raw: isize) {
+    let Some((rect, s)) = own_capture(raw) else {
+        return;
+    };
+    let key = raw as u64;
+    with_motion(windows, cx, move |o| {
+        o.close(key, s, rect, None);
+    });
+}
+
+/// Bloom one of our windows back out of its dock icon, then show it. Returns
+/// false (caller shows it at once) when there is nothing to animate from.
+pub fn own_restore(
+    windows: &GpuiSessionWindows,
+    cx: &mut gpui::App,
+    raw: isize,
+    app: &str,
+    show: crate::motion_bridge::OwnShow,
+) -> Result<(), crate::motion_bridge::OwnShow> {
+    let Some((rect, s)) = OWN_SNAPS.with(|m| m.borrow().get(&raw).cloned()) else {
+        return Err(show);
+    };
+    if windows.motion_window.is_none() {
+        return Err(show);
+    }
+    let anchor = motion_anchor(windows, cx, app);
+    let key = raw as u64;
+    with_motion(windows, cx, move |o| {
+        o.open(key, s, rect, anchor, Some(show));
+    });
+    Ok(())
+}
+
+/// Shows the real window once the bloom lands.
+pub type OwnShow = nx_shell::motion_overlay::Done;

@@ -57,6 +57,16 @@ impl ExplorerView {
         self.run_effects(fx);
     }
 
+    /// Show `path` (a folder, or a file's folder).
+    pub fn navigate_to(&mut self, path: PathBuf) {
+        let dir = if path.is_dir() {
+            path
+        } else {
+            path.parent().map(PathBuf::from).unwrap_or(path)
+        };
+        self.dispatch(Action::Navigate(dir));
+    }
+
     fn run_effects(&mut self, fx: Vec<Effect>) {
         let mut listings = Vec::new();
         for effect in fx {
