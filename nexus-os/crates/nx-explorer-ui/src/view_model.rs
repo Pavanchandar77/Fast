@@ -170,7 +170,7 @@ impl ExplorerWindow {
                 item_count,
                 selected_count,
                 selected_bytes,
-                Some("342.5 GB free".to_string()),
+                free_space_label(),
             );
         }
     }
@@ -505,4 +505,49 @@ impl ExplorerWindow {
             .pane()
             .and_then(|p| p.location.dir().map(Path::to_path_buf))
     }
+}
+
+/// "123.4 GB free" for the system drive, cached for 10 s (v0.1.0 showed a
+/// hard-coded "342.5 GB free").
+fn free_space_label() -> Option<String> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Option<String>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().ok()?;
+    if let Some((at, label)) = cache.as_ref() {
+        if at.elapsed() < Duration::from_secs(10) {
+            return label.clone();
+        }
+    }
+    let label = system_drive_free().map(|free| format!("{} free", format_free(free)));
+    *cache = Some((Instant::now(), label.clone()));
+    label
+}
+
+fn format_free(bytes: u64) -> String {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let gb = bytes as f64 / GB;
+    if gb >= 1024.0 {
+        format!("{:.2} TB", gb / 1024.0)
+    } else {
+        format!("{gb:.1} GB")
+    }
+}
+
+#[cfg(windows)]
+fn system_drive_free() -> Option<u64> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let root = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()) + "\\";
+    let wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut avail = 0u64;
+    unsafe {
+        GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut avail), None, None).ok()?;
+    }
+    Some(avail)
+}
+
+#[cfg(not(windows))]
+fn system_drive_free() -> Option<u64> {
+    None
 }
