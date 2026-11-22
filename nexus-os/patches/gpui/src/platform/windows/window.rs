@@ -640,7 +640,7 @@ impl PlatformWindow for WindowsWindow {
                     };
                     config.pszWindowTitle = title;
                     config.Anonymous1.pszMainIcon = main_icon;
-                    let instruction = HSTRING::from(msg);
+                    let instruction = HSTRING::from(msg.as_str());
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
                     if let Some(ref hints) = detail_string {
@@ -670,10 +670,25 @@ impl PlatformWindow for WindowsWindow {
                     config.pButtons = buttons.as_ptr();
 
                     config.pfCallback = None;
-                    let mut res = std::mem::zeroed();
-                    let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")
-                        .log_err();
+                    // Nexus: TaskDialogIndirect only exists in comctl32 v6, which needs the
+                    // Common-Controls manifest. Resolve it at run time so a missing manifest
+                    // can never stop the exe from loading, and fall back to MessageBoxW.
+                    let res = match task_dialog_indirect_dynamic(&config) {
+                        Some(res) => res,
+                        None => {
+                            log::warn!("TaskDialogIndirect unavailable; using MessageBoxW");
+                            let mut text = msg.clone();
+                            if let Some(ref hints) = detail_string {
+                                text.push_str("\n\n");
+                                text.push_str(hints);
+                            }
+                            let has_cancel =
+                                answers.iter().any(|a| matches!(a, PromptButton::Cancel(_)));
+                            let style = if has_cancel { MB_OKCANCEL } else { MB_OK };
+                            let r = MessageBoxW(Some(handle), &HSTRING::from(text), title, style);
+                            if r == IDCANCEL { IDCANCEL.0 } else { IDOK.0 }
+                        }
+                    };
 
                     if let Some(clicked) =
                         button_id_map.iter().position(|&button_id| button_id == res)
@@ -1414,5 +1429,31 @@ mod tests {
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
         );
+    }
+}
+
+/// Calls comctl32's `TaskDialogIndirect` through `GetProcAddress` instead of a static
+/// import (the static import makes the loader refuse the whole exe when comctl32 v5
+/// is picked). Returns the pressed button id, or `None` when unavailable or failed.
+unsafe fn task_dialog_indirect_dynamic(config: &TASKDIALOGCONFIG) -> Option<i32> {
+    type TaskDialogIndirectFn = unsafe extern "system" fn(
+        *const TASKDIALOGCONFIG,
+        *mut i32,
+        *mut i32,
+        *mut BOOL,
+    ) -> windows::core::HRESULT;
+    unsafe {
+        let module = windows::Win32::System::LibraryLoader::LoadLibraryW(windows::core::w!(
+            "comctl32.dll"
+        ))
+        .ok()?;
+        let proc = GetProcAddress(
+            module,
+            PCSTR::from_raw(c"TaskDialogIndirect".as_ptr() as *const u8),
+        )?;
+        let f: TaskDialogIndirectFn = std::mem::transmute(proc);
+        let mut res = 0i32;
+        let hr = f(config, &mut res, std::ptr::null_mut(), std::ptr::null_mut());
+        hr.is_ok().then_some(res)
     }
 }
