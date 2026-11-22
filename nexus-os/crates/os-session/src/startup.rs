@@ -388,6 +388,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
 
     if let Some(shell) = &handle.shell {
         let island_model = shell.island.clone();
+        let open_t = std::time::Instant::now();
         windows.island_window = cx
             .open_window(
                 theme.shell_window_options(
@@ -408,6 +409,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 },
             )
             .ok();
+        crate::diag::window_opened("island", open_t);
 
         let mut dock_model = shell.dock.clone();
         let mut place = dock_model.placement;
@@ -426,6 +428,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         dock_model.mag.max_scale = 1.55;
         dock_model.mag.padding = 8.0;
         dock_model.mag.gap = 8.0;
+        let open_t = std::time::Instant::now();
         windows.dock_window = cx
             .open_window(
                 theme.shell_window_options(
@@ -446,10 +449,10 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 },
             )
             .ok();
+        crate::diag::window_opened("dock", open_t);
 
         // Spotlight starts hidden; HotkeyAction::CommandBar toggles it.
         let mut spotlight_model = Spotlight::with_settings();
-        nx_shell::catalog::populate(&mut spotlight_model);
         nx_shell::clip_history::start_watcher();
         spotlight_model.query = shell.spotlight.query.clone();
         let mut spotlight_opts = theme.shell_window_options(
@@ -462,6 +465,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             false,
         );
         spotlight_opts.focus = false;
+        let open_t = std::time::Instant::now();
         windows.spotlight_window = cx
             .open_window(spotlight_opts, move |window, cx| {
                 apply_rounded_native_corners(window);
@@ -471,6 +475,34 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 cx.new(|_cx| SpotlightView::new(spotlight_model))
             })
             .ok();
+        crate::diag::window_opened("spotlight", open_t);
+        // Index apps and recent files off the UI thread; Spotlight opens at
+        // once with settings and fills in as soon as the scan lands.
+        if let Some(handle) = windows.spotlight_window {
+            cx.spawn(async move |cx| {
+                let t = std::time::Instant::now();
+                let (apps, docs) = cx
+                    .background_executor()
+                    .spawn(async {
+                        (
+                            nx_shell::catalog::installed_apps(),
+                            nx_shell::dock::recent_items(40),
+                        )
+                    })
+                    .await;
+                info!(
+                    "spotlight: indexed {} apps, {} recent items in {} ms",
+                    apps.len(),
+                    docs.len(),
+                    t.elapsed().as_millis()
+                );
+                let _ = handle.update(cx, |view, _window, cx| {
+                    nx_shell::catalog::fill(&mut view.model, &apps, &docs);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
 
         let expose_model = shell.expose.clone();
         let mut expose_opts = theme.shell_window_options(
@@ -483,6 +515,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
             false,
         );
         expose_opts.focus = false;
+        let open_t = std::time::Instant::now();
         windows.expose_window = cx
             .open_window(expose_opts, move |window, cx| {
                 apply_rounded_native_corners(window);
@@ -491,9 +524,11 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 cx.new(|_cx| MissionControlView::new(expose_model))
             })
             .ok();
+        crate::diag::window_opened("expose", open_t);
     }
 
     if let Some(explorer) = handle.explorer.take() {
+        let open_t = std::time::Instant::now();
         windows.explorer_window = cx
             .open_window(
                 theme.blurred_window_options(gpui::Bounds {
@@ -508,10 +543,12 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 },
             )
             .ok();
+        crate::diag::window_opened("explorer", open_t);
     }
 
     if let Some(privacy) = &handle.privacy {
         let dash_vm = privacy.dashboard.clone();
+        let open_t = std::time::Instant::now();
         windows.privacy_dashboard_window = cx
             .open_window(
                 theme.blurred_window_options(gpui::Bounds {
@@ -526,6 +563,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 },
             )
             .ok();
+        crate::diag::window_opened("privacy_dashboard", open_t);
     }
 
     // Opened last so it stacks above every other Nexus surface, but it stays
@@ -545,6 +583,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     if crate::diag::safe_mode() {
         warn!("safe mode: motion overlay not created");
     } else {
+        let open_t = std::time::Instant::now();
         windows.motion_window = cx
             .open_window(motion_opts, move |window, cx| {
                 let _ = &window;
@@ -561,6 +600,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                 cx.new(|_cx| MotionOverlayView::new((sx, sy), work, motion_prefs(false, 1.0)))
             })
             .ok();
+        crate::diag::window_opened("motion", open_t);
     }
     if windows.island_window.is_none() {
         error!("island window failed to open");

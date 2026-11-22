@@ -138,6 +138,19 @@ pub fn timed<T>(what: &str, warn_ms: u128, f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Log how long one shell window took to open (nexus.log startup profile).
+pub fn window_opened(name: &str, since: std::time::Instant) {
+    let ms = since.elapsed().as_millis();
+    if ms >= 120 {
+        tracing::warn!("startup: window '{name}' took {ms} ms to open");
+    } else {
+        tracing::info!("startup: window '{name}' opened in {ms} ms");
+    }
+    if std::env::var_os("NEXUS_STARTUP_TRACE").is_some() {
+        eprintln!("STARTUP_WINDOW {name} {ms}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
