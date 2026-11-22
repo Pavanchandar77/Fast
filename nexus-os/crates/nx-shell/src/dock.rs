@@ -954,6 +954,26 @@ pub fn taskbar_buttons() -> Vec<(String, String, String)> {
     out
 }
 
+/// Bring one window forward: restore it if minimized, then focus it.
+pub fn focus_hwnd(raw: isize) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsIconic, SetForegroundWindow, ShowWindowAsync, SwitchToThisWindow, SW_RESTORE,
+        };
+        let h = HWND(raw as *mut std::ffi::c_void);
+        if IsIconic(h).as_bool() {
+            let _ = ShowWindowAsync(h, SW_RESTORE);
+        }
+        if !SetForegroundWindow(h).as_bool() {
+            SwitchToThisWindow(h, true);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = raw;
+}
+
 /// Bring a running app's windows forward: restore minimized ones and focus
 /// the first. Returns false when the app has no taskbar window (launch it).
 pub fn focus_app(id: &str) -> bool {

@@ -235,7 +235,7 @@ pub fn set_click_through(raw: isize, on: bool) {
     });
 }
 
-fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
+pub fn gpui_hwnd(window: &gpui::Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let handle = HasWindowHandle::window_handle(window).ok()?;
     match handle.as_raw() {

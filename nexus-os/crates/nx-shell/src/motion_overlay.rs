@@ -210,7 +210,10 @@ struct SwitcherFx {
 
 struct MissionFx {
     items: Vec<(Arc<Snapshot>, Rect, Rect)>,
+    /// Window keys (HWNDs) for the tiles, same order as `items`.
+    keys: Vec<u64>,
     p: Spring,
+    selected: Option<usize>,
 }
 
 /// Events the overlay raises for the host.
@@ -241,6 +244,9 @@ pub struct MotionOverlayView {
     events: Option<EventSink>,
     pending_events: Vec<OverlayEvent>,
     os_visible: Option<bool>,
+    /// Mission Control currently takes clicks and keys.
+    mission_input: bool,
+    focus: Option<gpui::FocusHandle>,
 }
 
 fn progress_spring(start: f32, cfg: nx_ui::SpringConfig) -> Spring {
@@ -269,6 +275,8 @@ impl MotionOverlayView {
             events: None,
             pending_events: Vec::new(),
             os_visible: None,
+            mission_input: false,
+            focus: None,
         }
     }
 
@@ -553,9 +561,60 @@ impl MotionOverlayView {
 
     /// Mission Control: fan windows from their rects into `to` tiles.
     pub fn mission_show(&mut self, items: Vec<(Arc<Snapshot>, Rect, Rect)>) {
+        self.mission_show_keys(items, Vec::new());
+    }
+
+    /// Mission Control with window keys, so a tile click or Enter can focus
+    /// that window.
+    pub fn mission_show_keys(&mut self, items: Vec<(Arc<Snapshot>, Rect, Rect)>, keys: Vec<u64>) {
         let mut p = progress_spring(0.0, motion::presets::card());
         p.set_target(1.0);
-        self.mission = Some(MissionFx { items, p });
+        let selected = (!items.is_empty()).then_some(0);
+        self.mission = Some(MissionFx {
+            items,
+            keys,
+            p,
+            selected,
+        });
+    }
+
+    /// True while Mission Control is open or opening (not while closing).
+    pub fn mission_open(&self) -> bool {
+        self.mission.as_ref().is_some_and(|m| m.p.target > 0.5)
+    }
+
+    /// Close Mission Control and bring tile `pick` (if any) to the front.
+    fn mission_pick(&mut self, pick: Option<usize>) {
+        let key = pick.and_then(|i| self.mission.as_ref()?.keys.get(i).copied());
+        self.mission_hide();
+        if let Some(key) = key {
+            crate::dock::focus_hwnd(key as isize);
+        }
+    }
+
+    /// Arrow-key move across the tile grid.
+    fn mission_move(&mut self, dx: i32, dy: i32) {
+        let Some(m) = &mut self.mission else {
+            return;
+        };
+        let n = m.items.len();
+        if n == 0 {
+            return;
+        }
+        let cols = ((n as f32).sqrt().ceil() as i32).max(1);
+        let cur = m.selected.unwrap_or(0) as i32;
+        let next = (cur + dx + dy * cols).clamp(0, n as i32 - 1);
+        m.selected = Some(next as usize);
+    }
+
+    /// True while something moves (as opposed to a settled Mission Control).
+    fn is_moving(&self) -> bool {
+        !self.windows.is_empty()
+            || !self.ripples.is_empty()
+            || !self.trails.is_empty()
+            || self.drag.is_some()
+            || self.switcher.is_some()
+            || self.mission.as_ref().is_some_and(|m| !m.p.settled())
     }
 
     pub fn mission_hide(&mut self) {
@@ -968,6 +1027,72 @@ impl MotionOverlayView {
             .into_any_element()
     }
 
+    /// Click targets over the Mission Control tiles (plus the backdrop,
+    /// which closes it), and the keyboard: arrows, Enter, Esc.
+    fn mission_hits(&self, m: &MissionFx, cx: &mut Context<Self>) -> AnyElement {
+        let origin = self.origin;
+        let n = m.items.len();
+        let selected = m.selected;
+        let mut layer = div()
+            .id("mission-hits")
+            .absolute()
+            .inset_0()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.mission_pick(None);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
+                match ev.keystroke.key.as_str() {
+                    "escape" => this.mission_pick(None),
+                    "left" | "arrowleft" => this.mission_move(-1, 0),
+                    "right" | "arrowright" | "tab" => this.mission_move(1, 0),
+                    "up" | "arrowup" => this.mission_move(0, -1),
+                    "down" | "arrowdown" => this.mission_move(0, 1),
+                    "enter" | "return" | "space" => {
+                        let pick = this.mission.as_ref().and_then(|m| m.selected);
+                        this.mission_pick(pick);
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }));
+        for (i, (_, from, to)) in m.items.iter().enumerate() {
+            let (r, _) = motion::fan_out(*from, *to, i, n, 1.0);
+            let on = selected == Some(i);
+            layer = layer.child(
+                div()
+                    .id(("mission-tile", i))
+                    .absolute()
+                    .left(px(r.x - origin.0))
+                    .top(px(r.y - origin.1))
+                    .w(px(r.w.max(0.0)))
+                    .h(px(r.h.max(0.0)))
+                    .rounded(px(CORNER))
+                    .border_2()
+                    .border_color(if on {
+                        hsla(0.0, 0.0, 1.0, 0.9)
+                    } else {
+                        hsla(0.0, 0.0, 1.0, 0.0)
+                    })
+                    .hover(|s| s.border_color(hsla(0.0, 0.0, 1.0, 0.6)))
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        if *hovered {
+                            if let Some(m) = &mut this.mission {
+                                m.selected = Some(i);
+                            }
+                            cx.notify();
+                        }
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.mission_pick(Some(i));
+                        cx.notify();
+                    })),
+            );
+        }
+        layer.into_any_element()
+    }
+
     fn mission_layer(&self, m: &MissionFx) -> AnyElement {
         let origin = self.origin;
         let p = m.p.position;
@@ -1112,15 +1237,36 @@ impl Render for MotionOverlayView {
 
         let active = self.is_animating();
         self.sync_os_visibility(window, active);
-        if active {
+        if self.is_moving() {
             window.request_animation_frame();
         } else {
+            // A settled Mission Control repaints only on input.
             self.last = None;
         }
+        let want_input = self.mission_open();
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        if want_input != self.mission_input {
+            self.mission_input = want_input;
+            #[cfg(windows)]
+            if let Some(raw) = crate::capture::gpui_hwnd(window) {
+                crate::capture::set_click_through(raw, !want_input);
+            }
+            if want_input {
+                window.activate_window();
+                window.focus(&focus);
+            }
+        }
 
-        let mut root = div().id("nexus-motion-overlay").size_full().relative();
+        let mut root = div()
+            .id("nexus-motion-overlay")
+            .size_full()
+            .relative()
+            .track_focus(&focus);
         if let Some(m) = &self.mission {
             root = root.child(self.mission_layer(m));
+            if self.mission_input && m.p.position > 0.9 {
+                root = root.child(self.mission_hits(m, cx));
+            }
         }
         for w in &self.windows {
             if let Some(el) = self.window_layer(w) {

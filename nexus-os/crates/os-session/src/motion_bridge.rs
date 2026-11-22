@@ -623,11 +623,18 @@ pub fn apply(
             }
         }
         UiMotion::MissionControl { cards } => {
-            state.mission_open = !state.mission_open;
+            // The overlay knows if Mission Control is up (Esc or a click
+            // may have closed it), so a second press always toggles right.
+            let open_now = windows
+                .motion_window
+                .and_then(|h| h.read_with(cx, |o, _| o.mission_open()).ok())
+                .unwrap_or(state.mission_open);
+            state.mission_open = !open_now;
             if !state.mission_open {
                 with_motion(windows, cx, |o| o.mission_hide());
                 return;
             }
+            let keys: Vec<u64> = cards.iter().map(|c| c.0).collect();
             let n = cards.len().max(1);
             let cols = (n as f32).sqrt().ceil() as usize;
             let rows = n.div_ceil(cols);
@@ -655,7 +662,7 @@ pub fn apply(
                     )
                 })
                 .collect();
-            with_motion(windows, cx, move |o| o.mission_show(items));
+            with_motion(windows, cx, move |o| o.mission_show_keys(items, keys));
         }
     }
 }
