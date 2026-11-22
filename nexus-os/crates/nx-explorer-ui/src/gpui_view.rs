@@ -2,10 +2,13 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, Context, FontWeight, Hsla, IntoElement, ParentElement, Render, Styled, Window,
+    div, px, Context, FontWeight, Hsla, IntoElement, MouseButton, MouseDownEvent, ParentElement,
+    Render, Styled, Window,
 };
+use nx_explorer::action::{Action, Effect, Msg};
 use nx_ui::gpui_theme::{rounded_window_frame, sf_font_family, window_chrome};
 use nx_ui::theme::Theme;
+use std::path::PathBuf;
 
 use crate::view_model::ExplorerWindow;
 
@@ -46,6 +49,79 @@ impl ExplorerView {
     pub fn new(window: ExplorerWindow) -> Self {
         Self { window }
     }
+
+    /// Run an explorer action and carry out what it asks for: directory
+    /// listings are filled in, files open with their default app.
+    pub fn dispatch(&mut self, action: Action) {
+        let fx = self.window.handle_msg(Msg::Action(action));
+        self.run_effects(fx);
+    }
+
+    fn run_effects(&mut self, fx: Vec<Effect>) {
+        let mut listings = Vec::new();
+        for effect in fx {
+            match effect {
+                Effect::ListDir { .. } => listings.push(effect),
+                Effect::Open(path) => open_with_default_app(&path),
+                _ => {}
+            }
+        }
+        if !listings.is_empty() {
+            self.window.fulfill_effects(listings);
+        }
+    }
+
+    fn current_dir(&self) -> Option<PathBuf> {
+        self.window
+            .explorer
+            .tab()
+            .and_then(|t| t.pane())
+            .and_then(|p| p.location.dir().map(|d| d.to_path_buf()))
+    }
+}
+
+/// Open `path` with its default application (Explorer association on
+/// Windows, xdg-open elsewhere).
+pub fn open_with_default_app(path: &std::path::Path) {
+    let result = if cfg!(windows) {
+        std::process::Command::new("explorer.exe").arg(path).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(path).spawn()
+    };
+    if let Err(e) = result {
+        tracing::warn!("open {}: {e}", path.display());
+    }
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn sidebar_item(
+    label: &'static str,
+    path: PathBuf,
+    selected: bool,
+    theme: &Theme,
+    cx: &mut Context<ExplorerView>,
+) -> impl IntoElement {
+    div()
+        .id(label)
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(theme.radii.xs))
+        .when(selected, |d| d.bg(theme.selection_hsla()))
+        .when(!selected, |d| d.hover(|s| s.bg(theme.hover_hsla())))
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.dispatch(Action::Navigate(path.clone()));
+            cx.notify();
+        }))
+        .child(label)
 }
 
 impl Render for ExplorerView {
@@ -88,6 +164,15 @@ impl Render for ExplorerView {
             ("Home".to_string(), Vec::new())
         };
 
+        let home = home_dir();
+        let favorites: Vec<(&'static str, PathBuf)> = vec![
+            ("Home", home.clone()),
+            ("Desktop", home.join("Desktop")),
+            ("Documents", home.join("Documents")),
+            ("Downloads", home.join("Downloads")),
+            ("Pictures", home.join("Pictures")),
+        ];
+        let current = self.current_dir();
         let total_items = items_snapshot.len();
         let selected_count = items_snapshot.iter().filter(|i| i.is_selected).count();
         let items_rc = std::rc::Rc::new(items_snapshot);
@@ -117,6 +202,10 @@ impl Render for ExplorerView {
                         .border_color(Hsla::from(theme.palette.separator))
                         .rounded_t(px(theme.radii.window))
                         .overflow_hidden()
+                        // Drag the window by its toolbar (buttons stop propagation).
+                        .on_mouse_down(MouseButton::Left, |_, window, _| {
+                            window.start_window_move();
+                        })
                         // Left: Traffic lights and navigation buttons
                         .child(
                             div()
@@ -131,19 +220,54 @@ impl Render for ExplorerView {
                                         .gap(px(4.0))
                                         .child(
                                             div()
+                                                .id("nav-back")
                                                 .px(px(8.0))
                                                 .py(px(4.0))
                                                 .rounded(px(theme.radii.xs))
                                                 .hover(|s| s.bg(theme.hover_hsla()))
+                                                .cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.dispatch(Action::GoBack);
+                                                    cx.notify();
+                                                }))
                                                 .child("◀"),
                                         )
                                         .child(
                                             div()
+                                                .id("nav-forward")
                                                 .px(px(8.0))
                                                 .py(px(4.0))
                                                 .rounded(px(theme.radii.xs))
                                                 .hover(|s| s.bg(theme.hover_hsla()))
+                                                .cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.dispatch(Action::GoForward);
+                                                    cx.notify();
+                                                }))
                                                 .child("▶"),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("nav-up")
+                                                .px(px(8.0))
+                                                .py(px(4.0))
+                                                .rounded(px(theme.radii.xs))
+                                                .hover(|s| s.bg(theme.hover_hsla()))
+                                                .cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.dispatch(Action::GoUp);
+                                                    cx.notify();
+                                                }))
+                                                .child("▲"),
                                         ),
                                 )
                                 // Breadcrumb Path display
@@ -218,50 +342,10 @@ impl Render for ExplorerView {
                                         .text_color(theme.text_secondary_hsla())
                                         .child("FAVORITES"),
                                 )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(theme.radii.xs))
-                                        .bg(theme.selection_hsla())
-                                        .child("Home"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(theme.radii.xs))
-                                        .hover(|s| s.bg(theme.hover_hsla()))
-                                        .child("Documents"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(theme.radii.xs))
-                                        .hover(|s| s.bg(theme.hover_hsla()))
-                                        .child("Downloads"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .px(px(8.0))
-                                        .py(px(4.0))
-                                        .rounded(px(theme.radii.xs))
-                                        .hover(|s| s.bg(theme.hover_hsla()))
-                                        .child("Desktop"),
-                                ),
+                                .children(favorites.into_iter().map(|(label, path)| {
+                                    let selected = current.as_deref() == Some(path.as_path());
+                                    sidebar_item(label, path, selected, &theme, cx)
+                                })),
                         )
                         // File table area (Virtualized uniform_list)
                         .child(
@@ -311,6 +395,26 @@ impl Render for ExplorerView {
                                                     .flex()
                                                     .flex_row()
                                                     .items_center()
+                                                    .cursor_pointer()
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(
+                                                            move |this, ev: &MouseDownEvent, _, cx| {
+                                                                this.dispatch(Action::ClickRow {
+                                                                    row: idx,
+                                                                    ctrl: ev.modifiers.control
+                                                                        || ev.modifiers.platform,
+                                                                    shift: ev.modifiers.shift,
+                                                                });
+                                                                if ev.click_count >= 2 {
+                                                                    this.dispatch(
+                                                                        Action::OpenSelection,
+                                                                    );
+                                                                }
+                                                                cx.notify();
+                                                            },
+                                                        ),
+                                                    )
                                                     .h(px(28.0))
                                                     .px(px(16.0))
                                                     .when(is_selected, |d| {
