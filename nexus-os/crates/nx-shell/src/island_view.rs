@@ -1476,69 +1476,66 @@ impl IslandView {
                     )
             }));
 
-        let media = self.now_playing.clone().map(|np| {
-            let pos = self.playing_position();
-            let lyric = self.current_lyric();
-            let frac = if np.duration > 0.0 {
-                (pos / np.duration).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let play_label = if np.playing { "Pause" } else { "Play" };
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(10.0))
-                .px(px(14.0))
-                .py(px(12.0))
-                .rounded(px(18.0))
-                .bg(Hsla {
-                    h: 0.0,
-                    s: 0.0,
-                    l: 0.12,
-                    a: 1.0,
-                })
-                .border_1()
-                .border_color(ink(0.16))
-                .child(mono("NOW PLAYING", 10.0, 0.45))
-                .child(label(np.title.clone(), 18.0, 1.0))
-                .child(mono(
-                    if np.artist.is_empty() {
-                        "Unknown artist".into()
-                    } else {
-                        np.artist.clone()
-                    },
-                    13.0,
-                    0.7,
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(mono(fmt_clock(pos as f64), 11.0, 0.55))
-                        .child(bar(frac, 420.0, 6.0))
-                        .child(mono(fmt_clock(np.duration as f64), 11.0, 0.55)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(8.0))
-                        .child(
-                            chip("np-prev", "Previous", false)
-                                .w(px(110.0))
-                                .on_click(cx.listener(|_, _, _, _| {
+        let media =
+            self.now_playing.clone().map(|np| {
+                let pos = self.playing_position();
+                let lyric = self.current_lyric();
+                let frac = if np.duration > 0.0 {
+                    (pos / np.duration).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let play_label = if np.playing { "Pause" } else { "Play" };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.0))
+                    .px(px(14.0))
+                    .py(px(12.0))
+                    .rounded(px(18.0))
+                    .bg(Hsla {
+                        h: 0.0,
+                        s: 0.0,
+                        l: 0.12,
+                        a: 1.0,
+                    })
+                    .border_1()
+                    .border_color(ink(0.16))
+                    .child(mono("NOW PLAYING", 10.0, 0.45))
+                    .child(label(np.title.clone(), 18.0, 1.0))
+                    .child(mono(
+                        if np.artist.is_empty() {
+                            "Unknown artist".into()
+                        } else {
+                            np.artist.clone()
+                        },
+                        13.0,
+                        0.7,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(mono(fmt_clock(pos as f64), 11.0, 0.55))
+                            .child(bar(frac, 420.0, 6.0))
+                            .child(mono(fmt_clock(np.duration as f64), 11.0, 0.55)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(8.0))
+                            .child(chip("np-prev", "Previous", false).w(px(110.0)).on_click(
+                                cx.listener(|_, _, _, _| {
                                     sensors::media_command(MediaCmd::Previous);
-                                })),
-                        )
-                        .child(
-                            chip("np-play", play_label, true)
-                                .w(px(110.0))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                                }),
+                            ))
+                            .child(chip("np-play", play_label, true).w(px(110.0)).on_click(
+                                cx.listener(|this, _, _, cx| {
                                     if !sensors::media_command(MediaCmd::PlayPause) {
                                         let pos = this.lyrics_pos_snapshot();
                                         if let Some(n) = this.now_playing.as_mut() {
@@ -1548,27 +1545,25 @@ impl IslandView {
                                         this.np_seen_at = this.now();
                                     }
                                     cx.notify();
-                                })),
-                        )
-                        .child(
-                            chip("np-next", "Next", false)
-                                .w(px(110.0))
-                                .on_click(cx.listener(|_, _, _, _| {
+                                }),
+                            ))
+                            .child(chip("np-next", "Next", false).w(px(110.0)).on_click(
+                                cx.listener(|_, _, _, _| {
                                     sensors::media_command(MediaCmd::Next);
-                                })),
-                        ),
-                )
-                .when_some(lyric, |d, l| {
-                    d.child(
-                        div()
-                            .font_family(sf_font_family())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(15.0))
-                            .text_color(WHITE)
-                            .child(l),
+                                }),
+                            )),
                     )
-                })
-        });
+                    .when_some(lyric, |d, l| {
+                        d.child(
+                            div()
+                                .font_family(sf_font_family())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(15.0))
+                                .text_color(WHITE)
+                                .child(l),
+                        )
+                    })
+            });
 
         let mut glance = div().flex().flex_row().gap(px(18.0)).items_center();
         if let Some((place, t, sum)) = &self.weather {
@@ -1693,7 +1688,11 @@ impl IslandView {
                 .items_center()
                 .child(glyph_icon(glyph, ink(0.6), 16.0))
                 .child(bar(ratio, 96.0, 6.0))
-                .child(mono(format!("{:>3}%", (ratio * 100.0).round() as u8), 11.0, 0.7))
+                .child(mono(
+                    format!("{:>3}%", (ratio * 100.0).round() as u8),
+                    11.0,
+                    0.7,
+                ))
         };
         let sys = div()
             .flex()

@@ -147,6 +147,7 @@ impl Render for MenuBarView {
 }
 
 /// macOS-style bottom dock: translucent rounded shelf, magnification, running dots, trash separator.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct DockView {
     pub model: DockModel,
     pub hovered_index: Option<usize>,
@@ -293,6 +294,7 @@ impl DockView {
 
     /// Which icon the pointer is over, in screen space. Slots are centered
     /// in the dock window at the resting size; the spring then grows them.
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn hover_from_cursor(&mut self, window: &Window, point: nx_ui::geom::Point) {
         let b = window.bounds();
         let left = f32::from(b.origin.x);
@@ -412,6 +414,7 @@ impl DockView {
         if self.hold_open {
             self.model.force_reveal();
         }
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut click = None;
         #[cfg(windows)]
         {
@@ -420,12 +423,12 @@ impl DockView {
                 self.click_through = Some(hidden);
                 let raw = {
                     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                    HasWindowHandle::window_handle(window).ok().and_then(|handle| {
-                        match handle.as_raw() {
+                    HasWindowHandle::window_handle(window)
+                        .ok()
+                        .and_then(|handle| match handle.as_raw() {
                             RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
                             _ => None,
-                        }
-                    })
+                        })
                 };
                 if let Some(raw) = raw {
                     click = Some((raw, hidden));
@@ -444,6 +447,7 @@ impl DockView {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 struct CursorPass {
     click: Option<(isize, bool)>,
     missing: Vec<String>,
@@ -553,12 +557,11 @@ impl Render for DockView {
                                 cx.notify();
                             }))
                             .child({
-                                let art = item
-                                    .launch
-                                    .as_str()
-                                    .is_empty()
-                                    .then_some(None)
-                                    .unwrap_or_else(|| self.icons.get(&item.launch).cloned());
+                                let art = if item.launch.is_empty() {
+                                    None
+                                } else {
+                                    self.icons.get(&item.launch).cloned()
+                                };
                                 let tile = div()
                                     .flex()
                                     .items_center()

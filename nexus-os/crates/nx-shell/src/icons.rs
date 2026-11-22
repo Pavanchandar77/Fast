@@ -26,7 +26,7 @@ pub fn app_icon_rgba(path: &str) -> Option<(u32, u32, Vec<u8>)> {
 fn load_icon(path: &str) -> Option<windows::Win32::UI::WindowsAndMessaging::HICON> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{SHDefExtractIconW, SHGetFileInfoW, SHGFI_ICON, SHFILEINFOW};
+    use windows::Win32::UI::Shell::{SHDefExtractIconW, SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON};
     use windows::Win32::UI::WindowsAndMessaging::HICON;
 
     // A pinned shortcut's own icon includes the little arrow. Draw the
@@ -220,18 +220,22 @@ fn hicon_to_bgra(
             return None;
         }
         let mut opaque = false;
-        for px in buf.chunks_exact_mut(4) {
+        for px in buf.as_chunks_mut::<4>().0 {
             if px[3] != 0 {
                 opaque = true;
                 break;
             }
         }
         if !opaque {
-            for px in buf.chunks_exact_mut(4) {
+            for px in buf.as_chunks_mut::<4>().0 {
                 px[3] = 255;
             }
         }
-        let colored = buf.chunks_exact(4).any(|px| px[0] | px[1] | px[2] != 0);
+        let colored = buf
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| px[0] | px[1] | px[2] != 0);
         colored.then_some((size, size, buf))
     }
 }
@@ -246,10 +250,18 @@ mod tests {
         let Some((w, h, bytes)) = super::app_icon_rgba(r"C:\Windows\explorer.exe") else {
             panic!("explorer.exe has no icon");
         };
-        assert_eq!((w, h), (128, 128), "dock icons are stored sharper than they are drawn");
+        assert_eq!(
+            (w, h),
+            (128, 128),
+            "dock icons are stored sharper than they are drawn"
+        );
         assert_eq!(bytes.len(), (w * h * 4) as usize);
         assert!(
-            bytes.chunks_exact(4).any(|px| px[0] | px[1] | px[2] != 0),
+            bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|px| px[0] | px[1] | px[2] != 0),
             "icon was blank"
         );
     }

@@ -289,7 +289,10 @@ mod tests {
                 text: "I'm Nexus. I live in the Dynamic Island on this Windows machine. Pavan created me. I know this computer: the apps that are open, what's playing, your files, volume, brightness, and the things you ask me to do. I am not a web search wearing a name.".into(),
             })
         );
-        assert!(matches!(route("who is the president"), Some(Tool::WebSearch { .. })));
+        assert!(matches!(
+            route("who is the president"),
+            Some(Tool::WebSearch { .. })
+        ));
         assert_eq!(
             route("open notepad"),
             Some(Tool::OpenApp {

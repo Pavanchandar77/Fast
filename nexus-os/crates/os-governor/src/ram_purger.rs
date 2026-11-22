@@ -242,8 +242,14 @@ mod tests {
         assert!(should_trim(100, "Code.exe", 50, 1));
         assert!(should_trim(100, "spotify.exe", 50, 1));
         assert!(!should_trim(50, "chrome.exe", 50, 1), "foreground stays");
-        assert!(!should_trim(1, "nexus-os.exe", 50, 1), "our own process stays");
-        assert!(!should_trim(8, "explorer.exe", 50, 1), "the desktop shell stays");
+        assert!(
+            !should_trim(1, "nexus-os.exe", 50, 1),
+            "our own process stays"
+        );
+        assert!(
+            !should_trim(8, "explorer.exe", 50, 1),
+            "the desktop shell stays"
+        );
         assert!(!should_trim(9, "dwm.exe", 50, 1));
         assert!(!should_trim(10, "svchost.exe", 50, 1));
         assert!(!should_trim(11, "csrss.exe", 50, 1));

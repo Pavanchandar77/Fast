@@ -247,6 +247,7 @@ impl IslandModel {
     }
 }
 
+#[allow(clippy::needless_return)] // one early return per platform block
 fn sample_memory() -> (u64, u64) {
     #[cfg(target_os = "linux")]
     {
@@ -275,7 +276,7 @@ fn sample_memory() -> (u64, u64) {
             return (0, 0);
         }
         let total = status.ullTotalPhys;
-        return (total.saturating_sub(status.ullAvailPhys), total);
+        (total.saturating_sub(status.ullAvailPhys), total)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -333,23 +334,17 @@ pub fn system_clipboard() -> Option<String> {
 fn sample_disk() -> f32 {
     #[cfg(windows)]
     {
-        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
         use windows::core::w;
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
         let mut free = 0u64;
         let mut total = 0u64;
         let ok = unsafe {
-            GetDiskFreeSpaceExW(
-                w!("C:\\"),
-                None,
-                Some(&raw mut total),
-                Some(&raw mut free),
-            )
-            .is_ok()
+            GetDiskFreeSpaceExW(w!("C:\\"), None, Some(&raw mut total), Some(&raw mut free)).is_ok()
         };
         if ok && total > 0 {
             return (1.0 - free as f32 / total as f32).clamp(0.0, 1.0);
         }
-        return 0.0;
+        0.0
     }
     #[cfg(not(windows))]
     {
@@ -575,10 +570,7 @@ mod tests {
         );
         assert!(used > 0, "RAM used was 0");
         let disk = sample_disk();
-        assert!(
-            disk > 0.01 && disk < 0.999,
-            "disk used fraction was {disk}"
-        );
+        assert!(disk > 0.01 && disk < 0.999, "disk used fraction was {disk}");
         let first = sample_cpu().expect("GetSystemTimes");
         std::thread::sleep(std::time::Duration::from_millis(40));
         let second = sample_cpu().expect("GetSystemTimes again");
@@ -627,13 +619,18 @@ mod tests {
         assert_eq!(read.as_deref(), Some(marker.as_str()));
     }
 
+    #[cfg(not(windows))]
+    fn set_clipboard(_text: &str) {}
+
     #[cfg(windows)]
     fn set_clipboard(text: &str) {
         use std::os::windows::ffi::OsStrExt;
         use windows::Win32::System::DataExchange::{
             CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
         };
-        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        use windows::Win32::System::Memory::{
+            GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+        };
 
         let wide: Vec<u16> = std::ffi::OsStr::new(text)
             .encode_wide()

@@ -963,8 +963,7 @@ mod platform {
             GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
         use windows::Win32::UI::Shell::{
-            SHQueryUserNotificationState, QUNS_PRESENTATION_MODE,
-            QUNS_RUNNING_D3D_FULL_SCREEN,
+            SHQueryUserNotificationState, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
         };
         use windows::Win32::UI::WindowsAndMessaging::{
             GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,

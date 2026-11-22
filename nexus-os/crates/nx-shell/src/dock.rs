@@ -373,7 +373,11 @@ impl DockModel {
 
     /// Nexus surfaces only. The user's own apps come from the Windows taskbar.
     pub fn pin_defaults(&mut self) {
-        for (id, label) in [("explorer", "Explorer"), ("privacy", "Privacy"), ("trash", "Trash")] {
+        for (id, label) in [
+            ("explorer", "Explorer"),
+            ("privacy", "Privacy"),
+            ("trash", "Trash"),
+        ] {
             self.pin(id, label);
         }
     }
@@ -414,10 +418,8 @@ impl DockModel {
                     item.running = true;
                     changed = true;
                 }
-                if item.launch.is_empty() || item.launch == item.id {
-                    if !launch.is_empty() {
-                        item.launch = launch.clone();
-                    }
+                if (item.launch.is_empty() || item.launch == item.id) && !launch.is_empty() {
+                    item.launch = launch.clone();
                 }
             } else {
                 self.items.push(DockApp {
@@ -811,7 +813,7 @@ pub fn taskbar_pins() -> Vec<(String, String, String)> {
             }
             pins.push((id, stem, path.to_string_lossy().to_string()));
         }
-        pins.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+        pins.sort_by_key(|a| a.1.to_ascii_lowercase());
         pins
     }
     #[cfg(not(windows))]
@@ -923,8 +925,13 @@ pub fn taskbar_buttons() -> Vec<(String, String, String)> {
             }
             if matches!(
                 id.as_str(),
-                "explorer" | "nexus" | "nexus-os" | "searchhost" | "startmenuexperiencehost"
-                    | "textinputhost" | "systemsettings"
+                "explorer"
+                    | "nexus"
+                    | "nexus-os"
+                    | "searchhost"
+                    | "startmenuexperiencehost"
+                    | "textinputhost"
+                    | "systemsettings"
             ) {
                 return BOOL(1);
             }
@@ -1004,6 +1011,7 @@ pub fn running_exe_ids() -> Vec<String> {
 
 /// Best-effort exe stem from a `.lnk`. The shortcut's target is stored as
 /// UTF-16 near the `.exe` marker.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn exe_id_from_lnk(path: &std::path::Path) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     let mut i = 0;
@@ -1362,7 +1370,7 @@ mod tests {
         assert!(ids.contains(&"explorer"));
         assert!(ids.contains(&"privacy"));
         assert!(ids.contains(&"trash"));
-        assert!(!ids.iter().any(|id| *id == "terminal"));
+        assert!(!ids.contains(&"terminal"));
         for (id, _label, path) in &pins {
             let item = dock
                 .items()

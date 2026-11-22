@@ -120,14 +120,13 @@ fn paint_transparent(hwnd: windows::Win32::Foundation::HWND) {
         cb_data: usize,
     }
     unsafe {
+        use windows::core::w;
         use windows::Win32::Foundation::BOOL;
         use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-        use windows::core::w;
         let Some(user32) = LoadLibraryW(w!("user32.dll")).ok() else {
             return;
         };
-        type SetFn =
-            unsafe extern "system" fn(windows::Win32::Foundation::HWND, *mut Data) -> BOOL;
+        type SetFn = unsafe extern "system" fn(windows::Win32::Foundation::HWND, *mut Data) -> BOOL;
         let Some(sym) = GetProcAddress(user32, windows::core::s!("SetWindowCompositionAttribute"))
         else {
             return;

@@ -537,6 +537,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
     } else {
         windows.motion_window = cx
             .open_window(motion_opts, move |window, cx| {
+                let _ = &window;
                 #[cfg(windows)]
                 {
                     nx_shell::capture::set_overlay_visible(window, false);
@@ -563,12 +564,14 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         let _ = island.update(cx, |_, window, _| {
             #[cfg(windows)]
             nx_shell::capture::raise_topmost(window);
+            let _ = window;
         });
     }
     if let Some(dock) = windows.dock_window {
         let _ = dock.update(cx, |_, window, _| {
             #[cfg(windows)]
             nx_shell::capture::raise_topmost(window);
+            let _ = window;
         });
     }
     windows
