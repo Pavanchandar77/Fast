@@ -8,15 +8,18 @@
 sudo apt install nsis mingw-w64 wine64 unzip python3
 rustup target add x86_64-pc-windows-gnu
 
-nexus-os/packaging/windows/build-installer.sh 0.1.0-preview
-# -> nexus-os/dist/Nexus-Setup-0.1.0-preview.exe (+ .sha256)
+nexus-os/packaging/windows/build-installer.sh 0.3.0-preview
+# -> nexus-os/dist/Nexus-Setup-0.3.0-preview.exe (+ .sha256)
 ```
 
 What the script does:
 
 1. Builds `nexus-os.exe` in release for `x86_64-pc-windows-gnu` with a static
-   C runtime, then fails if the exe imports any DLL that is not part of
-   Windows (`objdump -p`). Nothing else ships next to the exe.
+   C runtime, then runs `check_exe.sh`: only Windows system DLLs may be
+   imported, comctl32 v6-only functions must not be imported statically,
+   and the embedded manifest must include Common Controls 6, PerMonitorV2
+   DPI, asInvoker, and the Windows 10/11 supportedOS id. Nothing else ships
+   next to the exe.
 2. gpui 0.2.2 only compiles its HLSL shaders when the build *host* is
    Windows. On Linux, `gpui_shaders.py` runs Microsoft's `fxc.exe` (fetched
    once from the Windows SDK NuGet package into `~/.cache/nexus-packaging`,
