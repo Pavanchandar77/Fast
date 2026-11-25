@@ -74,7 +74,7 @@ mod imp {
             .init();
         info!(
             "==== Nexus {} starting (pid {}, safe_mode={safe}, diag={diag_mode}, log={:?}) ====",
-            env!("CARGO_PKG_VERSION"),
+            diag::release(),
             std::process::id(),
             log_path
         );

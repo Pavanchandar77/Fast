@@ -40,6 +40,12 @@ pub fn log_path() -> PathBuf {
     log_dir().join("nexus.log")
 }
 
+/// Installer / display version (e.g. `0.3.0-preview`). Falls back to the
+/// crate semver when `NEXUS_RELEASE` was not set at build time.
+pub fn release() -> &'static str {
+    option_env!("NEXUS_RELEASE").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 /// `--safe` on the command line or `NEXUS_SAFE=1`: no motion overlay, no
 /// foreign-window effects, no global keyboard hook, no window manager tiling.
 pub fn parse_safe_mode<I: IntoIterator<Item = String>>(args: I, env: Option<&str>) -> bool {
@@ -164,7 +170,7 @@ pub fn write_crash(kind: &str, text: &str) -> Option<PathBuf> {
     let path = dir.join(format!("crash-{secs}.txt"));
     let body = format!(
         "Nexus {} crashed ({kind})\npid {}\nargs {:?}\n\n{text}\n\nFull log: {}\n",
-        env!("CARGO_PKG_VERSION"),
+        release(),
         std::process::id(),
         std::env::args().collect::<Vec<_>>(),
         log_path().display()
@@ -326,6 +332,12 @@ pub fn window_opened(name: &str, since: std::time::Instant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_is_nonempty() {
+        assert!(!release().is_empty());
+        assert!(release().chars().next().unwrap().is_ascii_digit());
+    }
 
     #[test]
     fn diag_flag() {

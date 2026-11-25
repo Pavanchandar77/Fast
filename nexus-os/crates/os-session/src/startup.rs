@@ -1130,11 +1130,7 @@ fn hide_on_close(window: &mut gpui::Window, cx: &mut gpui::App) {
     window.on_window_should_close(cx, |window, _cx| {
         #[cfg(windows)]
         if let Some(raw) = window_hwnd(window) {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-            unsafe {
-                let _ = ShowWindow(HWND(raw as *mut std::ffi::c_void), SW_HIDE);
-            }
+            nx_ui::platform::hide_async(raw);
             info!("window {raw:#x} hidden on close");
             return false;
         }
@@ -1147,18 +1143,8 @@ fn hide_on_close(window: &mut gpui::Window, cx: &mut gpui::App) {
 fn show_app_window(window: &mut gpui::Window) {
     #[cfg(windows)]
     if let Some(raw) = window_hwnd(window) {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            IsIconic, IsWindowVisible, ShowWindow, SW_RESTORE, SW_SHOW,
-        };
-        let h = HWND(raw as *mut std::ffi::c_void);
-        unsafe {
-            if IsIconic(h).as_bool() {
-                let _ = ShowWindow(h, SW_RESTORE);
-            } else if !IsWindowVisible(h).as_bool() {
-                let _ = ShowWindow(h, SW_SHOW);
-            }
-        }
+        nx_ui::platform::restore_and_focus(raw);
+        return;
     }
     window.activate_window();
 }
@@ -1198,19 +1184,11 @@ fn apply_spotlight_visibility(window: &mut gpui::Window, visible: bool) {
         hide_auxiliary_window(window);
     }
     #[cfg(windows)]
-    {
-        use raw_window_handle::RawWindowHandle;
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNORMAL};
-
-        if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
-            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                let hwnd = HWND(win32.hwnd.get() as *mut std::ffi::c_void);
-                let cmd = if visible { SW_SHOWNORMAL } else { SW_HIDE };
-                unsafe {
-                    let _ = ShowWindow(hwnd, cmd);
-                }
-            }
+    if let Some(raw) = window_hwnd(window) {
+        if visible {
+            nx_ui::platform::restore_and_focus(raw);
+        } else {
+            nx_ui::platform::hide_async(raw);
         }
     }
 }

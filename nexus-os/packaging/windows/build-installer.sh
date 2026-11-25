@@ -11,6 +11,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"            # nexus-os workspace
 VERSION="${1:-0.1.0-preview}"
+export NEXUS_RELEASE="$VERSION"
 TARGET=x86_64-pc-windows-gnu
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 OUT="${OUT_DIR:-$ROOT/dist}"

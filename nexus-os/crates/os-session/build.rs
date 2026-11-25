@@ -8,6 +8,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../packaging/windows/nexus.ico");
     println!("cargo:rerun-if-changed=../../packaging/windows/nexus.manifest.xml");
+    println!("cargo:rerun-if-env-changed=NEXUS_RELEASE");
+    // Installer sets NEXUS_RELEASE=0.3.0-preview so logs and crash files show
+    // the same version as the download, not just the crate semver.
+    let release = std::env::var("NEXUS_RELEASE")
+        .unwrap_or_else(|_| std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.3.0".into()));
+    println!("cargo:rustc-env=NEXUS_RELEASE={release}");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -17,7 +23,7 @@ fn main() {
         return;
     }
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
+    let version = std::env::var("NEXUS_RELEASE").unwrap_or_else(|_| release.clone());
     let nums: Vec<u32> = version
         .split(['.', '-'])
         .take(3)

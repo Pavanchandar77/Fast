@@ -955,23 +955,9 @@ pub fn taskbar_buttons() -> Vec<(String, String, String)> {
 }
 
 /// Bring one window forward: restore it if minimized, then focus it.
+/// Uses the shared PowerToys-style focus helper (async show + input nudge).
 pub fn focus_hwnd(raw: isize) {
-    #[cfg(windows)]
-    unsafe {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            IsIconic, SetForegroundWindow, ShowWindowAsync, SwitchToThisWindow, SW_RESTORE,
-        };
-        let h = HWND(raw as *mut std::ffi::c_void);
-        if IsIconic(h).as_bool() {
-            let _ = ShowWindowAsync(h, SW_RESTORE);
-        }
-        if !SetForegroundWindow(h).as_bool() {
-            SwitchToThisWindow(h, true);
-        }
-    }
-    #[cfg(not(windows))]
-    let _ = raw;
+    nx_ui::platform::restore_and_focus(raw);
 }
 
 /// Bring a running app's windows forward: restore minimized ones and focus
@@ -985,27 +971,13 @@ pub fn focus_app(id: &str) -> bool {
     if hwnds.is_empty() {
         return false;
     }
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            IsIconic, SetForegroundWindow, ShowWindow, SwitchToThisWindow, SW_RESTORE,
-        };
-        unsafe {
-            for raw in hwnds.iter().rev() {
-                let h = HWND(*raw as *mut std::ffi::c_void);
-                if IsIconic(h).as_bool() {
-                    let _ = ShowWindow(h, SW_RESTORE);
-                }
-            }
-            let first = HWND(hwnds[0] as *mut std::ffi::c_void);
-            // The dock does not take focus, so Windows may refuse a plain
-            // SetForegroundWindow; Alt+Tab's switch is allowed.
-            if !SetForegroundWindow(first).as_bool() {
-                SwitchToThisWindow(first, true);
-            }
-        }
+    // Restore every window of the app, then focus the first with the
+    // shared helper (the dock itself does not hold foreground, so a plain
+    // SetForegroundWindow is usually refused).
+    for raw in hwnds.iter().rev() {
+        nx_ui::platform::show_async(*raw, nx_ui::platform::ShowCmd::Restore);
     }
+    nx_ui::platform::bring_to_foreground(hwnds[0]);
     true
 }
 

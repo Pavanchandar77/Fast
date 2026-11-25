@@ -4175,14 +4175,14 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexus-journal"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "nexus-model"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "nx-governor-policy",
@@ -4402,7 +4402,7 @@ dependencies = [
 
 [[package]]
 name = "nx-assistant"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "candle-core",
  "candle-transformers",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "nx-compat"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nexus-journal",
  "nexus-model",
@@ -4434,7 +4434,7 @@ dependencies = [
 
 [[package]]
 name = "nx-explorer"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nx-fs",
  "proptest",
@@ -4443,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "nx-explorer-ui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "criterion",
@@ -4463,7 +4463,7 @@ dependencies = [
 
 [[package]]
 name = "nx-fs"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "criterion",
@@ -4478,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "nx-governor-policy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -4490,7 +4490,7 @@ dependencies = [
 
 [[package]]
 name = "nx-power"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nexus-model",
  "nx-fs",
@@ -4505,7 +4505,7 @@ dependencies = [
 
 [[package]]
 name = "nx-privacy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nexus-model",
  "os-core",
@@ -4517,7 +4517,7 @@ dependencies = [
 
 [[package]]
 name = "nx-privacy-dash"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "gpui",
  "nx-ui",
@@ -4531,7 +4531,7 @@ dependencies = [
 
 [[package]]
 name = "nx-shell"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "gpui",
@@ -4554,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "nx-ui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "gpui",
@@ -4565,7 +4565,7 @@ dependencies = [
 
 [[package]]
 name = "nx-wm"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "proptest",
  "serde",
@@ -4808,7 +4808,7 @@ dependencies = [
 
 [[package]]
 name = "os-compositor"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "os-config"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -4840,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "os-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "nexus-journal",
  "nexus-model",
@@ -4853,7 +4853,7 @@ dependencies = [
 
 [[package]]
 name = "os-governor"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -4868,7 +4868,7 @@ dependencies = [
 
 [[package]]
 name = "os-hal"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "nexus-model",
@@ -4878,7 +4878,7 @@ dependencies = [
 
 [[package]]
 name = "os-session"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -4908,7 +4908,7 @@ dependencies = [
 
 [[package]]
 name = "os-shield"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "nx-privacy",
@@ -4917,7 +4917,7 @@ dependencies = [
 
 [[package]]
 name = "os-vfs"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
