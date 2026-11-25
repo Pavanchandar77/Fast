@@ -111,6 +111,7 @@ Section "Nexus (required)" SecCore
 
   CreateDirectory "$SMPROGRAMS\Nexus"
   CreateShortcut "$SMPROGRAMS\Nexus\Nexus.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\nexus.ico" 0
+  CreateShortcut "$SMPROGRAMS\Nexus\Nexus (self-test).lnk" "$INSTDIR\${EXE}" "--selftest" "$INSTDIR\nexus.ico" 0 SW_SHOWNORMAL "" "Open, hide, show and toggle every Nexus window, then write a pass/fail report"
   CreateShortcut "$SMPROGRAMS\Nexus\Nexus (diagnostic).lnk" "$INSTDIR\${EXE}" "--diag" "$INSTDIR\nexus.ico" 0 SW_SHOWNORMAL "" "Start Nexus with a console window and verbose logging"
   CreateShortcut "$SMPROGRAMS\Nexus\Restore Windows desktop.lnk" "$INSTDIR\${EXE}" "--restore" "$INSTDIR\nexus.ico" 0 SW_SHOWNORMAL "" "Put back the Windows taskbar if Nexus was force-closed"
   CreateShortcut "$SMPROGRAMS\Nexus\Uninstall Nexus.lnk" "$INSTDIR\Uninstall.exe"

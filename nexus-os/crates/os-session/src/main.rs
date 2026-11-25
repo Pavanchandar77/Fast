@@ -44,7 +44,8 @@ mod imp {
         // console, so nothing after this can end the process silently.
         // Release builds have no console: everything goes to
         // %LOCALAPPDATA%\Nexus\logs\nexus.log so a real-PC run leaves data.
-        let diag_mode = diag::parse_diag_mode(std::env::args());
+        let selftest = os_session::selftest::requested(std::env::args());
+        let diag_mode = diag::parse_diag_mode(std::env::args()) || selftest;
         diag::set_diag_mode(diag_mode);
         if diag_mode {
             diag::attach_console();
@@ -315,6 +316,12 @@ mod imp {
                 os_session::startup::open_gpui_windows(cx, &mut session)
             });
             info!("GPUI windows: {}", windows.describe());
+            if selftest {
+                let ok = os_session::selftest::run(&windows, cx);
+                info!("self-test finished ok={ok}");
+                cx.quit();
+                return;
+            }
             if windows.none_open() {
                 // Nothing on screen would be a silent "vanish": say so and quit.
                 diag::fatal(

@@ -19,7 +19,6 @@ use nx_shell::{
 use nx_ui::geom::Rect;
 use nx_ui::motion::MotionPrefs;
 use nx_ui::theme::Theme;
-use nx_ui::WINDOW_FRAME_INSET;
 use nx_wm::MonitorId;
 use tracing::{error, info, warn};
 
@@ -410,8 +409,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     true,
                 ),
                 move |window, cx| {
-                    apply_rounded_native_corners(window);
-                    native_chrome(window, "island");
+                    crate::chrome::install(window, Some(cx), "island", crate::chrome::Kind::Shell);
                     #[cfg(windows)]
                     nx_shell::capture::raise_topmost(window);
                     cx.new(|cx| IslandView::new(island_model, cx))
@@ -451,8 +449,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     true,
                 ),
                 move |window, cx| {
-                    apply_rounded_native_corners(window);
-                    native_chrome(window, "dock");
+                    crate::chrome::install(window, Some(cx), "dock", crate::chrome::Kind::Shell);
                     #[cfg(windows)]
                     nx_shell::capture::raise_topmost(window);
                     cx.new(|_cx| DockView::new(dock_model))
@@ -479,8 +476,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         let open_t = std::time::Instant::now();
         windows.spotlight_window = cx
             .open_window(spotlight_opts, move |window, cx| {
-                apply_rounded_native_corners(window);
-                native_chrome(window, "spotlight");
+                crate::chrome::install(window, Some(cx), "spotlight", crate::chrome::Kind::Overlay);
                 // Linux ignores WindowOptions.show; park minimized until toggled.
                 hide_auxiliary_window(window);
                 cx.new(|_cx| SpotlightView::new(spotlight_model))
@@ -530,8 +526,12 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
         let open_t = std::time::Instant::now();
         windows.expose_window = cx
             .open_window(expose_opts, move |window, cx| {
-                apply_rounded_native_corners(window);
-                native_chrome(window, "mission-control");
+                crate::chrome::install(
+                    window,
+                    Some(cx),
+                    "mission-control",
+                    crate::chrome::Kind::Overlay,
+                );
                 hide_auxiliary_window(window);
                 cx.new(|_cx| MissionControlView::new(expose_model))
             })
@@ -549,9 +549,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     size: gpui::size(gpui::px(explorer_w), gpui::px(explorer_h)),
                 }),
                 move |window, cx| {
-                    apply_rounded_native_corners(window);
-                    native_chrome_with(window, "files", true);
-                    hide_on_close(window, cx);
+                    crate::chrome::install(window, Some(cx), "files", crate::chrome::Kind::App);
                     cx.new(|_cx| ExplorerView::new(explorer.window))
                 },
             )
@@ -570,9 +568,7 @@ pub fn open_gpui_windows(cx: &mut gpui::App, handle: &mut SessionHandle) -> Gpui
                     size: gpui::size(gpui::px(privacy_w), gpui::px(privacy_h)),
                 }),
                 move |window, cx| {
-                    apply_rounded_native_corners(window);
-                    native_chrome_with(window, "privacy", true);
-                    hide_on_close(window, cx);
+                    crate::chrome::install(window, Some(cx), "privacy", crate::chrome::Kind::App);
                     cx.new(|_cx| PrivacyDashboardView::new(dash_vm))
                 },
             )
@@ -669,8 +665,7 @@ fn install_shell_launch(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
     // Dock menus and stacks open as their own small pop-up windows.
     cx.set_global(nx_shell::gpui_views::PopupWindowHook(std::sync::Arc::new(
         |window: &mut gpui::Window| {
-            apply_rounded_native_corners(window);
-            native_chrome(window, "dock-popup");
+            crate::chrome::install(window, None, "dock-popup", crate::chrome::Kind::Shell);
         },
     )));
     cx.set_global(ShellLaunch::new(move |id, cx| {
@@ -731,7 +726,7 @@ fn bring_back(
     {
         let raw = handle
             .update(cx, |_, window, _| {
-                let raw = window_hwnd(window)?;
+                let raw = crate::chrome::window_hwnd(window)?;
                 let h = windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void);
                 let away = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::IsIconic(h).as_bool()
@@ -743,7 +738,7 @@ fn bring_back(
             .flatten();
         if let Some(raw) = raw {
             let show: crate::motion_bridge::OwnShow = Box::new(move |cx: &mut gpui::App| {
-                let _ = handle.update(cx, |_, window, _| show_app_window(window));
+                let _ = handle.update(cx, |_, window, _| crate::chrome::show_app_window(window));
             });
             match crate::motion_bridge::own_restore(windows, cx, raw, app, show) {
                 Ok(()) => return,
@@ -755,7 +750,7 @@ fn bring_back(
         }
     }
     let _ = (windows, app);
-    let _ = handle.update(cx, |_, window, _| show_app_window(window));
+    let _ = handle.update(cx, |_, window, _| crate::chrome::show_app_window(window));
 }
 
 /// Caption buttons on Files / Privacy: genie into the dock icon on
@@ -775,7 +770,7 @@ fn install_window_controls(windows: &GpuiSessionWindows, cx: &mut gpui::App) {
                 return false;
             };
             #[cfg(windows)]
-            if let Some(raw) = window_hwnd(window) {
+            if let Some(raw) = crate::chrome::window_hwnd(window) {
                 match action {
                     "min" => {
                         crate::motion_bridge::own_minimize(&all, cx, raw, app);
@@ -912,260 +907,6 @@ pub fn toggle_gpui_spotlight(
         .unwrap_or(false)
 }
 
-#[cfg(windows)]
-fn window_hwnd(window: &gpui::Window) -> Option<isize> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
-        RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
-        _ => None,
-    }
-}
-
-/// Make the whole window client area and log its handle.
-///
-/// `present_client_window` (nx-ui) already drops the caption, the accent
-/// border and DWM rounding. GPUI's own `WM_NCCALCSIZE` still reserves an
-/// invisible resize frame (8 px left/right/bottom, 1 px top) whose hit-test
-/// codes swallow clicks near the edges; this subclass returns the full rect
-/// as client and maps resize/border hit codes to `HTCLIENT`.
-fn native_chrome(window: &mut gpui::Window, name: &str) {
-    native_chrome_with(window, name, false);
-}
-
-/// Like [`native_chrome`], and `resizable` app windows get a thin resize
-/// band (the transparent frame inset plus a few px of the body edge).
-fn native_chrome_with(window: &mut gpui::Window, name: &str, resizable: bool) {
-    #[cfg(windows)]
-    {
-        match window_hwnd(window) {
-            Some(raw) => {
-                win_chrome::subclass_client_only(raw, resizable);
-                if resizable {
-                    // Our genie/bloom replaces the Windows minimize and
-                    // restore animation for app windows.
-                    win_chrome::disable_dwm_transitions(raw);
-                }
-                info!("window '{name}' created hwnd={raw:#x} resizable={resizable}");
-            }
-            None => warn!("window '{name}': no Win32 handle"),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (window, name, resizable);
-    }
-}
-
-/// Which edge of a window a point sits on, for the resize band.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResizeEdge {
-    Left,
-    Right,
-    Top,
-    Bottom,
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-}
-
-/// Pure hit test: `(x, y)` relative to the window's top-left, `band` the
-/// edge thickness and `corner` the (larger) corner grab size, all in
-/// physical pixels.
-pub fn resize_edge(w: i32, h: i32, x: i32, y: i32, band: i32, corner: i32) -> Option<ResizeEdge> {
-    if x < 0 || y < 0 || x >= w || y >= h {
-        return None;
-    }
-    let left = x < band;
-    let right = x >= w - band;
-    let top = y < band;
-    let bottom = y >= h - band;
-    let near_left = x < corner;
-    let near_right = x >= w - corner;
-    let near_top = y < corner;
-    let near_bottom = y >= h - corner;
-    Some(match () {
-        _ if (top && near_left) || (left && near_top) => ResizeEdge::TopLeft,
-        _ if (top && near_right) || (right && near_top) => ResizeEdge::TopRight,
-        _ if (bottom && near_left) || (left && near_bottom) => ResizeEdge::BottomLeft,
-        _ if (bottom && near_right) || (right && near_bottom) => ResizeEdge::BottomRight,
-        _ if left => ResizeEdge::Left,
-        _ if right => ResizeEdge::Right,
-        _ if top => ResizeEdge::Top,
-        _ if bottom => ResizeEdge::Bottom,
-        _ => return None,
-    })
-}
-
-#[cfg(windows)]
-mod win_chrome {
-    use windows::Win32::Foundation::HWND;
-
-    const SUBCLASS_ID: usize = 0x4E58_4253; // "NXBS"
-
-    pub fn disable_dwm_transitions(raw: isize) {
-        use windows::Win32::Graphics::Dwm::{
-            DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
-        };
-        let on: i32 = 1;
-        unsafe {
-            let _ = DwmSetWindowAttribute(
-                HWND(raw as *mut std::ffi::c_void),
-                DWMWA_TRANSITIONS_FORCEDISABLED,
-                std::ptr::from_ref(&on).cast(),
-                std::mem::size_of::<i32>() as u32,
-            );
-        }
-    }
-
-    /// Install the client-only subclass. Styles and DWM attributes stay as
-    /// `present_client_window` set them.
-    pub fn subclass_client_only(raw: isize, resizable: bool) {
-        use windows::Win32::UI::Shell::SetWindowSubclass;
-        unsafe {
-            let _ = SetWindowSubclass(
-                HWND(raw as *mut std::ffi::c_void),
-                Some(client_only_proc),
-                SUBCLASS_ID,
-                usize::from(resizable),
-            );
-        }
-    }
-
-    unsafe extern "system" fn client_only_proc(
-        hwnd: HWND,
-        msg: u32,
-        wparam: windows::Win32::Foundation::WPARAM,
-        lparam: windows::Win32::Foundation::LPARAM,
-        _id: usize,
-        data: usize,
-    ) -> windows::Win32::Foundation::LRESULT {
-        use windows::Win32::Foundation::LRESULT;
-        use windows::Win32::UI::Shell::DefSubclassProc;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            HTBORDER, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTRIGHT, HTTOP,
-            HTTOPLEFT, HTTOPRIGHT, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT,
-        };
-        match msg {
-            WM_NCCALCSIZE if wparam.0 != 0 => LRESULT(0),
-            WM_NCHITTEST => {
-                if data == 1 {
-                    if let Some(code) = resize_hit(hwnd, lparam) {
-                        return LRESULT(code as isize);
-                    }
-                }
-                // Resize/border codes become client; caption and window
-                // buttons (from GPUI drag areas) pass through unchanged.
-                let hit = DefSubclassProc(hwnd, msg, wparam, lparam);
-                match hit.0 as u32 {
-                    HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT
-                    | HTBOTTOMRIGHT | HTBORDER => LRESULT(HTCLIENT as isize),
-                    _ => hit,
-                }
-            }
-            // Start the system sizing loop ourselves so GPUI's non-client
-            // mouse handling cannot swallow the press on the resize band.
-            windows::Win32::UI::WindowsAndMessaging::WM_NCLBUTTONDOWN
-                if data == 1
-                    && matches!(
-                        wparam.0 as u32,
-                        HTLEFT
-                            | HTRIGHT
-                            | HTTOP
-                            | HTTOPLEFT
-                            | HTTOPRIGHT
-                            | HTBOTTOM
-                            | HTBOTTOMLEFT
-                            | HTBOTTOMRIGHT
-                    ) =>
-            {
-                windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
-            }
-            // TRUE keeps the activation change; nothing is painted.
-            WM_NCACTIVATE => LRESULT(1),
-            WM_NCPAINT => LRESULT(0),
-            _ => DefSubclassProc(hwnd, msg, wparam, lparam),
-        }
-    }
-
-    /// Resize band for app windows: the transparent frame inset around the
-    /// rounded body plus 4 px of the body edge (8 px at the corners).
-    unsafe fn resize_hit(hwnd: HWND, lparam: windows::Win32::Foundation::LPARAM) -> Option<u32> {
-        use super::{resize_edge, ResizeEdge};
-        use windows::Win32::Foundation::RECT;
-        use windows::Win32::UI::HiDpi::GetDpiForWindow;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowRect, IsZoomed, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP,
-            HTTOPLEFT, HTTOPRIGHT,
-        };
-        if IsZoomed(hwnd).as_bool() {
-            return None;
-        }
-        let mut r = RECT::default();
-        GetWindowRect(hwnd, &mut r).ok()?;
-        let x = (lparam.0 & 0xFFFF) as u16 as i16 as i32 - r.left;
-        let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32 - r.top;
-        let dpi = GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
-        let inset = nx_ui::gpui_theme::WINDOW_FRAME_INSET * dpi;
-        let band = (inset + 4.0 * dpi).round() as i32;
-        let corner = (inset + 12.0 * dpi).round() as i32;
-        let edge = resize_edge(r.right - r.left, r.bottom - r.top, x, y, band, corner)?;
-        Some(match edge {
-            ResizeEdge::Left => HTLEFT,
-            ResizeEdge::Right => HTRIGHT,
-            ResizeEdge::Top => HTTOP,
-            ResizeEdge::Bottom => HTBOTTOM,
-            ResizeEdge::TopLeft => HTTOPLEFT,
-            ResizeEdge::TopRight => HTTOPRIGHT,
-            ResizeEdge::BottomLeft => HTBOTTOMLEFT,
-            ResizeEdge::BottomRight => HTBOTTOMRIGHT,
-        })
-    }
-}
-
-/// Nexus app windows (Files, Privacy) hide on close, like a macOS app whose
-/// last window closed: the dock icon brings the same window back. Destroying
-/// it left the dock holding a dead handle, so the icon did nothing.
-fn hide_on_close(window: &mut gpui::Window, cx: &mut gpui::App) {
-    window.on_window_should_close(cx, |window, _cx| {
-        #[cfg(windows)]
-        if let Some(raw) = window_hwnd(window) {
-            nx_ui::platform::hide_async(raw);
-            info!("window {raw:#x} hidden on close");
-            return false;
-        }
-        let _ = window;
-        true
-    });
-}
-
-/// Bring a Nexus app window back: unhide, restore from minimized, focus.
-fn show_app_window(window: &mut gpui::Window) {
-    #[cfg(windows)]
-    if let Some(raw) = window_hwnd(window) {
-        nx_ui::platform::restore_and_focus(raw);
-        return;
-    }
-    window.activate_window();
-}
-
-fn apply_rounded_native_corners(window: &mut gpui::Window) {
-    window.set_client_inset(gpui::px(WINDOW_FRAME_INSET));
-    #[cfg(windows)]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                // Client chrome only. The system frame is the blue bar and the
-                // reason clicks never reach the buttons drawn inside.
-                let _ = nx_ui::platform::present_client_window(win32.hwnd.get());
-            }
-        }
-    }
-    let _ = window;
-}
-
 /// Test GPUI windows panic on minimize; Linux ignores WindowOptions.show, so we
 /// only park auxiliary surfaces when running a real session.
 fn hide_auxiliary_window(window: &mut gpui::Window) {
@@ -1184,7 +925,7 @@ fn apply_spotlight_visibility(window: &mut gpui::Window, visible: bool) {
         hide_auxiliary_window(window);
     }
     #[cfg(windows)]
-    if let Some(raw) = window_hwnd(window) {
+    if let Some(raw) = crate::chrome::window_hwnd(window) {
         if visible {
             nx_ui::platform::restore_and_focus(raw);
         } else {
@@ -1315,33 +1056,5 @@ mod tests {
             assert!(!toggle_gpui_spotlight(handle, cx));
             assert!(!handle.read(cx).expect("spotlight view").model.is_open());
         });
-    }
-
-    #[test]
-    fn resize_band_finds_edges_and_corners() {
-        use super::{resize_edge, ResizeEdge};
-        let (w, h) = (1000, 700);
-        assert_eq!(resize_edge(w, h, 500, 350, 24, 32), None);
-        assert_eq!(resize_edge(w, h, 2, 350, 24, 32), Some(ResizeEdge::Left));
-        assert_eq!(resize_edge(w, h, 999, 350, 24, 32), Some(ResizeEdge::Right));
-        assert_eq!(resize_edge(w, h, 500, 0, 24, 32), Some(ResizeEdge::Top));
-        assert_eq!(
-            resize_edge(w, h, 500, 690, 24, 32),
-            Some(ResizeEdge::Bottom)
-        );
-        assert_eq!(resize_edge(w, h, 3, 3, 24, 32), Some(ResizeEdge::TopLeft));
-        assert_eq!(
-            resize_edge(w, h, 990, 30, 24, 32),
-            Some(ResizeEdge::TopRight)
-        );
-        assert_eq!(
-            resize_edge(w, h, 30, 695, 24, 32),
-            Some(ResizeEdge::BottomLeft)
-        );
-        assert_eq!(
-            resize_edge(w, h, 995, 695, 24, 32),
-            Some(ResizeEdge::BottomRight)
-        );
-        assert_eq!(resize_edge(w, h, -1, 10, 24, 32), None);
     }
 }
